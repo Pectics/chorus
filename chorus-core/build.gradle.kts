@@ -30,8 +30,8 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
-val integrationTestTask by
-    tasks.registering(Test::class) {
+val integrationTestTask =
+    tasks.register<Test>("integrationTest") {
         description = "Runs local SQLite and configured engine integration tests."
         group = "verification"
         testClassesDirs = integrationTest.output.classesDirs
