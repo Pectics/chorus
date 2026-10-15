@@ -1,0 +1,32 @@
+# @context
+# related: settings.gradle.kts; README.md
+# sync: Keep module inclusion aligned; share only module build scripts and sources.
+# @endcontext
+
+/*
+!/.gitignore
+
+!/.vscode/
+
+!/LICENSE
+!/README.md
+!/AGENTS.md
+!/ARCHITECTURE.md
+
+!/gradlew
+!/gradlew.bat
+!/gradle.properties
+!/gradle/
+
+!/settings.gradle.kts
+!/build.gradle.kts
+
+!/chorus-core/
+/chorus-core/*
+!/chorus-core/build.gradle.kts
+!/chorus-core/src/
+
+!/chorus-common/
+/chorus-common/*
+!/chorus-common/build.gradle.kts
+!/chorus-common/src/
