@@ -59,6 +59,8 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 - 单元测试须能在无网络、无数据库时运行；SQL 与网络故障测试放独立集成测试任务
 - 实现顺序见 ARCHITECTURE.md §6：先让 `chorus-core` 测试通过，再推进平台接入
 - Git 使用白名单，只收录显式放行内容；模块内部的构建产物与缓存不收录
+- Agent 主动用本地提交组织阶段与修复，尚未推送的任务历史可整理和重放；保留阶段边界，最终 push 前由人类审计并授权，详见 `AGENTS.md` §3.1
+- 提交消息使用 Conventional Commits，`type` / `scope` 小写，英语说明首字母大写，例如 `feat(core): Add ticket claim models`
 - 跨文件维护关系采用文件头 `@context` 引用区，格式与持续更新策略见 `AGENTS.md` §5–§6
 
 ## 许可
