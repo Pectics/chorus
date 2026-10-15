@@ -1,6 +1,6 @@
 # Chorus：基于 Minecraft 1.20.5+ `/transfer` 与 Cookie 机制的分布式服务器互联架构设计方案
 
-> **修订版**：Draft v1.1（需求确认与 Core 架构修订）  
+> **修订版**：Draft v1.2（Core Phase 1 与本地持久化防重放）  
 > **文档用途**：可独立阅读的架构与接口设计稿；不是声称所有平台 API 均已验证的实现手册。  
 > **项目名称**：`Chorus`  
 > **Maven Group / 包名前缀**：`me.pectics.chorus`  
@@ -44,7 +44,7 @@ Chorus 利用这些机制构建**无常驻游戏流量中转的跨服互联体�
 
 **节点配置**：传统 Proxy 集中维护 `servers` 列表；Chorus 没有必然存在的中央代理。需要让管理员管理节点目录，同时选择静态配置或可选的共享 SQL 控制面。
 
-**一次性票据**：限定有效期、签发者和目标节点，避免同一 Ticket 被目标节点重复接受。其后端可以是本地内存，也可以在有明确需要时使用共享 SQL。
+**一次性票据**：限定有效期、签发者和目标节点，避免同一 Ticket 被目标节点重复接受。其后端可以是本地 SQLite 持久化记录，也可以在有明确需要时使用共享 SQL。
 
 **协议生命周期**：发送 Cookie 只能在 Configuration / Play 阶段；Receiver 可在 Login 阶段请求。登录成功后需进入 Configuration，才可按协议覆盖旧 Cookie。
 
@@ -85,7 +85,7 @@ chorus/
 │       │   └── sql/                    # 可选的 Turso/libSQL 与 JDBC 实现
 │       ├── strategy/                   # UUID / Profile 身份解析策略
 │       └── state/                      # ReplayGuard：仅负责 Ticket 防重放
-│           ├── memory/                 # 本地内存实现
+│           ├── sqlite/                 # 本地 SQLite 持久化消费记录
 │           ├── sql/                    # 可选 SQL 实现；后端选型待确定
 │           └── redis/                  # 仅预留未来扩展，不进入 MVP
 │
@@ -222,7 +222,7 @@ public interface TrustedIssuerRegistry {
 
 写入型管理接口另行声明，例如 `ServerDirectoryAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
 
-### 3.3 数据库存储草案（只在 `SHARED_SQL` / `SQL_REPLAY` 模式启用）
+### 3.3 共享数据库存储草案（只在 `SHARED_SQL` / `SQL_REPLAY` 模式启用）
 
 此处 SQL 示例以 SQLite/libSQL 兼容方言表达。MySQL/PostgreSQL 必须实现对应的 dialect、迁移及并发测试，不能认为 `DELETE ... RETURNING` 在所有 JDBC 数据库中通用。
 
@@ -324,7 +324,7 @@ public record IdentityClaim(
 - `providerSubject` 与 `authProvider` 一起给出认证命名空间。Mojang 情况下可由正版 UUID 构成；离线身份只能代表上游服实际完成的认证强度。
 - `sourceUuid` 与目标服最终的 `finalUuid` 是不同概念。下一跳转服保留原身份声明，而不是把刚刚映射出来的离线 UUID 覆盖回源身份。
 - 旧文档的 `mojangUuid`、`offlineUuid` 不再强制每张票据都带；`offlineUuid` 可由明确的兼容策略按用户名确定性生成，省去冗余字段。
-- 属性列表须设置数量和字节上限，不把签发者提交的任意属性当成经过 Mojang 独立背书的证明。
+- Phase 1 只支持至多一个 `textures` 属性，并设置 UTF-8 字节上限；不把上游属性当成经过 Mojang 独立背书的证明。
 
 #### 已验证身份与登录上下文
 
@@ -370,12 +370,12 @@ public record TicketClaims(
 约定：
 
 - 默认单 Cookie：`chorus:ticket`。
-- 首选 JWS Compact Serialization + Ed25519（`EdDSA`）；HMAC-SHA256 作为受限可选算法，不建议跨不同服主共享同一签发密钥。
+- 首版使用 JWS Compact Serialization + Ed25519，仅签发和接收 RFC 9864 的 `alg=Ed25519`，不接收旧 `EdDSA` 标识。HMAC-SHA256 保留为未来受限可选算法，不进入 Phase 1。
 - JWT 标准 `iat` / `nbf` / `exp` 使用 **NumericDate 秒**；Java API 使用 `Instant`，配置 TTL 使用 `Duration`，不要把自定义毫秒直接写进标准时间字段。
 - `jti` 用密码学安全随机值（如 UUIDv4）即可，不强制 UUIDv7。
 - `iss` / `aud` 使用集群中明确约定的唯一节点 ID；跨管理域建议使用全域命名，如 `operator-a/gateway-01`。
 - 默认不包含 IP Hash 和 `sessionEpoch`；没有共享数据协调方时，Ticket 携带 `sessionEpoch` 不能自动防止跨服存档并发写入。
-- `extensions` 只能包含经过授权、限定长度与命名空间的非安全关键数据；不得覆盖标准 Claim 或绕过接收端策略。
+- Phase 1 保留 `extensions` 接口但拒绝非空扩展；后续扩展必须经过授权、限定长度与命名空间，不能覆盖标准 Claim 或绕过接收端策略。
 - Cookie 最大 5120 字节；`core` 应检查**最终编码后的字节长度**。示例项目限额可取 4096 字节，但不是协议强制值。
 - 默认不压缩 Ticket；如果将来添加压缩，必须有版本标记、大小/解压上限与明确的编解码兼容测试。
 
@@ -454,11 +454,11 @@ public interface ReplayGuard {
 }
 ```
 
-**本地模式 `LOCAL_MEMORY`**：目标节点单实例、`aud` 指向唯一消费实例；原子 `putIfAbsent`，缓存有效期至少覆盖 Ticket 最大可接受窗口；容量不足时拒绝新消费，不能提前驱逐仍可能有效的记录。进程重启会丢失已消费记录：需要启动隔离窗口或明确降级保证。
+**本地模式 `LOCAL_SQLITE`**：`aud` 指向一个接收节点及其持久数据库。Receiver 完成其他校验后，以唯一约束原子插入已消费记录；Sender 无须预登记。采用 WAL 与 `synchronous=FULL`，确认事务持久化提交后才成功完成 `CompletionStage`，无需逐票等待 checkpoint。记录至少保留到 `exp + clockSkew`，容量不足不能驱逐仍可能有效的记录。数据库 I/O 在专用执行器上执行。正常进程重启复用原数据库，不需要启动隔离窗口；数据库及 WAL 必须保存在持久本地存储，删除、回滚旧备份或换空路径不属于普通重启保证。已有数据库损坏、提交失败或结果未知时拒绝，不自动重建或降级内存。
 
-**SQL 模式 `SQL_DATABASE`（可选，最终默认未定）**：Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回本地内存**。
+**SQL 模式 `SQL_DATABASE`（可选，最终默认未定）**：Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
 
-**待确认选型**：共享 SQL 对节点目录是否有用，与 Ticket 是否应注册/核销于 SQL 是两个独立决策。MVP 可以先实现本地 ReplayGuard 以测试核心协议；这不代表最终产品默认一定选本地核销。
+**待确认选型**：共享 SQL 对节点目录是否有用，与 Ticket 是否应注册/核销于 SQL 是两个独立决策。MVP 可以先实现本地 SQLite ReplayGuard 以测试核心协议；这不代表最终产品默认一定选本地核销。
 
 **Bearer 边界**：签名和 JTI 一次性消费阻止篡改及重复使用，但不会证明“首次提交的人”一定是原玩家。JWE 也不能防止密文 Ticket 被原样复制。Chorus 不要求原版客户端提供不存在的自定义私钥持有者证明；可选传输保护属于未来平台增强。
 
@@ -480,7 +480,7 @@ public interface SignatureService {
 
 ### 3.8 `ChorusCoreEngine` 对外 API
 
-既可能只有本地密码学计算，也可能使用 SQL，因此核心接口以 **`CompletionStage` 为统一异步契约**。平台不得在 Netty EventLoop 中 `.join()` 或无超时阻塞。纯内存实现可返回已完成的 Future。
+既可能只有本地密码学计算，也可能使用 SQL，因此核心接口以 **`CompletionStage` 为统一异步契约**。平台不得在 Netty EventLoop 中 `.join()` 或无超时阻塞。纯本地密码学计算可返回已完成的 Future；SQLite 消费必须等持久化提交确认。
 
 ```java
 package me.pectics.chorus.core.api;
@@ -533,14 +533,14 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 1. 检查本节点 Sender 能力及目标路由授权；查找已批准的目标节点快照。
 2. 从可信会话获得身份声明，生成 `iss/aud/jti/iat/nbf/exp`。
-3. 依据本节点签发权限约束身份类型和扩展字段；JWS 编码签名、检查实际 Cookie 字节数。
+3. 依据管理员显式配置的本节点签发策略约束身份来源与目标（缺失时不能启用 Sender）；此策略不代替 Receiver 自己的信任裁定。拒绝非空扩展；JWS 编码签名、检查实际 Cookie 字节数。
 4. **仅在 ReplayGuard 选择 SQL 预登记模式时**完成原子登记；成功才返回可发送 Ticket。
 
 `verifyAndResolve()` 顺序：
 
 1. 限制总输入长度、解码复杂度；拒绝缺失的 Cookie / 不支持的结构版本。
 2. 从不可信 Header/Claim 读取最小 `kid/iss` 定位本地批准的密钥；检查 `alg` 白名单并先完成验签。
-3. 检查 `aud`、时间窗口、最大 Ticket 生存期、Transfer Intent、登录用户名与 Receiver 授权策略。
+3. 检查 `aud`、时间窗口、最大 Ticket 生存期、Transfer Intent、登录用户名（大小写完全一致）与 Receiver 授权策略。
 4. 如启用双端独立认证比对，检查平台提供的 `VerifiedExternalIdentity`，不能以客户端自报 UUID 代替。
 5. 计算 `ResolvedPlayerProfile`；失败不消耗 JTI。
 6. 执行 ReplayGuard 原子消费；成功后返回身份，失败拒绝登录。
@@ -555,7 +555,7 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 ### 3.9 统一配置 `chorus.yml`
 
-配置例子展示一个使用共享 SQL **节点目录**、但采用**本地票据防重放**的部署，旨在说明两者可以独立组合；并不代表 SQL 核销的最终选型已作决定。
+配置例子展示一个使用共享 SQL **节点目录**、但采用**本地 SQLite 票据防重放**的部署，旨在说明两者可以独立组合；并不代表 SQL 核销的最终选型已作决定。
 
 ```yaml
 node:
@@ -597,9 +597,9 @@ verification:
   ip-binding-mode: DISABLED
 
 replay:
-  mode: LOCAL_MEMORY          # 示例组合；SQL_DATABASE 是否默认仍待评审
-  startup-quarantine: true
-  # SQL_DATABASE 模式下，数据库不可用必须 fail-closed，不能退回 LOCAL_MEMORY
+  mode: LOCAL_SQLITE          # 示例组合；共享 SQL 是否默认仍待评审
+  file: "state/replay.db"
+  # Both local SQLite and shared SQL fail closed on storage errors.
 ```
 
 `servers.yml` 可采用管理员熟悉的 Proxy 风格：
@@ -714,7 +714,8 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 | Ticket 已核销，平台后续登录失败 | 本票据作废；重新获取 Ticket |
 | Sender 转移发包失败 | 本地释放转移中状态；如 Ticket 已发行，等待短期过期或按可用机制撤销 |
 | Receiver 或 Sender 崩溃 | 不要求依赖跨服锁释放；共享背包一致性交由外部业务系统 |
-| Receiver 本地缓存因进程重启清空 | 启动隔离窗口或部署者明确接受较弱的重启后防重放保证 |
+| Receiver 正常重启 | 复用原 SQLite 及 WAL，继续拒绝已消费且未过期的票据 |
+| 本地 SQLite 不可用、提交失败或结果未知 | 拒绝本次消费，不重建空库或降级 |
 
 ### 5.3 可观测性
 
@@ -730,9 +731,9 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 
 - 领域模型与配置校验。
 - Ed25519 KeyRing、JWS 编解码、密钥信任绑定。
-- 静态节点目录 + 可信签发者策略（保证没有 SQL 也可完整跑通逻辑）。
+- 静态节点目录 + 可信签发者策略（不依赖共享数据库服务）。
 - `ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID`；`STRICT_ONLINE_MATCH` 的核心比较逻辑可用纯对象测试验证。
-- 本地 ReplayGuard 与可替换 SPI；SQL 版本不强行纳入第一阶段。
+- 本地 SQLite ReplayGuard 与可替换 SPI，含真实文件上的持久化、并发与重启验证；共享 SQL 核销不纳入第一阶段。
 - `ChorusCoreEngine` 的纯 Java Mock Sender → Receiver 流程。
 
 最低单测范围：
@@ -740,9 +741,9 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 1. Gateway 正版身份 → 离线 Backend 仍使用 Mojang UUID。
 2. 正版 → 旧离线 UUID 映射；离线 → 离线；双正版独立验证上下文比较。
 3. 外域不可信签发者、错误 provider/target、密钥替换、过期/未来票据拒绝。
-4. 同一 JTI 并发消费只有一次成功，缓存满时 fail-closed。
+4. 同一 JTI 并发消费只有一次成功，容量满时 fail-closed，提交完成前不返回成功，重开后继续拒绝重放。
 5. JWT 规格、编码长度、异常字段、未知算法和未知 `kid`。
-6. 静态目录变更、缓存过期、无数据库模式运行。
+6. 静态目录变更、无外部数据库服务运行；共享目录故障缓存过期验证在 Phase 2 完成。
 
 ### Phase 2：共享目录 SQL 实现
 
@@ -775,7 +776,7 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 ### 7.2 未决定，不得擅自当作既定需求
 
 1. **管理员管理方式**：完全静态配置、游戏内管理命令、两者并存及跨节点同步的交付范围；数据库管理员凭据如何安全分发。
-2. **Ticket 核销的最终默认后端**：LOCAL_MEMORY 还是 SQL_DATABASE，以及何种规模/可靠性目标才需要 SQL。
+2. **Ticket 核销的最终默认后端**：LOCAL_SQLITE 还是共享 SQL_DATABASE，以及何种规模/可靠性目标才需要 SQL。
 3. **节点心跳**：共享数据库是否提供安全且足够细粒度的写权限，若不能则如何上报。
 4. **受控联盟深度**：是否需要外域不完全可信 Peer 对上游认证结果进行无权伪造的转发；若需要，再设计双层签名 Attestation。
 5. **数据库支持矩阵**：Turso/libSQL 及哪些 JDBC 方言进入首版；各自事务与核销语义需要集成测试。
@@ -787,6 +788,8 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 ## 8. 参考资料与核查说明
 
 - [Minecraft Snapshot 24w03a：Transfer 和 Cookie 的官方说明](https://www.minecraft.net/en-us/article/minecraft-snapshot-24w03a)
+- [RFC 9864：明确的 Ed25519 算法标识](https://www.rfc-editor.org/rfc/rfc9864)
+- [SQLite WAL 持久化](https://www.sqlite.org/wal.html)
 - [RFC 7519：JWT / NumericDate](https://www.rfc-editor.org/rfc/rfc7519)
 - [SQLite RETURNING 官方文档](https://www.sqlite.org/lang_returning.html)
 - [libSQL Hrana v3 协议规范](https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md)

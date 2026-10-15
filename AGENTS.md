@@ -31,6 +31,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 
 ```bash
 ./gradlew :chorus-core:test      # Core 快速单测
+./gradlew :chorus-core:integrationTest # 本地 SQLite 与完整配置集成验证
 ./gradlew :chorus-common:test    # common 测试（有测试后执行）
 ./gradlew spotlessApply         # 应用格式化
 ./gradlew spotlessCheck         # 只检查格式
@@ -39,7 +40,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 ```
 
 - Java 21 Toolchain；使用仓库内的 Wrapper，不依赖特定 IDE。
-- 测试执行不依赖网络或数据库；首次准备 Wrapper、Toolchain 和依赖可能需要下载，缓存齐备后可加 `--offline`。
+- 测试执行不依赖网络或外部数据库服务；本地 SQLite 集成测试使用临时文件，纳入 `check` / `build`；首次准备 Wrapper、Toolchain 和依赖可能需要下载，缓存齐备后可加 `--offline`。
 - 优先运行改动模块的相关测试；修改共享构建配置时运行 `build` 并核对 `projects`。
   SQL、网络故障与数据库方言验证放独立集成测试任务。脚手架测试通过不等于业务功能通过。
 - 格式由 Spotless 统一：Java 使用 google-java-format 的 AOSP 风格（4 空格），Gradle Kotlin DSL 使用 ktfmt 的 Kotlin 风格。
