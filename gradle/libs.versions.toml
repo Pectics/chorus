@@ -1,0 +1,32 @@
+[versions]
+# Platform versions remain provisional until their adapters are enabled and verified.
+minecraft = "1.21.11"
+paper-api = "1.21.11-R0.1-SNAPSHOT"
+velocity-api = "3.5.1"
+fabric-loom = "1.19.1"
+fabric-loader = "0.20.0"
+yarn = "1.21.11+build.6"
+
+junit = "6.1.3"
+assertj = "3.27.7"
+snakeyaml = "2.7"
+spotless = "8.10.4"
+# Matches Spotless's adapter; 1.37.0 breaks its style API.
+google-java-format = "1.36.1"
+ktfmt = "0.65"
+
+[libraries]
+minecraft = { module = "com.mojang:minecraft", version.ref = "minecraft" }
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+velocity-api = { module = "com.velocitypowered:velocity-api", version.ref = "velocity-api" }
+fabric-loader = { module = "net.fabricmc:fabric-loader", version.ref = "fabric-loader" }
+
+snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
+
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
+assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+
+[plugins]
+fabric-loom-remap = { id = "net.fabricmc.fabric-loom-remap", version.ref = "fabric-loom" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
