@@ -169,6 +169,26 @@ class SqliteReplayGuardTest {
     }
 
     @Test
+    void existingStateWithAMissingLedgerIsNotReinitialized() throws Exception {
+        Path file = directory.resolve("replay.db");
+        try (var guard = open(file, 10)) {
+            assertThat(consume(guard, "used").get()).isEqualTo(ReplayDecision.ACCEPTED);
+        }
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + file);
+                var statement = connection.createStatement()) {
+            statement.execute("DROP TABLE chorus_consumed_tickets");
+        }
+        assertThatThrownBy(() -> open(file, 10)).isInstanceOf(java.sql.SQLException.class);
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + file);
+                var statement = connection.createStatement();
+                var rows =
+                        statement.executeQuery(
+                                "SELECT name FROM sqlite_schema WHERE name='chorus_consumed_tickets'")) {
+            assertThat(rows.next()).isFalse();
+        }
+    }
+
+    @Test
     void abruptProcessExitRecoversCommittedWalAndDiscardsUncommittedWrites() throws Exception {
         for (String mode : java.util.List.of("committed", "uncommitted")) {
             Path file = directory.resolve(mode + ".db");

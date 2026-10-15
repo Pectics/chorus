@@ -60,7 +60,7 @@ public final class SqliteReplayGuard implements ReplayGuard {
                 || clockSkew.isNegative()
                 || clockSkew.getNano() != 0
                 || busyTimeout.isNegative()
-                || busyTimeout.isZero()
+                || busyTimeout.toMillis() < 1
                 || busyTimeout.toMillis() > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Invalid local replay configuration");
         }
@@ -120,38 +120,57 @@ public final class SqliteReplayGuard implements ReplayGuard {
                     throw new SQLException("Local replay requires FULL synchronization");
                 }
             }
-            try (var result = statement.executeQuery("PRAGMA user_version")) {
-                if (result.next() && result.getInt(1) != 0 && result.getInt(1) != 1) {
-                    throw new SQLException("Unsupported local replay schema");
-                }
-            }
             statement.execute("BEGIN IMMEDIATE");
-            statement.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chorus_replay_meta (
-                        id INTEGER PRIMARY KEY CHECK (id = 1),
-                        node_id TEXT NOT NULL,
-                        skew_ms INTEGER NOT NULL
-                    )
-                    """);
-            statement.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chorus_consumed_tickets (
-                        issuer_node_id TEXT NOT NULL,
-                        jti TEXT NOT NULL,
-                        retain_until_ms INTEGER NOT NULL,
-                        PRIMARY KEY (issuer_node_id, jti)
-                    )
-                    """);
-            statement.execute(
-                    "CREATE INDEX IF NOT EXISTS chorus_consumed_expiry "
-                            + "ON chorus_consumed_tickets(retain_until_ms)");
-            try (var insert =
-                    connection.prepareStatement(
-                            "INSERT INTO chorus_replay_meta VALUES (1, ?, ?) ON CONFLICT(id) DO NOTHING")) {
-                insert.setString(1, targetNodeId);
-                insert.setLong(2, skewMillis);
-                insert.executeUpdate();
+            int version;
+            try (var result = statement.executeQuery("PRAGMA user_version")) {
+                version = result.getInt(1);
+            }
+            if (version == 0) {
+                try (var result =
+                        statement.executeQuery(
+                                "SELECT 1 FROM sqlite_schema WHERE type='table' LIMIT 1")) {
+                    if (result.next()) {
+                        throw new SQLException(
+                                "Refusing to initialize an unknown nonempty database");
+                    }
+                }
+                statement.execute(
+                        """
+                        CREATE TABLE chorus_replay_meta (
+                            id INTEGER PRIMARY KEY CHECK (id = 1),
+                            node_id TEXT NOT NULL,
+                            skew_ms INTEGER NOT NULL
+                        )
+                        """);
+                statement.execute(
+                        """
+                        CREATE TABLE chorus_consumed_tickets (
+                            issuer_node_id TEXT NOT NULL,
+                            jti TEXT NOT NULL,
+                            retain_until_ms INTEGER NOT NULL,
+                            PRIMARY KEY (issuer_node_id, jti)
+                        )
+                        """);
+                statement.execute(
+                        "CREATE INDEX chorus_consumed_expiry "
+                                + "ON chorus_consumed_tickets(retain_until_ms)");
+                try (var insert =
+                        connection.prepareStatement(
+                                "INSERT INTO chorus_replay_meta VALUES (1, ?, ?)")) {
+                    insert.setString(1, targetNodeId);
+                    insert.setLong(2, skewMillis);
+                    insert.executeUpdate();
+                }
+                statement.execute("PRAGMA user_version=1");
+            } else if (version != 1) {
+                throw new SQLException("Unsupported local replay schema");
+            }
+            try (var result =
+                    statement.executeQuery(
+                            "SELECT issuer_node_id, jti, retain_until_ms FROM chorus_consumed_tickets LIMIT 0")) {
+                // Existing state must validate; missing tables must never be recreated as empty
+                // ledgers.
+                result.getMetaData();
             }
             try (var result =
                     statement.executeQuery(
@@ -163,7 +182,6 @@ public final class SqliteReplayGuard implements ReplayGuard {
                             "Replay state belongs to a different node or clock tolerance");
                 }
             }
-            statement.execute("PRAGMA user_version=1");
             statement.execute("COMMIT");
         }
     }
