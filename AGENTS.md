@@ -43,7 +43,8 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - 优先运行改动模块的相关测试；修改共享构建配置时运行 `build` 并核对 `projects`。
   SQL、网络故障与数据库方言验证放独立集成测试任务。脚手架测试通过不等于业务功能通过。
 - 格式由 Spotless 统一：Java 使用 google-java-format 的 AOSP 风格（4 空格），Gradle Kotlin DSL 使用 ktfmt 的 Kotlin 风格。
-  `check` / `build` 包含格式检查，修改后运行 `spotlessApply`，提交前运行 `spotlessCheck`；普通构建不自动改写源码。
+  `check` / `build` 包含格式检查，修改后运行 `spotlessApply`，最终提交序列交付审计前运行适用的 `spotlessCheck` 与测试；普通构建不自动改写源码。
+  本地检查点允许先提交再验证，具体流程见 §3.1。
   格式化仅覆盖当前启用模块与显式列出的手写构建/配置文件，不扫描被忽略的平台、生成文件或 Markdown 文档。
 - 依赖、平台与插件版本从 `gradle/libs.versions.toml` 读取，模块脚本不硬编码版本；
   foojay-resolver 例外写在 `settings.gradle.kts`，因为其 `plugins {}` 无法读取 catalog。
@@ -54,6 +55,38 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - `.gitignore` 始终采用**白名单**：根目录默认忽略，再显式放行；当前模块内部仅放行构建脚本与 `src/`，
   不放行 `build/`、缓存或本地运行目录。新增需收录的文件或模块时同步检查白名单与构建范围。
   提交前用 `git status --short --untracked-files=all` / `git check-ignore -v <路径>` 核对，不用 `git add -f` 绕过约定。
+
+### 3.1 Git 是本地开发草稿与审计工具
+
+- Agent 应主动使用本地提交管理工作，不必等到整个功能完成或所有测试通过才提交。
+  **当前任务相关、尚未推送的历史属于可整理的草稿**：可自行提交、`amend`、`rebase`、重排或重放，无需逐次请求人类审批。
+  操作前核对分支、提交范围和工作区，保留用户无关改动；已推送或共享的历史不按本地草稿任意改写。
+- 较大功能先规划有明确边界的阶段提交，例如 A / B / C 三个 `feat`；小任务用一条提交即可，不机械凑数量。
+  每个阶段编辑完成后及时提交，再运行针对性的小范围验证；发现问题补 `fix`。
+  若后续才发现早期阶段的问题，可将修复插入对应阶段之后，并重放后续提交。
+- 保留具有审计价值的阶段边界与修复关系，让人类能看见“A 引入了什么、B 又如何修改 A”。
+  可以整理零碎提交，但**不得默认将整个功能压成单个最终 diff**，也不要求每条中间草稿提交都处于最终可发布状态。
+- 本地提交不等于验证通过。最终交付时如实说明已执行的检查、结果与尚未解决的问题；纯文档调整使用文档检查，无需为提交形式重复运行无关构建。
+- **人类审计放在最终 push 之前**：先提供分阶段的提交序列、可审阅的差异和必要验证结果，
+  经人类审计并取得本次推送授权后再 push。审计后如有实质变更，重新展示相关差异；不将本地提交或自动检查通过视为推送授权。
+
+阶段序列示例（第二条是 A 阶段的修复）：
+
+```text
+feat(core): Add ticket claim models
+fix(core): Validate identity provider identifiers
+feat(core): Implement ticket signing
+feat(core): Add the verification pipeline
+```
+
+### 3.2 提交消息
+
+遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)，并采用本项目的大小写约定：
+
+- 标题格式为 `type(scope): Description`；`scope` 可省略，破坏性变更在冒号前加 `!` 或使用 `BREAKING CHANGE:` footer。
+- `type` 与可选 `scope` 使用小写；说明文案使用**英语，首字母大写**。正文与 footer 的说明文字也使用英语。
+- 常用类型为 `feat`、`fix`、`docs`、`refactor`、`test`、`build`、`ci`、`style`、`perf`、`chore`、`revert`；按变更意图选择。
+- 描述具体动作与结果，例如 `docs: Define the local Git draft workflow`，不要用 `Update`、`Fix bugs` 这类缺少上下文的笼统标题。
 
 ## 4. 实现约束
 
