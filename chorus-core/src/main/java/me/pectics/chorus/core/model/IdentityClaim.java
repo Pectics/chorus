@@ -4,7 +4,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Immutable source identity. UUID mapping must never replace this claim on a later transfer. */
+/**
+ * Immutable source identity. Names use 1-16 ASCII letters, digits, or underscores; provider IDs are
+ * normalized lowercase identifiers (at most 128 characters), and subjects are nonblank, at most 256
+ * characters. Only one textures property is supported. UUID mapping never replaces this source
+ * claim.
+ */
 public record IdentityClaim(
         String username,
         AuthType authType,

@@ -12,8 +12,11 @@ import me.pectics.chorus.core.strategy.IdentityStrategy;
 import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
 
 /**
- * Validated immutable settings. Operational parameters are explicit until architecture 7.2 is
- * settled.
+ * Immutable settings with explicit operational parameters until architecture 7.2 is settled.
+ * Lifetimes and skew use whole seconds; TTL is positive and no larger than maxTicketLifetime.
+ * Ticket bytes are limited to 5120; property bytes cannot exceed that configured ticket limit.
+ * Sender requires policy. Invalid settings throw IllegalArgumentException or ArithmeticException
+ * for overflowing durations.
  */
 public record CoreConfiguration(
         String nodeId,

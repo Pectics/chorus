@@ -40,7 +40,8 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 ```
 
 - Java 21 Toolchain；使用仓库内的 Wrapper，不依赖特定 IDE。
-- 测试执行不依赖网络或外部数据库服务；本地 SQLite 集成测试使用临时文件，纳入 `check` / `build`；首次准备 Wrapper、Toolchain 和依赖可能需要下载，缓存齐备后可加 `--offline`。
+- 测试执行不依赖网络或外部数据库服务；本地 SQLite 集成测试使用临时文件，纳入 `check` / `build`。
+  首次准备 Wrapper、Toolchain 和依赖可能需要下载，缓存齐备后可加 `--offline`。
 - 优先运行改动模块的相关测试；修改共享构建配置时运行 `build` 并核对 `projects`。
   SQL、网络故障与数据库方言验证放独立集成测试任务。脚手架测试通过不等于业务功能通过。
 - 格式由 Spotless 统一：Java 使用 google-java-format 的 AOSP 风格（4 空格），Gradle Kotlin DSL 使用 ktfmt 的 Kotlin 风格。
@@ -91,6 +92,7 @@ feat(core): Add the verification pipeline
 
 ## 4. 实现约束
 
+- 实现收敛到架构已确认的当前阶段；用满足现有契约的最小实现，不主动设计架构范围外的能力。
 - Java 21，优先 `record` / `sealed interface` / `switch`，禁止 Lombok。
 - 依赖方向为平台 → common → core；Core 不持有 `Player`、`GameProfile`、Netty `Channel` 等平台对象。
   数据库 I/O 与定时调度通过接口封装。

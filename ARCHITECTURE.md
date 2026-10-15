@@ -1,6 +1,6 @@
 # Chorus：基于 Minecraft 1.20.5+ `/transfer` 与 Cookie 机制的分布式服务器互联架构设计方案
 
-> **修订版**：Draft v1.2（Core Phase 1 与本地持久化防重放）  
+> **修订版**：Draft v1.2（Core Phase 1 与本地持久化防重放）\
 > **文档用途**：可独立阅读的架构与接口设计稿；不是声称所有平台 API 均已验证的实现手册。  
 > **项目名称**：`Chorus`  
 > **Maven Group / 包名前缀**：`me.pectics.chorus`  
