@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.crypto.Ed25519SignatureService;
@@ -60,6 +61,52 @@ class TicketCodecTest {
         rejects(new byte[5121], TicketError.TICKET_TOO_LARGE);
         rejects(null, TicketError.COOKIE_MISSING);
         rejects(new byte[0], TicketError.COOKIE_MISSING);
+    }
+
+    @Test
+    void rejectsOutOfRangeNumericDatesAsMalformed() {
+        String body =
+                part(1).replace(
+                                "\"iat\":" + TestSupport.NOW.getEpochSecond(),
+                                "\"iat\":" + Long.MAX_VALUE);
+        rejects(TestSupport.signRaw(part(0), body, pair), TicketError.MALFORMED_TICKET);
+    }
+
+    @Test
+    void propertyLimitCountsUtf8BytesAndEmptySignaturesAreInvalid() {
+        var identity =
+                new me.pectics.chorus.core.model.IdentityClaim(
+                        "Notch",
+                        me.pectics.chorus.core.model.AuthType.MOJANG,
+                        "mojang",
+                        "account",
+                        TestSupport.UUID_MOJANG,
+                        List.of(
+                                new me.pectics.chorus.core.model.ProfileProperty(
+                                        "textures", "皮肤", null)));
+        var claims =
+                new me.pectics.chorus.core.model.TicketClaims(
+                        1,
+                        "bytes",
+                        "gateway",
+                        "backend",
+                        TestSupport.NOW,
+                        TestSupport.NOW,
+                        TestSupport.NOW.plusSeconds(15),
+                        identity,
+                        Map.of());
+        var exact = new TicketCodec(5120, 14, new Ed25519SignatureService());
+        assertThat(exact.decode(exact.encode(claims, key), registries).claims()).isEqualTo(claims);
+        assertThatThrownBy(
+                        () ->
+                                new TicketCodec(5120, 13, new Ed25519SignatureService())
+                                        .encode(claims, key))
+                .isInstanceOf(TicketRejectedException.class);
+        assertThatThrownBy(
+                        () ->
+                                new me.pectics.chorus.core.model.ProfileProperty(
+                                        "textures", "skin", ""))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

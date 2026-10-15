@@ -243,13 +243,14 @@ public final class TicketCodec {
         } catch (java.text.ParseException
                 | com.nimbusds.jose.JOSEException
                 | IllegalArgumentException
+                | java.time.DateTimeException
                 | java.nio.charset.CharacterCodingException e) {
             throw reject(TicketError.MALFORMED_TICKET);
         }
     }
 
     private void checkProperties(IdentityClaim identity) {
-        int bytes = 0;
+        long bytes = 0;
         for (var property : identity.properties()) {
             bytes += property.name().getBytes(StandardCharsets.UTF_8).length;
             bytes += property.value().getBytes(StandardCharsets.UTF_8).length;

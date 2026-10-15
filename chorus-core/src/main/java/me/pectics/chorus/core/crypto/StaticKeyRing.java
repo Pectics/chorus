@@ -17,7 +17,10 @@ public final class StaticKeyRing implements KeyRing {
 
     @Override
     public SigningKey activeSigningKey() {
-        return Objects.requireNonNull(signingKey, "No active signing key");
+        if (signingKey == null) {
+            throw new IllegalStateException("No active signing key");
+        }
+        return signingKey;
     }
 
     @Override

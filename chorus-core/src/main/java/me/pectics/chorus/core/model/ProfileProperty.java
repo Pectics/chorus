@@ -9,7 +9,9 @@ public record ProfileProperty(String name, String value, String signature) {
     public ProfileProperty {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(value, "value");
-        if (!name.equals("textures") || value.isEmpty()) {
+        if (!name.equals("textures")
+                || value.isEmpty()
+                || signature != null && signature.isEmpty()) {
             throw new IllegalArgumentException("Only nonempty textures properties are supported");
         }
     }
