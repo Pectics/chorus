@@ -644,10 +644,12 @@ operator-b/peer-01:
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
 | `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`STATIC` 时无效 | TODO：共享目录数据库适配与核销尚未实现；启动拒绝 |
 | `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
+| `allowed-auth-schemes: YGGDRASIL / FLOODGATE` | 预留的身份来源名称 | TODO：身份流程尚未实现；即使策略允许，Engine 仍拒绝对应身份的签发与接收 |
 
 这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在目录读取与状态库打开前明确拒绝，`REGISTRY + STATIC` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
 `ticket.max-payload-bytes` 限制包含 JWS 编码与签名的完整 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
 `issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
+主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任公钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
 每种配置文件使用**独立、完整、可单独验证的 JSON Schema** 作为格式契约。当前契约版本为 `v1`，采用 JSON Schema Draft 2020-12：

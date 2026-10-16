@@ -225,6 +225,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
     private static boolean supported(AuthType type) {
         return switch (type) {
             case MOJANG, OFFLINE_AUTH, OFFLINE_RAW -> true;
+            // TODO: Implement Yggdrasil and Floodgate identity flows before enabling these schemes.
             case YGGDRASIL, FLOODGATE -> false;
         };
     }

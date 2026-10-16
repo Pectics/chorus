@@ -47,6 +47,7 @@
         }
       },
       "allowed-auth-schemes": {
+        "$comment": "TODO: YGGDRASIL and FLOODGATE identity flows are not implemented. The Phase-1 engine rejects those schemes even when approved here.",
         "type": "array",
         "minItems": 1,
         "uniqueItems": true,

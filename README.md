@@ -163,6 +163,7 @@ issuance:
 `CoreBootstrap.loadRegistries` / `reloadRegistries` 提供显式静态快照加载与替换；加载失败保留旧快照，不自动监视文件。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
+主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时目录显示名来自 `servers.yml`，未配置时使用节点 ID。
 单把公钥可用 `key: keys/gateway.pub`，等价于 `keys: [keys/gateway.pub]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
 `keys` 是公钥路径字符串列表，可保留多把公钥支持轮换；接收端依次尝试这些公钥。
 签发者级 `enabled: false` 会禁用其全部公钥；撤销单把公钥时从列表移除。配置变更在快照替换后生效。
