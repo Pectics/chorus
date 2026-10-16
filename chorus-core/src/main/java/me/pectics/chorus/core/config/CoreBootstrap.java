@@ -1,21 +1,19 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.8, and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/registry/staticconfig/StaticRegistries.java
- * sync: Validate complete static configuration before publishing snapshots or opening a receiver.
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationLoader.java;
+ *          chorus-core/src/main/java/me/pectics/chorus/core/registry/staticconfig/StaticRegistries.java
+ * sync: Consume schema-approved values and validate runtime references before publishing state.
  * @endcontext
  */
 package me.pectics.chorus.core.config;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,6 +23,7 @@ import java.util.Map;
 import java.util.Set;
 import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
+import me.pectics.chorus.core.config.ConfigurationLoader.Document;
 import me.pectics.chorus.core.crypto.Ed25519Keys;
 import me.pectics.chorus.core.crypto.SigningKey;
 import me.pectics.chorus.core.crypto.StaticKeyRing;
@@ -37,13 +36,12 @@ import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
 import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
 import me.pectics.chorus.core.strategy.IdentityStrategy;
 import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
-import org.yaml.snakeyaml.LoaderOptions;
-import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
+import tools.jackson.databind.JsonNode;
 
 /**
- * Blocking startup/configuration I/O. Invoke outside platform event loops; hot-path reads stay
- * local.
+ * Blocking startup I/O and runtime assembly. Invoke outside platform event loops. File format
+ * validation belongs to each document's schema; domain objects still protect their runtime
+ * invariants, including relationships between converted durations and references across files.
  */
 public final class CoreBootstrap {
     private CoreBootstrap() {}
@@ -53,78 +51,38 @@ public final class CoreBootstrap {
         return open(configurationFile, Clock.systemUTC());
     }
 
-    /** Operational durations and capacities must be explicitly provided; no unverified defaults. */
+    /**
+     * Loads the current file formats with explicit operational limits. YAML and schema errors throw
+     * IllegalArgumentException with the file path; schema errors also identify the field.
+     */
     public static ChorusCoreEngine open(Path configurationFile, Clock clock)
             throws IOException, GeneralSecurityException, SQLException {
+        var root = ConfigurationLoader.read(configurationFile, Document.CORE);
         Path base = configurationFile.toAbsolutePath().normalize().getParent();
-        var root = read(configurationFile);
-        fields(
-                root,
-                "node",
-                "cookie-key",
-                "crypto",
-                "registry",
-                "verification",
-                "replay",
-                "issuance");
-        var node = map(root.get("node"));
-        fields(node, "id", "display-name", "role", "capabilities");
-        if (node.containsKey("role")
-                && !Set.of("GATEWAY", "BACKEND", "PEER").contains(text(node, "role"))) {
-            throw invalid("node.role");
-        }
-        var capabilities = map(node.get("capabilities"));
-        fields(capabilities, "sender", "receiver");
-        boolean sender = bool(capabilities, "sender");
-        boolean receiver = bool(capabilities, "receiver");
-        var crypto = map(root.get("crypto"));
-        fields(
-                crypto,
-                "algorithm",
-                "key-id",
-                "ticket-ttl",
-                "max-ticket-lifetime",
-                "clock-skew",
-                "max-ticket-bytes",
-                "max-property-bytes",
-                "compress-payload",
-                "private-key-file",
-                "public-key-file");
-        if (!text(crypto, "algorithm").equals("ED25519")
-                || crypto.containsKey("compress-payload") && bool(crypto, "compress-payload")) {
-            throw invalid("crypto.algorithm or compression");
-        }
-        var verification = map(root.get("verification"));
-        fields(verification, "require-transfer-intent", "identity-strategy", "ip-binding-mode");
-        if (verification.containsKey("ip-binding-mode")
-                && !text(verification, "ip-binding-mode").equals("DISABLED")) {
-            throw invalid("verification.ip-binding-mode");
-        }
+        var capabilities = root.at("/node/capabilities");
+        boolean sender = capabilities.get("sender").asBoolean();
+        boolean receiver = capabilities.get("receiver").asBoolean();
+        var crypto = root.get("crypto");
+        var verification = root.get("verification");
         var configuration =
                 new CoreConfiguration(
-                        text(node, "id"),
+                        root.at("/node/id").asString(),
                         sender,
                         receiver,
-                        text(root, "cookie-key"),
-                        duration(crypto, "ticket-ttl"),
-                        duration(crypto, "max-ticket-lifetime"),
-                        duration(crypto, "clock-skew"),
-                        integer(crypto, "max-ticket-bytes"),
-                        integer(crypto, "max-property-bytes"),
-                        bool(verification, "require-transfer-intent"),
-                        IdentityStrategy.valueOf(text(verification, "identity-strategy")),
-                        sender ? policy(map(root.get("issuance"))) : null);
-        var registry = map(root.get("registry"));
-        fields(registry, "mode", "static");
-        if (!text(registry, "mode").equals("STATIC")) {
-            throw invalid("Only STATIC directories are implemented in Phase 1");
-        }
-        var files = map(registry.get("static"));
-        fields(files, "servers-file", "trust-file");
+                        root.get("cookie-key").asString(),
+                        duration(crypto.get("ticket-ttl")),
+                        duration(crypto.get("max-ticket-lifetime")),
+                        duration(crypto.get("clock-skew")),
+                        crypto.get("max-ticket-bytes").asInt(),
+                        crypto.get("max-property-bytes").asInt(),
+                        verification.get("require-transfer-intent").asBoolean(),
+                        IdentityStrategy.valueOf(verification.get("identity-strategy").asString()),
+                        sender ? policy(root.get("issuance")) : null);
+        var files = root.at("/registry/static");
         var registries =
                 loadRegistries(
-                        base.resolve(text(files, "servers-file")),
-                        base.resolve(text(files, "trust-file")),
+                        base.resolve(files.get("servers-file").asString()),
+                        base.resolve(files.get("trust-file").asString()),
                         clock);
         if (!registries.snapshot().servers().containsKey(configuration.nodeId())
                 || sender
@@ -133,29 +91,26 @@ public final class CoreBootstrap {
                                 .servers()
                                 .keySet()
                                 .containsAll(configuration.issuancePolicy().allowedTargets())) {
-            throw invalid("Node and issuance targets must exist in the directory");
+            throw new IllegalArgumentException(
+                    "Node and issuance targets must exist in the directory");
         }
         SigningKey key =
                 sender
                         ? Ed25519Keys.load(
-                                text(crypto, "key-id"),
-                                base.resolve(text(crypto, "private-key-file")),
-                                base.resolve(text(crypto, "public-key-file")))
+                                crypto.get("key-id").asString(),
+                                base.resolve(crypto.get("private-key-file").asString()),
+                                base.resolve(crypto.get("public-key-file").asString()))
                         : null;
         SqliteReplayGuard guard = null;
         if (receiver) {
-            var replay = map(root.get("replay"));
-            fields(replay, "mode", "file", "capacity", "busy-timeout");
-            if (!text(replay, "mode").equals("LOCAL_SQLITE")) {
-                throw invalid("Only LOCAL_SQLITE replay is implemented in Phase 1");
-            }
+            var replay = root.get("replay");
             guard =
                     new SqliteReplayGuard(
-                            base.resolve(text(replay, "file")),
+                            base.resolve(replay.get("file").asString()),
                             configuration.nodeId(),
                             configuration.clockSkew(),
-                            integer(replay, "capacity"),
-                            duration(replay, "busy-timeout"),
+                            replay.get("capacity").asInt(),
+                            duration(replay.get("busy-timeout")),
                             clock);
         }
         try {
@@ -176,14 +131,14 @@ public final class CoreBootstrap {
 
     private record Approved(RegistrySnapshot directory, List<TrustedIssuer> issuers) {}
 
-    /** Key paths in the trust file are relative to that file, not the process working directory. */
+    /** Key paths are relative to the trust file. Both files must satisfy their own schemas. */
     public static StaticRegistries loadRegistries(Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
         var approved = readRegistries(serversFile, trustFile, clock);
         return new StaticRegistries(approved.directory(), approved.issuers());
     }
 
-    /** Failed parsing, key loading, or validation preserves the previous approved snapshot. */
+    /** Parsing, schema, key, or reference failures leave the previous approved snapshot intact. */
     public static void reloadRegistries(
             StaticRegistries registries, Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
@@ -193,56 +148,42 @@ public final class CoreBootstrap {
 
     private static Approved readRegistries(Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
-        var serverRoot = read(serversFile);
-        fields(serverRoot, "servers");
+        var directory = ConfigurationLoader.read(serversFile, Document.SERVERS).get("servers");
+        var trust =
+                ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS)
+                        .get("trusted-issuers");
         var servers = new HashMap<String, ServerNode>();
-        for (var entry : map(serverRoot.get("servers")).entrySet()) {
-            var value = map(entry.getValue());
-            fields(value, "host", "port", "display-name", "tags", "metadata");
+        for (var entry : directory.properties()) {
+            var value = entry.getValue();
             servers.put(
                     entry.getKey(),
                     new ServerNode(
                             entry.getKey(),
-                            value.containsKey("display-name")
-                                    ? text(value, "display-name")
+                            value.has("display-name")
+                                    ? value.get("display-name").asString()
                                     : entry.getKey(),
-                            text(value, "host"),
-                            integer(value, "port"),
-                            value.containsKey("tags") ? strings(value, "tags") : Set.of(),
-                            value.containsKey("metadata")
-                                    ? stringMap(value.get("metadata"))
-                                    : Map.of()));
+                            value.get("host").asString(),
+                            value.get("port").asInt(),
+                            value.has("tags") ? strings(value.get("tags")) : Set.of(),
+                            value.has("metadata") ? stringMap(value.get("metadata")) : Map.of()));
         }
-        var trustRoot = read(trustFile);
-        fields(trustRoot, "trusted-issuers");
         var issuers = new ArrayList<TrustedIssuer>();
         Path base = trustFile.toAbsolutePath().normalize().getParent();
-        for (var entry : map(trustRoot.get("trusted-issuers")).entrySet()) {
-            var value = map(entry.getValue());
-            fields(
-                    value,
-                    "keys",
-                    "enabled",
-                    "allowed-auth-types",
-                    "allowed-providers",
-                    "allowed-targets");
+        for (var entry : trust.properties()) {
+            var value = entry.getValue();
             var policy = policy(value);
-            if (!(value.get("keys") instanceof List<?> keys) || keys.isEmpty()) {
-                throw invalid("trusted-issuers.keys");
-            }
-            for (var rawKey : keys) {
-                var key = map(rawKey);
-                fields(key, "kid", "public-key-file", "enabled");
+            for (var key : value.get("keys")) {
                 boolean enabled =
-                        (!value.containsKey("enabled") || bool(value, "enabled"))
-                                && (!key.containsKey("enabled") || bool(key, "enabled"));
+                        (!value.has("enabled") || value.get("enabled").asBoolean())
+                                && (!key.has("enabled") || key.get("enabled").asBoolean());
                 issuers.add(
                         new TrustedIssuer(
                                 entry.getKey(),
                                 new VerificationKey(
-                                        text(key, "kid"),
+                                        key.get("kid").asString(),
                                         Ed25519Keys.loadPublic(
-                                                base.resolve(text(key, "public-key-file")))),
+                                                base.resolve(
+                                                        key.get("public-key-file").asString()))),
                                 enabled,
                                 policy));
             }
@@ -251,124 +192,49 @@ public final class CoreBootstrap {
                 new RegistrySnapshot(servers, clock.instant(), false), List.copyOf(issuers));
     }
 
-    private static IssuerTrustPolicy policy(Map<String, Object> value) {
-        if (!value.containsKey("keys")) {
-            fields(value, "allowed-auth-types", "allowed-providers", "allowed-targets");
-        }
+    private static IssuerTrustPolicy policy(JsonNode value) {
         var types = new HashSet<AuthType>();
-        for (String type : strings(value, "allowed-auth-types")) {
-            types.add(AuthType.valueOf(type));
-        }
+        value.get("allowed-auth-types")
+                .forEach(item -> types.add(AuthType.valueOf(item.asString())));
         return new IssuerTrustPolicy(
-                types, strings(value, "allowed-providers"), strings(value, "allowed-targets"));
+                types,
+                strings(value.get("allowed-providers")),
+                strings(value.get("allowed-targets")));
     }
 
-    private static Map<String, Object> read(Path file) throws IOException {
-        byte[] bytes;
-        try (var input = Files.newInputStream(file)) {
-            bytes = input.readNBytes(1048577);
-        }
-        if (bytes.length > 1048576) {
-            throw invalid("Configuration exceeds size limit");
-        }
-        var options = new LoaderOptions();
-        options.setAllowDuplicateKeys(false);
-        options.setMaxAliasesForCollections(0);
-        options.setNestingDepthLimit(12);
-        options.setCodePointLimit(1048576);
-        String yaml =
-                StandardCharsets.UTF_8
-                        .newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(bytes))
-                        .toString();
-        try {
-            return map(new Yaml(new SafeConstructor(options)).load(yaml));
-        } catch (org.yaml.snakeyaml.error.YAMLException failure) {
-            throw invalid("Invalid YAML configuration");
-        }
-    }
-
-    private static void fields(Map<String, Object> object, String... allowed) {
-        if (!Set.of(allowed).containsAll(object.keySet())) {
-            throw invalid("Unknown configuration field");
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> map(Object value) {
-        if (!(value instanceof Map<?, ?> map)
-                || map.keySet().stream().anyMatch(key -> !(key instanceof String))) {
-            throw invalid("Expected a mapping with string keys");
-        }
-        return (Map<String, Object>) map;
-    }
-
-    private static Map<String, String> stringMap(Object value) {
-        var result = new HashMap<String, String>();
-        map(value)
-                .forEach(
-                        (key, item) -> {
-                            if (!(item instanceof String text)) {
-                                throw invalid("Expected string metadata");
-                            }
-                            result.put(key, text);
-                        });
-        return Map.copyOf(result);
-    }
-
-    private static String text(Map<String, Object> object, String field) {
-        if (!(object.get(field) instanceof String value) || value.isBlank()) {
-            throw invalid(field);
-        }
-        return value;
-    }
-
-    private static int integer(Map<String, Object> object, String field) {
-        if (!(object.get(field) instanceof Integer value)) {
-            throw invalid(field);
-        }
-        return value;
-    }
-
-    private static boolean bool(Map<String, Object> object, String field) {
-        if (!(object.get(field) instanceof Boolean value)) {
-            throw invalid(field);
-        }
-        return value;
-    }
-
-    private static Set<String> strings(Map<String, Object> object, String field) {
-        if (!(object.get(field) instanceof List<?> list)) {
-            throw invalid(field);
-        }
+    private static Set<String> strings(JsonNode value) {
         var result = new HashSet<String>();
-        for (var item : list) {
-            if (!(item instanceof String value) || value.isBlank() || !result.add(value)) {
-                throw invalid(field);
-            }
-        }
+        value.forEach(item -> result.add(item.asString()));
         return Set.copyOf(result);
     }
 
-    private static Duration duration(Map<String, Object> object, String field) {
-        String value = text(object, field);
-        if (value.matches("[0-9]+(ms|s|m|h)")) {
-            int suffix = value.endsWith("ms") ? 2 : 1;
-            long amount = Long.parseLong(value.substring(0, value.length() - suffix));
-            return switch (value.substring(value.length() - suffix)) {
-                case "ms" -> Duration.ofMillis(amount);
-                case "s" -> Duration.ofSeconds(amount);
-                case "m" -> Duration.ofMinutes(amount);
-                case "h" -> Duration.ofHours(amount);
-                default -> throw invalid(field);
-            };
-        }
-        return Duration.parse(value);
+    private static Map<String, String> stringMap(JsonNode value) {
+        var result = new HashMap<String, String>();
+        value.properties()
+                .forEach(entry -> result.put(entry.getKey(), entry.getValue().asString()));
+        return Map.copyOf(result);
     }
 
-    private static IllegalArgumentException invalid(String field) {
-        return new IllegalArgumentException("Invalid Core configuration: " + field);
+    private static Duration duration(JsonNode node) {
+        String value = node.asString();
+        try {
+            if (Character.isDigit(value.charAt(0))) {
+                int suffix = value.endsWith("ms") ? 2 : 1;
+                long amount = Long.parseLong(value.substring(0, value.length() - suffix));
+                return switch (value.substring(value.length() - suffix)) {
+                    case "ms" -> Duration.ofMillis(amount);
+                    case "s" -> Duration.ofSeconds(amount);
+                    case "m" -> Duration.ofMinutes(amount);
+                    case "h" -> Duration.ofHours(amount);
+                    default ->
+                            throw new IllegalStateException(
+                                    "Unsupported schema-approved duration unit");
+                };
+            }
+            return Duration.parse(value);
+        } catch (DateTimeException | ArithmeticException | NumberFormatException failure) {
+            throw new IllegalArgumentException(
+                    "Configuration duration cannot be represented at runtime");
+        }
     }
 }

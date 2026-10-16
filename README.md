@@ -71,6 +71,21 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 预期拒绝通过 `TicketRejectedException.code()` 区分，平台 I/O 线程不能 `.join()`。
 关闭 Engine 会关闭其 ReplayGuard 并等待已排队工作；完成回调可能在 SQLite 工作线程执行，回调不能阻塞该线程。
 
+三个配置文件各有一个完整、独立的 Schema，格式契约位于 `schema/v1/`，每个文档带有自己的版本化 `$id`：
+
+| 配置文件 | Schema |
+|---|---|
+| `chorus.yml` | [chorus.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/chorus.schema.json) |
+| `servers.yml` | [servers.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/servers.schema.json) |
+| `trusted-issuers.yml` | [trusted-issuers.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/trusted-issuers.schema.json) |
+
+各 Schema 的根节点就是对应文件的完整格式，可以单独用于编辑器或其他 Draft 2020-12 验证器。
+运行时使用 `com.networknt:json-schema-validator` 从 Core JAR 加载对应 Schema，无需联网获取。
+字段结构、必填项、类型、枚举、数值范围、列表唯一性、条件规则与时长语法均在 Schema 中定义；配置格式变化优先修改对应 Schema 和契约测试。
+只有启用 Sender 时才要求签发密钥与 `issuance`，只有启用 Receiver 时才要求 `replay`；已出现的配置段均接受结构验证。
+Java 消费验证后的值，负责转换、字段间数值关系、密钥内容和跨文件引用。校验失败不打开状态库、不替换已批准快照。
+错误包含文件、JSON Pointer 字段路径及校验关键字；YAML 解析保留 1 MiB 大小、深度、重复键、别名和类型限制。
+
 Phase 1 支持 `STATIC` 目录、`LOCAL_SQLITE`、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
 共享 SQL、HMAC、压缩、通用属性与非空扩展尚未实现。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。

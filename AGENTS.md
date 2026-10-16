@@ -98,6 +98,9 @@ feat(core): Add the verification pipeline
   数据库 I/O 与定时调度通过接口封装。
 - Core 的签发、验证及可能触达 SQL 的对外操作使用 `CompletionStage`；平台层不得在 Netty EventLoop 中 `.join()` 或无超时阻塞。
 - 公开 API 的输入约束、线程约束与错误语义随接口提交；可变字节数组防御性复制，集合采用不可变快照。
+- 每个配置文件各有独立、完整、版本化的 Schema，位于 `chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/`。
+  文件格式规则优先维护在对应 Schema 与契约测试中；Java 负责值转换和运行时逻辑，不重复维护字段白名单或格式规则表。
+  修改格式时同步核对装配所消费的值、公共领域不变量和引用，具体边界见架构 §3.9。
 - 平台 API 使用 `compileOnly` / `modImplementation`，不打入产物；具体登录接口和最低兼容版本须实测。
 - 日志不得记录完整 Cookie、私钥或数据库凭据。
 - 本地 ReplayGuard 使用 SQLite，持久化提交确认后才返回成功；保留原数据库及 WAL，故障时拒绝，不回退内存。

@@ -641,6 +641,24 @@ trusted-issuers:
 
 配置加载后须验证节点 ID、密钥指纹/算法、目标引用、策略字段、TTL、容量、路径及后台类型。`SHARED_SQL` 中的批准关系等价存储于管理员控制的信任记录；上述两个 YAML 适用于静态模式或可信本地备用快照。
 
+每种配置文件使用**独立、完整、可单独验证的 JSON Schema** 作为格式契约。当前契约版本为 `v1`，采用 JSON Schema Draft 2020-12：
+
+| 配置文件 | 完整 Schema |
+|---|---|
+| `chorus.yml` | [chorus.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/chorus.schema.json) |
+| `servers.yml` | [servers.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/servers.schema.json) |
+| `trusted-issuers.yml` | [trusted-issuers.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/trusted-issuers.schema.json) |
+
+各 Schema 在根节点定义对应文件的全部结构，拥有独立的版本化 `$id`，复用片段放在该文件内部的 `$defs`；不以聚合 Schema 的片段入口替代三个文件契约。
+字段、必填项、类型、枚举、值域、列表唯一性、条件规则和可声明的字符串语法优先在 Schema 中维护；
+例如 Sender 的密钥及签发策略、Receiver 的防重放配置条件必填，以及时长语法和整秒精度均由主配置 Schema 定义。
+文件格式演进应首先修改对应 Schema 及其契约测试，Java 适配所消费值的转换和运行时行为，不另维护一份配置字段白名单或格式校验表。
+
+`com.networknt:json-schema-validator` 从 Core JAR 加载每个文件的完整 Schema，运行时验证不依赖网络。
+YAML 经有界安全解析后转换为保留数值精度的 JSON 树；拒绝重复键、集合别名、非字符串映射键及非 JSON 类型。
+Java 负责时长转换的表示范围和规范化数值、字段间关系、密钥内容与匹配、文件和目录目标引用；公开领域模型继续保护自身不变量。
+完整验证先于持久化状态打开或快照发布，失败保留原有已批准快照。运维参数保持显式配置，不通过 Schema 引入未经验证的默认值。
+
 ---
 
 ## 4. 平台模块职责与跨服时序（不提前锁死具体 API）

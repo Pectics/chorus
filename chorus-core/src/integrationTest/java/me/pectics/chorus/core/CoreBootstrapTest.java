@@ -1,3 +1,10 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, section 3.9
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationLoader.java
+ * sync: Verify all three file schemas run before persistent state or replacement snapshots are published.
+ * @endcontext
+ */
 package me.pectics.chorus.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -183,7 +190,11 @@ class CoreBootstrapTest {
                         base.replace("ticket-ttl: 15s", "ticket-ttl: 500ms"),
                         base.replace("max-ticket-lifetime: 15s", "max-ticket-lifetime: 14s"),
                         base.replace("max-ticket-bytes: 4096", "max-ticket-bytes: 5121"),
+                        base.replace("max-property-bytes: 2048", "max-property-bytes: 4097"),
                         base.replace("clock-skew: 2s", "clock-skew: -PT1S"),
+                        base.replace("ticket-ttl: 15s", "ticket-ttl: 999999999999999999999h"),
+                        base.replace("busy-timeout: 500ms", "busy-timeout: 0ms"),
+                        base.replace("busy-timeout: 500ms", "busy-timeout: 2147483648ms"),
                         base.replace("mode: STATIC", "mode: SHARED_SQL"),
                         base.replace("mode: LOCAL_SQLITE", "mode: LOCAL_MEMORY"),
                         base.replace(
@@ -211,6 +222,73 @@ class CoreBootstrapTest {
                                                 sender.substring(0, sender.indexOf("issuance:"))),
                                         clock))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void everyReferencedFileIsCheckedAgainstItsOwnCompleteSchemaBeforeOpeningState()
+            throws Exception {
+        Path main = write("chorus.yml", configuration("backend", false, true));
+        Path servers = directory.resolve("servers.yml");
+        Path trust = directory.resolve("trusted-issuers.yml");
+        String original = Files.readString(servers);
+        Files.writeString(servers, "trusted-issuers: {}");
+        assertThatThrownBy(() -> CoreBootstrap.open(main, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(servers.toString())
+                .hasMessageContaining("Schema validation failed");
+        Files.writeString(servers, original);
+        Files.writeString(trust, "servers: {}");
+        assertThatThrownBy(() -> CoreBootstrap.open(main, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(trust.toString())
+                .hasMessageContaining("Schema validation failed");
+        assertThat(directory.resolve("state")).doesNotExist();
+    }
+
+    @Test
+    void mainSchemaChecksPresentInactiveSectionsBeforeAnyReferencedFileIsRead() throws Exception {
+        Files.delete(directory.resolve("servers.yml"));
+        Files.delete(directory.resolve("trusted-issuers.yml"));
+        Path main =
+                write(
+                        "chorus.yml",
+                        configuration("backend", false, true) + "issuance: {typo: true}\n");
+        assertThatThrownBy(() -> CoreBootstrap.open(main, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("/issuance")
+                .hasMessageContaining("Schema validation failed");
+        assertThat(directory.resolve("state")).doesNotExist();
+    }
+
+    @Test
+    void convertsSchemaApprovedDurationSpellingsIntoEquivalentRuntimeValues() throws Exception {
+        for (String duration : java.util.List.of("15000ms", "PT15.000S", "pt15s", "-PT-15S")) {
+            Path main =
+                    write(
+                            "chorus.yml",
+                            configuration("backend", false, true)
+                                    .replace("ticket-ttl: 15s", "ticket-ttl: " + duration));
+            try (var core = CoreBootstrap.open(main, clock)) {
+                assertThat(core.getCookieKey()).isEqualTo("chorus:ticket");
+            }
+        }
+    }
+
+    @Test
+    void schemaFailureKeepsBothApprovedDirectoriesUnchanged() throws Exception {
+        Path servers = directory.resolve("servers.yml");
+        Path trust = directory.resolve("trusted-issuers.yml");
+        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
+        var previous = registries.snapshot();
+        var key = registries.find("gateway", "key-1").orElseThrow();
+        Files.writeString(servers, Files.readString(servers).replace("25565", "25566"));
+        Files.writeString(
+                trust, Files.readString(trust).replace("[mojang, local]", "[mojang, mojang]"));
+        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("allowed-providers (uniqueItems)");
+        assertThat(registries.snapshot()).isSameAs(previous);
+        assertThat(registries.find("gateway", "key-1")).contains(key);
     }
 
     @Test
