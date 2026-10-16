@@ -24,7 +24,7 @@ class ConfigurationLoaderTest {
         assertThatThrownBy(() -> ConfigurationLoader.read(file, Document.CORE))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(file.toString())
-                .hasMessageContaining("/crypto/algorithm (const)")
+                .hasMessageContaining("/crypto/algorithm (enum)")
                 .hasMessageNotContaining("secret-value");
     }
 

@@ -647,7 +647,7 @@ operator-b/peer-01:
 | 配置 | 契约含义 | 当前实现状态 |
 |---|---|---|
 | `crypto.algorithm: ED25519` | 本节点签发使用 `private-key / public-key`，JWS 为 `Ed25519` | 已实现；管理员提供密钥对 |
-| `crypto.algorithm: HMAC_SHA256` | 本节点签发使用 `key`，JWS 为 `HS256` | 已实现；签发角色缺失时生成 `.key`，管理员分发同一文件 |
+| `crypto.algorithm: HMAC_SHA256` | 本节点签发使用 `key`，JWS 为 `HS256` | 已实现；签发角色在密钥文件缺失时生成 `.key`，管理员分发同一文件 |
 | 信任条目 `algorithm: ED25519 / HMAC_SHA256` | 为该签发者的全部 `key / keys` 绑定验签算法；省略为 `ED25519` | 已实现；信任加载不生成密钥，不跨算法回退 |
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
 | `ticket.compression: ZSTD / GZIP` | 指定压缩方式 | TODO：编码帧、版本兼容、解压限额与编解码尚未实现；启动拒绝 |
