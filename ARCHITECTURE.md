@@ -79,7 +79,7 @@ chorus/
 │       ├── api/                        # ChorusCoreEngine、输入输出与错误类型
 │       ├── config/                     # 配置模型、校验与装配
 │       ├── model/                      # ServerNode、IdentityClaim、TicketClaims 等
-│       ├── crypto/                     # Ed25519/HMAC SPI、KeyRing、JWS 编解码
+│       ├── crypto/                     # Ed25519/HMAC 签发与验签能力、JWS 编解码
 │       ├── registry/                   # ServerNodeRegistry、TrustedIssuerRegistry
 │       │   ├── staticconfig/           # 静态 YAML 快照实现
 │       │   └── sql/                    # 可选的 Turso/libSQL 与 JDBC 实现
@@ -219,7 +219,7 @@ public interface TrustedIssuerRegistry {
 }
 ```
 
-`TrustedIssuer` 内含不可变验签密钥列表、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
+`TrustedIssuer` 内含不可变验签器列表（各自封装批准的密钥）、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
 本机批准某个签发者即表示允许其在这些身份权限内向本机提供 Ticket，不再配置接收端目标列表；验票仍须检查 `aud` 等于本机节点 ID。
 同一签发者可在轮换期间保留多把同算法的可信密钥，所有密钥共用签发者的启用状态与策略；撤销单把密钥时将其从列表移除。
 静态信任条目的 `algorithm` 为 `ED25519` 或 `HMAC_SHA256`，省略时沿用 `ED25519`；HMAC 必须显式批准。同一签发者的全部密钥绑定同一算法，不根据文件内容或票据 Header 自动转换类型。
@@ -470,19 +470,25 @@ Phase 1 的运维参数保持显式配置（§7.2）；不提供运行中修改�
 
 ### 3.7 `crypto`：密钥与签名
 
+密码学范围固定为 **Ed25519 与 HMAC-SHA256**。按两者的实际能力组织对象，不提供通用算法插件、可替换签名服务或为其他非对称算法预留层级。
+
 ```java
-public interface KeyRing {
-    SigningKey activeSigningKey();
-    java.util.List<VerificationKey> findTrustedKeys(String issuerNodeId);
+public sealed interface TicketVerifier permits Ed25519.Verifier, TicketSigner {
+    SignatureAlgorithm algorithm();
+    boolean verify(byte[] data, byte[] signature);
 }
 
-public interface SignatureService {
-    byte[] sign(byte[] data, SigningKey key);
-    boolean verify(byte[] data, byte[] signature, VerificationKey key);
+public sealed interface TicketSigner extends TicketVerifier
+        permits Ed25519.Signer, HmacSha256 {
+    byte[] sign(byte[] data);
 }
 ```
 
-`SigningKey` / `VerificationKey` 为按算法区分的 sealed interface；Ed25519 分别使用 `SigningKey.Ed25519` / `VerificationKey.Ed25519`，共享密钥 `HmacSha256Key` 同时实现签发与验签接口。密码操作使用每次调用独立的 JCA 实例，HS256 使用常量时间比较。
+共同抽象是操作能力：验签器只要求验签，签发器在其上增加签发。`Ed25519` 内聚密钥对签发器 `Signer`、公钥验签器 `Verifier` 与对应文件加载；`Signer` 组合一个 `Verifier`，可以独立交出仅含公钥的验签能力。`HmacSha256` 封装同一共享密钥的签发与验签，不暴露原始密钥，输入字节防御性复制。
+
+两种实现自行完成密码操作，每次调用独占一个 JCA 实例；HS256 使用常量时间比较。`SignatureAlgorithm` 只是这两个配置名称与 JWS 标识的封闭映射，不承担实现注册或策略分派。
+
+`TicketCodec` 直接调用对象的 `sign` / `verify`，无须额外签名服务或按密钥类型分支。Engine 直接持有一个本地 `TicketSigner`（接收专用角色可为空）；受信任签发者保存不可变 `TicketVerifier` 列表并提供批准的算法。验票捕获同一批准记录用于验签和策略检查，保留轮换、禁用、算法绑定与快照替换语义。密钥装配在启动阶段完成，本地签发材料的替换通过重新装配 Engine 生效。
 
 密钥轮换：一个签发者可同时批准多把同算法验签密钥，签发端使用当前本地密钥；撤销通过受信任配置传播，数据库故障缓存期的撤销延迟必须被接受并记录。密钥加载失败时禁止以无签名模式继续。
 
@@ -771,7 +777,7 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立使用章节：
 
 - 领域模型与配置校验。
-- Ed25519 / HMAC-SHA256 KeyRing、JWS 编解码、算法与密钥信任绑定；共享密钥文件缺失生成与手动分发。
+- Ed25519 / HMAC-SHA256 签发与验签对象、JWS 编解码、算法与密钥信任绑定；共享密钥文件缺失生成与手动分发。
 - 静态节点目录 + 可信签发者策略（不依赖共享数据库服务）。
 - `ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID`；`STRICT_ONLINE_MATCH` 的核心比较逻辑可用纯对象测试验证。
 - 本地 SQLite ReplayGuard 与可替换 SPI，含真实文件上的持久化、并发与重启验证；共享 SQL 核销不纳入第一阶段。
