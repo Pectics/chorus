@@ -47,6 +47,11 @@ public final class HmacSha256 implements TicketSigner {
     }
 
     @Override
+    public TicketVerifier verifier() {
+        return this;
+    }
+
+    @Override
     public byte[] sign(byte[] data) {
         Objects.requireNonNull(data, "data");
         try {

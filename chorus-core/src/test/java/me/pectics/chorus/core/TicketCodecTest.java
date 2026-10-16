@@ -10,11 +10,9 @@ import java.util.List;
 import java.util.Map;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
-import me.pectics.chorus.core.crypto.Ed25519SignatureService;
-import me.pectics.chorus.core.crypto.SigningKey;
-import me.pectics.chorus.core.crypto.StaticKeyRing;
+import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.TicketCodec;
-import me.pectics.chorus.core.crypto.VerificationKey;
+import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
 import org.junit.jupiter.api.Test;
@@ -23,8 +21,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class TicketCodecTest {
     private final KeyPair pair = TestSupport.keyPair();
-    private final SigningKey key = TestSupport.signingKey(pair);
-    private final TicketCodec codec = new TicketCodec(5120, 2048, new Ed25519SignatureService());
+    private final TicketSigner key = TestSupport.signer(pair);
+    private final TicketCodec codec = new TicketCodec(5120, 2048);
     private final StaticRegistries registries = TestSupport.registries(pair);
 
     private String part(int index) {
@@ -50,16 +48,11 @@ class TicketCodecTest {
                 .contains("\"alg\":\"Ed25519\"", "\"typ\":\"chorus-ticket+jwt\"")
                 .doesNotContain("\"kid\"");
         assertThat(part(1)).contains("\"iat\":" + TestSupport.NOW.getEpochSecond());
-        assertThat(
-                        new TicketCodec(bytes.length, 128, new Ed25519SignatureService())
-                                .encode(TestSupport.claims(), key))
+        assertThat(new TicketCodec(bytes.length, 128).encode(TestSupport.claims(), key))
                 .hasSize(bytes.length);
         assertThatThrownBy(
                         () ->
-                                new TicketCodec(
-                                                bytes.length - 1,
-                                                128,
-                                                new Ed25519SignatureService())
+                                new TicketCodec(bytes.length - 1, 128)
                                         .encode(TestSupport.claims(), key))
                 .isInstanceOf(TicketRejectedException.class);
         rejects(new byte[5121], TicketError.TICKET_TOO_LARGE);
@@ -99,12 +92,9 @@ class TicketCodecTest {
                         TestSupport.NOW.plusSeconds(15),
                         identity,
                         Map.of());
-        var exact = new TicketCodec(5120, 14, new Ed25519SignatureService());
+        var exact = new TicketCodec(5120, 14);
         assertThat(exact.decode(exact.encode(claims, key), registries).claims()).isEqualTo(claims);
-        assertThatThrownBy(
-                        () ->
-                                new TicketCodec(5120, 13, new Ed25519SignatureService())
-                                        .encode(claims, key))
+        assertThatThrownBy(() -> new TicketCodec(5120, 13).encode(claims, key))
                 .isInstanceOf(TicketRejectedException.class);
         assertThatThrownBy(
                         () ->
@@ -151,7 +141,7 @@ class TicketCodecTest {
                 List.of(
                         new TrustedIssuer(
                                 "gateway",
-                                List.of(new VerificationKey.Ed25519(pair.getPublic())),
+                                List.of(new Ed25519.Verifier(pair.getPublic())),
                                 false,
                                 TestSupport.policy())));
         rejects(codec.encode(TestSupport.claims(), key), TicketError.UNTRUSTED_KEY);
@@ -161,11 +151,11 @@ class TicketCodecTest {
     void acceptsOverlappingApprovedRotationKeysAndRejectsInvalidReplacementAtomically() {
         var second = TestSupport.keyPair();
         var old = registries.findByIssuer("gateway").orElseThrow();
-        var newKey = new VerificationKey.Ed25519(second.getPublic());
+        var newKey = new Ed25519.Verifier(second.getPublic());
         var rotated =
                 new TrustedIssuer(
                         "gateway",
-                        List.of(old.keys().getFirst(), newKey),
+                        List.of(old.verifiers().getFirst(), newKey),
                         true,
                         TestSupport.policy());
         registries.replace(registries.snapshot(), List.of(rotated));
@@ -174,12 +164,10 @@ class TicketCodecTest {
         assertThat(decoded.issuer()).isEqualTo(rotated);
         assertThat(codec.decode(codec.encode(TestSupport.claims(), key), registries).issuer())
                 .isEqualTo(rotated);
-        assertThat(new StaticKeyRing(key, registries).findTrustedKeys("gateway"))
-                .containsExactly(old.keys().getFirst(), newKey);
         assertThatThrownBy(() -> registries.replace(registries.snapshot(), List.of(old, rotated)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(registries.findByIssuer("gateway")).contains(rotated);
-        assertThatThrownBy(() -> rotated.keys().add(newKey))
+        assertThatThrownBy(() -> rotated.verifiers().add(newKey))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(
                         () ->
@@ -194,8 +182,8 @@ class TicketCodecTest {
     @Test
     void disablesAllIssuerKeysAndDoesNotFallBackToOtherIssuers() {
         var second = TestSupport.keyPair();
-        var firstKey = new VerificationKey.Ed25519(pair.getPublic());
-        var secondKey = new VerificationKey.Ed25519(second.getPublic());
+        var firstKey = new Ed25519.Verifier(pair.getPublic());
+        var secondKey = new Ed25519.Verifier(second.getPublic());
         var disabled =
                 new TrustedIssuer(
                         "gateway", List.of(firstKey, secondKey), false, TestSupport.policy());
@@ -203,16 +191,12 @@ class TicketCodecTest {
         registries.replace(registries.snapshot(), List.of(disabled, other));
         rejects(codec.encode(TestSupport.claims(), key), TicketError.UNTRUSTED_KEY);
         rejects(TestSupport.signRaw(part(0), part(1), second), TicketError.UNTRUSTED_KEY);
-        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway")).isEmpty();
-        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("unknown")).isEmpty();
         registries.replace(
                 registries.snapshot(),
                 List.of(
                         new TrustedIssuer("gateway", List.of(firstKey), true, TestSupport.policy()),
                         other));
         rejects(TestSupport.signRaw(part(0), part(1), second), TicketError.INVALID_SIGNATURE);
-        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway"))
-                .containsExactly(firstKey);
         rejects(
                 TestSupport.signRaw(part(0), part(1).replace("gateway", "other"), pair),
                 TicketError.INVALID_SIGNATURE);

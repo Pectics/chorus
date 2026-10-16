@@ -23,12 +23,11 @@ import java.util.Set;
 import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
-import me.pectics.chorus.core.crypto.Ed25519Keys;
-import me.pectics.chorus.core.crypto.HmacSha256Keys;
+import me.pectics.chorus.core.crypto.Ed25519;
+import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
-import me.pectics.chorus.core.crypto.SigningKey;
-import me.pectics.chorus.core.crypto.StaticKeyRing;
-import me.pectics.chorus.core.crypto.VerificationKey;
+import me.pectics.chorus.core.crypto.TicketSigner;
+import me.pectics.chorus.core.crypto.TicketVerifier;
 import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.policy.IdentityPolicy;
 import me.pectics.chorus.core.policy.IssuancePolicy;
@@ -98,7 +97,7 @@ public final class CoreBootstrap {
             throw new IllegalArgumentException(
                     "Node and issuance targets must exist in the directory");
         }
-        SigningKey key = role.sender() ? loadSigningKey(crypto, base) : null;
+        TicketSigner signer = role.sender() ? loadSigner(crypto, base) : null;
         var registries = new StaticRegistries(directory, readIssuers(trust, trustFile));
         SqliteReplayGuard guard = null;
         if (role.receiver()) {
@@ -114,12 +113,7 @@ public final class CoreBootstrap {
         }
         try {
             return new DefaultChorusCoreEngine(
-                    configuration,
-                    registries,
-                    registries,
-                    new StaticKeyRing(key, registries),
-                    guard,
-                    clock);
+                    configuration, registries, registries, signer, guard, clock);
         } catch (RuntimeException failure) {
             if (guard != null) {
                 guard.close();
@@ -130,15 +124,14 @@ public final class CoreBootstrap {
 
     private record Approved(RegistrySnapshot directory, List<TrustedIssuer> issuers) {}
 
-    private static SigningKey loadSigningKey(JsonNode crypto, Path base)
+    private static TicketSigner loadSigner(JsonNode crypto, Path base)
             throws IOException, GeneralSecurityException {
         return switch (SignatureAlgorithm.valueOf(crypto.get("algorithm").asString())) {
             case ED25519 ->
-                    Ed25519Keys.load(
+                    Ed25519.loadSigner(
                             base.resolve(crypto.get("private-key").asString()),
                             base.resolve(crypto.get("public-key").asString()));
-            case HMAC_SHA256 ->
-                    HmacSha256Keys.loadOrCreate(base.resolve(crypto.get("key").asString()));
+            case HMAC_SHA256 -> HmacSha256.loadOrCreate(base.resolve(crypto.get("key").asString()));
         };
     }
 
@@ -226,22 +219,21 @@ public final class CoreBootstrap {
                     value.has("algorithm")
                             ? SignatureAlgorithm.valueOf(value.get("algorithm").asString())
                             : SignatureAlgorithm.ED25519;
-            var keys = new ArrayList<VerificationKey>();
+            var verifiers = new ArrayList<TicketVerifier>();
             Iterable<JsonNode> paths =
                     value.has("keys") ? value.get("keys") : List.of(value.get("key"));
             for (var key : paths) {
                 Path path = base.resolve(key.asString());
-                keys.add(
+                verifiers.add(
                         switch (algorithm) {
-                            case ED25519 ->
-                                    new VerificationKey.Ed25519(Ed25519Keys.loadPublic(path));
-                            case HMAC_SHA256 -> HmacSha256Keys.load(path);
+                            case ED25519 -> Ed25519.loadVerifier(path);
+                            case HMAC_SHA256 -> HmacSha256.load(path);
                         });
             }
             issuers.add(
                     new TrustedIssuer(
                             entry.getKey(),
-                            keys,
+                            verifiers,
                             !value.has("enabled") || value.get("enabled").asBoolean(),
                             policy(value)));
         }

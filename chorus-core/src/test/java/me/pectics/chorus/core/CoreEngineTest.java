@@ -21,8 +21,6 @@ import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.config.CoreConfiguration;
 import me.pectics.chorus.core.config.NodeRole;
-import me.pectics.chorus.core.crypto.Ed25519SignatureService;
-import me.pectics.chorus.core.crypto.StaticKeyRing;
 import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
@@ -63,16 +61,14 @@ class CoreEngineTest {
                 configuration(id, role, policy),
                 registry,
                 registry,
-                new StaticKeyRing(role.sender() ? TestSupport.signingKey(pair) : null, registry),
+                role.sender() ? TestSupport.signer(pair) : null,
                 role.receiver() ? replay : null,
                 Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
     }
 
     private VerifyTicketRequest request(TicketClaims claims, ReceiverLoginContext context) {
         return new VerifyTicketRequest(
-                new TicketCodec(4096, 2048, new Ed25519SignatureService())
-                        .encode(claims, TestSupport.signingKey(pair)),
-                context);
+                new TicketCodec(4096, 2048).encode(claims, TestSupport.signer(pair)), context);
     }
 
     private void rejects(CompletionStage<?> stage, TicketError error) {

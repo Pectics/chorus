@@ -44,12 +44,11 @@ public final class TicketCodec {
             Set.of("version", "jti", "iss", "aud", "iat", "nbf", "exp", "identity", "extensions");
     private final int maxPayloadBytes;
     private final int maxPropertyBytes;
-    private final SignatureService signatures;
 
     /**
      * Limits are explicit configuration, not product defaults. Property size counts UTF-8 bytes.
      */
-    public TicketCodec(int maxPayloadBytes, int maxPropertyBytes, SignatureService signatures) {
+    public TicketCodec(int maxPayloadBytes, int maxPropertyBytes) {
         if (maxPayloadBytes < 1
                 || maxPayloadBytes > 5120
                 || maxPropertyBytes < 1
@@ -58,10 +57,9 @@ public final class TicketCodec {
         }
         this.maxPayloadBytes = maxPayloadBytes;
         this.maxPropertyBytes = maxPropertyBytes;
-        this.signatures = java.util.Objects.requireNonNull(signatures, "signatures");
     }
 
-    public byte[] encode(TicketClaims claims, SigningKey key) {
+    public byte[] encode(TicketClaims claims, TicketSigner signer) {
         if (claims.version() != 1) {
             throw reject(TicketError.UNSUPPORTED_VERSION);
         }
@@ -103,12 +101,12 @@ public final class TicketCodec {
         body.put("extensions", claims.extensions());
         var jws =
                 new JWSObject(
-                        new JWSHeader.Builder(new JWSAlgorithm(key.algorithm().jwsName()))
+                        new JWSHeader.Builder(new JWSAlgorithm(signer.algorithm().jwsName()))
                                 .type(TYPE)
                                 .build(),
                         new Payload(body));
         try {
-            jws.sign(new Signer(key));
+            jws.sign(new Signer(signer));
         } catch (com.nimbusds.jose.JOSEException e) {
             throw new IllegalStateException("Ticket signing failed", e);
         }
@@ -167,13 +165,13 @@ public final class TicketCodec {
             if (!issuer.enabled()) {
                 throw reject(TicketError.UNTRUSTED_KEY);
             }
-            if (issuer.keys().getFirst().algorithm() != algorithm) {
+            if (issuer.algorithm() != algorithm) {
                 throw reject(TicketError.UNSUPPORTED_ALGORITHM);
             }
             var jws = JWSObject.parse(compact);
             boolean verified = false;
-            for (var key : issuer.keys()) {
-                if (jws.verify(new Verifier(key))) {
+            for (var verifier : issuer.verifiers()) {
+                if (jws.verify(new Verifier(verifier))) {
                     verified = true;
                     break;
                 }
@@ -377,31 +375,31 @@ public final class TicketCodec {
         return new TicketRejectedException(code);
     }
 
-    private final class Signer extends BaseJWSProvider implements JWSSigner {
-        private final SigningKey key;
+    private static final class Signer extends BaseJWSProvider implements JWSSigner {
+        private final TicketSigner signer;
 
-        private Signer(SigningKey key) {
-            super(Set.of(new JWSAlgorithm(key.algorithm().jwsName())));
-            this.key = key;
+        private Signer(TicketSigner signer) {
+            super(Set.of(new JWSAlgorithm(signer.algorithm().jwsName())));
+            this.signer = signer;
         }
 
         @Override
         public Base64URL sign(JWSHeader header, byte[] input) {
-            return Base64URL.encode(signatures.sign(input, key));
+            return Base64URL.encode(signer.sign(input));
         }
     }
 
-    private final class Verifier extends BaseJWSProvider implements JWSVerifier {
-        private final VerificationKey key;
+    private static final class Verifier extends BaseJWSProvider implements JWSVerifier {
+        private final TicketVerifier verifier;
 
-        private Verifier(VerificationKey key) {
-            super(Set.of(new JWSAlgorithm(key.algorithm().jwsName())));
-            this.key = key;
+        private Verifier(TicketVerifier verifier) {
+            super(Set.of(new JWSAlgorithm(verifier.algorithm().jwsName())));
+            this.verifier = verifier;
         }
 
         @Override
         public boolean verify(JWSHeader header, byte[] input, Base64URL signature) {
-            return signatures.verify(input, signature.decode(), key);
+            return verifier.verify(input, signature.decode());
         }
     }
 }

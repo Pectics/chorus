@@ -23,8 +23,7 @@ import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.config.CoreBootstrap;
 import me.pectics.chorus.core.config.NodeRole;
-import me.pectics.chorus.core.crypto.StaticKeyRing;
-import me.pectics.chorus.core.crypto.VerificationKey;
+import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -400,8 +399,6 @@ class CoreBootstrapTest {
                 Files.readString(trust).replace("keys:\n    - public.der", "key: public.der"));
         CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
         assertThat(registries.findByIssuer("gateway")).contains(original);
-        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway"))
-                .containsExactlyElementsOf(original.keys());
     }
 
     @Test
@@ -419,8 +416,8 @@ class CoreBootstrapTest {
                                 "key: missing.der\n  keys:\n    - preferred.der"));
         var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
         var approved = registries.findByIssuer("gateway").orElseThrow();
-        assertThat(approved.keys())
-                .containsExactly(new VerificationKey.Ed25519(preferred.getPublic()));
+        assertThat(approved.verifiers())
+                .containsExactly(new Ed25519.Verifier(preferred.getPublic()));
         Files.writeString(
                 trust, Files.readString(trust).replace("key: missing.der", "key: public.der"));
         Files.delete(preferredFile);
@@ -441,17 +438,14 @@ class CoreBootstrapTest {
                 Files.readString(trust).replace("- public.der", "- public.der\n    - rotated.der"));
         var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
         var approved = registries.findByIssuer("gateway").orElseThrow();
-        assertThat(approved.keys()).hasSize(2);
+        assertThat(approved.verifiers()).hasSize(2);
         assertThat(approved.enabled()).isTrue();
-        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway"))
-                .containsExactlyElementsOf(approved.keys());
         Files.writeString(
                 trust, Files.readString(trust).replace("  keys:", "  enabled: false\n  keys:"));
         CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
         var disabled = registries.findByIssuer("gateway").orElseThrow();
         assertThat(disabled.enabled()).isFalse();
-        assertThat(disabled.keys()).containsExactlyElementsOf(approved.keys());
-        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway")).isEmpty();
+        assertThat(disabled.verifiers()).containsExactlyElementsOf(approved.verifiers());
         Files.write(
                 directory.resolve("rotated.der"),
                 Files.readAllBytes(directory.resolve("public.der")));

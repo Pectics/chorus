@@ -481,14 +481,15 @@ public sealed interface TicketVerifier permits Ed25519.Verifier, TicketSigner {
 public sealed interface TicketSigner extends TicketVerifier
         permits Ed25519.Signer, HmacSha256 {
     byte[] sign(byte[] data);
+    TicketVerifier verifier();
 }
 ```
 
-共同抽象是操作能力：验签器只要求验签，签发器在其上增加签发。`Ed25519` 内聚密钥对签发器 `Signer`、公钥验签器 `Verifier` 与对应文件加载；`Signer` 组合一个 `Verifier`，可以独立交出仅含公钥的验签能力。`HmacSha256` 封装同一共享密钥的签发与验签，不暴露原始密钥，输入字节防御性复制。
+共同抽象是操作能力：验签器只要求验签，签发器在其上增加签发。`Ed25519` 内聚密钥对签发器 `Signer`、公钥验签器 `Verifier` 与对应文件加载；`Signer` 组合一个 `Verifier`，通过 `verifier()` 独立交出仅含公钥的验签能力。`HmacSha256` 封装同一共享密钥的签发与验签，`verifier()` 返回自身；不暴露原始密钥，输入字节防御性复制。
 
 两种实现自行完成密码操作，每次调用独占一个 JCA 实例；HS256 使用常量时间比较。`SignatureAlgorithm` 只是这两个配置名称与 JWS 标识的封闭映射，不承担实现注册或策略分派。
 
-`TicketCodec` 直接调用对象的 `sign` / `verify`，无须额外签名服务或按密钥类型分支。Engine 直接持有一个本地 `TicketSigner`（接收专用角色可为空）；受信任签发者保存不可变 `TicketVerifier` 列表并提供批准的算法。验票捕获同一批准记录用于验签和策略检查，保留轮换、禁用、算法绑定与快照替换语义。密钥装配在启动阶段完成，本地签发材料的替换通过重新装配 Engine 生效。
+`TicketCodec` 直接调用对象的 `sign` / `verify`，无须额外签名服务或按密钥类型分支。Engine 直接持有一个本地 `TicketSigner`（接收专用角色可为空）；受信任签发者保存不可变 `TicketVerifier` 列表并提供批准的算法，传入签发器时通过 `verifier()` 归一到验签视图，避免批准记录保留 Ed25519 私钥，并按归一后的材料检查重复。验票捕获同一批准记录用于验签和策略检查，保留轮换、禁用、算法绑定与快照替换语义。密钥装配在启动阶段完成，本地签发材料的替换通过重新装配 Engine 生效。
 
 密钥轮换：一个签发者可同时批准多把同算法验签密钥，签发端使用当前本地密钥；撤销通过受信任配置传播，数据库故障缓存期的撤销延迟必须被接受并记录。密钥加载失败时禁止以无签名模式继续。
 

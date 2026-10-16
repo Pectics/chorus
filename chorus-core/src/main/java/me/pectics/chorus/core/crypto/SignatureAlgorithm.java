@@ -1,6 +1,6 @@
 package me.pectics.chorus.core.crypto;
 
-/** Supported key algorithms and their exact JWS identifiers. */
+/** The two supported signature modes and their exact JWS identifiers; no algorithm registration. */
 public enum SignatureAlgorithm {
     ED25519("Ed25519"),
     HMAC_SHA256("HS256");

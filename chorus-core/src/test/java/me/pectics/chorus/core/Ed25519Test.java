@@ -7,13 +7,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
 import java.util.Base64;
-import me.pectics.chorus.core.crypto.Ed25519Keys;
-import me.pectics.chorus.core.crypto.SigningKey;
-import me.pectics.chorus.core.crypto.VerificationKey;
+import me.pectics.chorus.core.crypto.Ed25519;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class Ed25519KeysTest {
+class Ed25519Test {
     @TempDir Path directory;
 
     @Test
@@ -27,23 +25,23 @@ class Ed25519KeysTest {
                         + Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded())
                         + "\n-----END PRIVATE KEY-----\n");
         Files.write(publicFile, pair.getPublic().getEncoded());
-        assertThat(Ed25519Keys.load(privateFile, publicFile).publicKey())
+        assertThat(Ed25519.loadSigner(privateFile, publicFile).verifier().publicKey())
                 .isEqualTo(pair.getPublic());
         Files.write(publicFile, TestSupport.keyPair().getPublic().getEncoded());
-        assertThatThrownBy(() -> Ed25519Keys.load(privateFile, publicFile))
+        assertThatThrownBy(() -> Ed25519.loadSigner(privateFile, publicFile))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void rejectsEd448AndInvalidKeyFiles() throws Exception {
         var ed448 = KeyPairGenerator.getInstance("Ed448").generateKeyPair();
-        assertThatThrownBy(() -> new VerificationKey.Ed25519(ed448.getPublic()))
+        assertThatThrownBy(() -> new Ed25519.Verifier(ed448.getPublic()))
                 .isInstanceOf(IllegalArgumentException.class);
         Path file = directory.resolve("broken.key");
         Files.writeString(file, "not a key");
-        assertThatThrownBy(() -> Ed25519Keys.loadPublic(file)).isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> Ed25519.loadVerifier(file)).isInstanceOf(Exception.class);
         var pair = TestSupport.keyPair();
-        assertThat(new SigningKey.Ed25519(pair.getPrivate(), pair.getPublic()).toString())
-                .isEqualTo("SigningKey[Ed25519]");
+        assertThat(new Ed25519.Signer(pair.getPrivate(), pair.getPublic()).toString())
+                .isEqualTo("Ed25519.Signer[redacted]");
     }
 }

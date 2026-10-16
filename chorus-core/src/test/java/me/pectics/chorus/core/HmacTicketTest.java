@@ -20,30 +20,35 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
-import me.pectics.chorus.core.crypto.HmacSha256Key;
-import me.pectics.chorus.core.crypto.JcaSignatureService;
+import me.pectics.chorus.core.crypto.Ed25519;
+import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketCodec;
-import me.pectics.chorus.core.crypto.VerificationKey;
+import me.pectics.chorus.core.crypto.TicketVerifier;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
 import org.junit.jupiter.api.Test;
 
 class HmacTicketTest {
-    private final JcaSignatureService signatures = new JcaSignatureService();
-    private final TicketCodec codec = new TicketCodec(5120, 2048, signatures);
-    private final HmacSha256Key key = key((byte) 1);
+    private final TicketCodec codec = new TicketCodec(5120, 2048);
+    private final HmacSha256 key = key((byte) 1);
     private final StaticRegistries registries = TestSupport.registries(TestSupport.keyPair());
 
-    private static HmacSha256Key key(byte value) {
-        byte[] bytes = new byte[32];
-        Arrays.fill(bytes, value);
-        return new HmacSha256Key(bytes);
+    private static HmacSha256 key(byte value) {
+        return new HmacSha256(secretBytes(value));
     }
 
-    private void approve(VerificationKey... keys) {
+    private static byte[] secretBytes(byte value) {
+        byte[] bytes = new byte[32];
+        Arrays.fill(bytes, value);
+        return bytes;
+    }
+
+    private void approve(TicketVerifier... verifiers) {
         registries.replace(
                 registries.snapshot(),
-                List.of(new TrustedIssuer("gateway", List.of(keys), true, TestSupport.policy())));
+                List.of(
+                        new TrustedIssuer(
+                                "gateway", List.of(verifiers), true, TestSupport.policy())));
     }
 
     private void rejects(byte[] ticket, TicketError error) {
@@ -57,22 +62,21 @@ class HmacTicketTest {
     void matchesIndependentHmacSha256TestVectorAndCopiesSecretBytes() {
         byte[] bytes = new byte[32];
         Arrays.fill(bytes, (byte) 0x0b);
-        var secret = new HmacSha256Key(bytes);
+        var secret = new HmacSha256(bytes);
         bytes[0] = 0;
-        secret.secretKey().getEncoded()[0] = 0;
         byte[] data = "Hi There".getBytes(StandardCharsets.US_ASCII);
         byte[] expected =
                 HexFormat.of()
                         .parseHex(
                                 "198a607eb44bfbc69903a0f1cf2bbdc5ba0aa3f3d9ae3c1c7a3b1696a0b68cf7");
-        assertThat(signatures.sign(data, secret)).isEqualTo(expected);
-        assertThat(signatures.verify(data, expected, secret)).isTrue();
+        assertThat(secret.sign(data)).isEqualTo(expected);
+        assertThat(secret.verify(data, expected)).isTrue();
         expected[0] ^= 1;
-        assertThat(signatures.verify(data, expected, secret)).isFalse();
-        assertThat(signatures.verify(data, new byte[31], secret)).isFalse();
-        assertThat(signatures.verify(data, new byte[33], secret)).isFalse();
-        assertThat(secret.toString()).isEqualTo("HmacSha256Key[redacted]");
-        assertThatThrownBy(() -> new HmacSha256Key(new byte[31]))
+        assertThat(secret.verify(data, expected)).isFalse();
+        assertThat(secret.verify(data, new byte[31])).isFalse();
+        assertThat(secret.verify(data, new byte[33])).isFalse();
+        assertThat(secret.toString()).isEqualTo("HmacSha256[redacted]");
+        assertThatThrownBy(() -> new HmacSha256(new byte[31]))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -84,10 +88,10 @@ class HmacTicketTest {
         assertThat(parsed.getHeader().getAlgorithm().getName()).isEqualTo("HS256");
         assertThat(parsed.getHeader().getType().toString()).isEqualTo("chorus-ticket+jwt");
         assertThat(parsed.getHeader().getKeyID()).isNull();
-        assertThat(parsed.verify(new MACVerifier(key.secretKey()))).isTrue();
+        assertThat(parsed.verify(new MACVerifier(secretBytes((byte) 1)))).isTrue();
         assertThat(codec.decode(ticket, registries).claims()).isEqualTo(TestSupport.claims());
         var signed = new JWSObject(parsed.getHeader(), parsed.getPayload());
-        signed.sign(new com.nimbusds.jose.crypto.MACSigner(key.secretKey()));
+        signed.sign(new com.nimbusds.jose.crypto.MACSigner(secretBytes((byte) 1)));
         assertThat(
                         codec.decode(
                                         signed.serialize().getBytes(StandardCharsets.US_ASCII),
@@ -123,7 +127,7 @@ class HmacTicketTest {
     @Test
     void cannotUseAnEd25519PublicKeyAsAnHs256Secret() throws Exception {
         var pair = TestSupport.keyPair();
-        approve(new VerificationKey.Ed25519(pair.getPublic()));
+        approve(new Ed25519.Verifier(pair.getPublic()));
         byte[] ticket = codec.encode(TestSupport.claims(), key);
         String compact = new String(ticket, StandardCharsets.US_ASCII);
         String input = compact.substring(0, compact.lastIndexOf('.'));
@@ -141,13 +145,13 @@ class HmacTicketTest {
         rejects(attack, TicketError.UNSUPPORTED_ALGORITHM);
         approve(key);
         rejects(
-                codec.encode(TestSupport.claims(), TestSupport.signingKey(pair)),
+                codec.encode(TestSupport.claims(), TestSupport.signer(pair)),
                 TicketError.UNSUPPORTED_ALGORITHM);
         assertThatThrownBy(
                         () ->
                                 new TrustedIssuer(
                                         "gateway",
-                                        List.of(key, new VerificationKey.Ed25519(pair.getPublic())),
+                                        List.of(key, new Ed25519.Verifier(pair.getPublic())),
                                         true,
                                         TestSupport.policy()))
                 .isInstanceOf(IllegalArgumentException.class);

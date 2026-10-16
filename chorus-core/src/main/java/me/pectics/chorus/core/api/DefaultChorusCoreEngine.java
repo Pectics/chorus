@@ -17,9 +17,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import me.pectics.chorus.core.config.CoreConfiguration;
-import me.pectics.chorus.core.crypto.JcaSignatureService;
-import me.pectics.chorus.core.crypto.KeyRing;
 import me.pectics.chorus.core.crypto.TicketCodec;
+import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
@@ -32,12 +31,14 @@ import me.pectics.chorus.core.state.ReplayGuard;
 
 /**
  * Phase-1 engine. Takes ownership of ReplayGuard; other injected collaborators remain caller-owned.
+ * Sender roles require a signer; receiver-only nodes may pass null. Signing material is fixed for
+ * this engine's lifetime; trusted verification snapshots can still be replaced independently.
  */
 public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
     private final CoreConfiguration configuration;
     private final ServerNodeRegistry servers;
     private final TrustedIssuerRegistry issuers;
-    private final KeyRing keys;
+    private final TicketSigner signer;
     private final ReplayGuard replay;
     private final Clock clock;
     private final TicketCodec codec;
@@ -47,22 +48,19 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             CoreConfiguration configuration,
             ServerNodeRegistry servers,
             TrustedIssuerRegistry issuers,
-            KeyRing keys,
+            TicketSigner signer,
             ReplayGuard replay,
             Clock clock) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
         this.servers = Objects.requireNonNull(servers, "servers");
         this.issuers = Objects.requireNonNull(issuers, "issuers");
-        this.keys = Objects.requireNonNull(keys, "keys");
+        this.signer = signer;
         this.replay = replay;
         this.clock = Objects.requireNonNull(clock, "clock");
         this.codec =
-                new TicketCodec(
-                        configuration.maxPayloadBytes(),
-                        configuration.maxPropertyBytes(),
-                        new JcaSignatureService());
+                new TicketCodec(configuration.maxPayloadBytes(), configuration.maxPropertyBytes());
         if (configuration.role().sender()) {
-            keys.activeSigningKey();
+            Objects.requireNonNull(signer, "Sender requires a ticket signer");
         }
         if (configuration.role().receiver()) {
             Objects.requireNonNull(replay, "Receiver requires a replay guard");
@@ -119,7 +117,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                     new IssueTicketResult(
                             target,
                             configuration.cookieKey(),
-                            codec.encode(claims, keys.activeSigningKey()),
+                            codec.encode(claims, signer),
                             claims.jti(),
                             claims.expiresAt()));
         } catch (RuntimeException e) {

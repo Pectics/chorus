@@ -23,7 +23,7 @@ import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.config.CoreBootstrap;
-import me.pectics.chorus.core.crypto.HmacSha256Keys;
+import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
@@ -195,8 +195,8 @@ class HmacBootstrapTest {
         Path trustFile = base.resolve("trust/issuers.yml");
         Path original = base.resolve("trust/old.key");
         Path rotated = base.resolve("trust/new.key");
-        var oldKey = HmacSha256Keys.loadOrCreate(original);
-        var newKey = HmacSha256Keys.loadOrCreate(rotated);
+        var oldKey = HmacSha256.loadOrCreate(original);
+        var newKey = HmacSha256.loadOrCreate(rotated);
         trust(file, "missing.key");
         String single = Files.readString(trustFile);
         Files.writeString(
@@ -206,8 +206,8 @@ class HmacBootstrapTest {
         var registries =
                 CoreBootstrap.loadRegistries(base.resolve("servers.yml"), trustFile, clock);
         var approved = registries.findByIssuer("gateway").orElseThrow();
-        assertThat(approved.keys()).containsExactly(oldKey, newKey);
-        assertThat(approved.keys().getFirst().algorithm())
+        assertThat(approved.verifiers()).containsExactly(oldKey, newKey);
+        assertThat(approved.verifiers().getFirst().algorithm())
                 .isEqualTo(SignatureAlgorithm.HMAC_SHA256);
         Files.write(rotated, Files.readAllBytes(original));
         assertThatThrownBy(
@@ -228,7 +228,7 @@ class HmacBootstrapTest {
                 trustFile, single.replace("key: missing.key", "key: old.key\n  enabled: false"));
         CoreBootstrap.reloadRegistries(registries, base.resolve("servers.yml"), trustFile, clock);
         assertThat(registries.findByIssuer("gateway").orElseThrow().enabled()).isFalse();
-        assertThat(registries.findByIssuer("gateway").orElseThrow().keys())
+        assertThat(registries.findByIssuer("gateway").orElseThrow().verifiers())
                 .isEqualTo(List.of(oldKey));
     }
 }

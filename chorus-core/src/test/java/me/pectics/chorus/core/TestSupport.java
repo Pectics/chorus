@@ -10,8 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import me.pectics.chorus.core.crypto.SigningKey;
-import me.pectics.chorus.core.crypto.VerificationKey;
+import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ProfileProperty;
@@ -37,8 +36,8 @@ public final class TestSupport {
         }
     }
 
-    public static SigningKey signingKey(KeyPair pair) {
-        return new SigningKey.Ed25519(pair.getPrivate(), pair.getPublic());
+    public static Ed25519.Signer signer(KeyPair pair) {
+        return new Ed25519.Signer(pair.getPrivate(), pair.getPublic());
     }
 
     public static IdentityClaim identity() {
@@ -93,7 +92,7 @@ public final class TestSupport {
                 List.of(
                         new TrustedIssuer(
                                 "gateway",
-                                List.of(new VerificationKey.Ed25519(pair.getPublic())),
+                                List.of(new Ed25519.Verifier(pair.getPublic())),
                                 true,
                                 policy())));
     }

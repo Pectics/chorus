@@ -7,4 +7,7 @@ package me.pectics.chorus.core.crypto;
  */
 public sealed interface TicketSigner extends TicketVerifier permits Ed25519.Signer, HmacSha256 {
     byte[] sign(byte[] data);
+
+    /** Returns public-only Ed25519 verification, or this same shared-secret HMAC capability. */
+    TicketVerifier verifier();
 }

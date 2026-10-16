@@ -195,8 +195,24 @@ gateway:
 同一签发者的 `key` / `keys` 使用同一算法，优先级和轮换规则与 Ed25519 相同。
 共享该文件的节点均有能力签发对应密钥覆盖的票据，应只在互信节点之间分发。
 
-直接使用 Java 密钥 API 时，Ed25519 构造器为 `SigningKey.Ed25519` / `VerificationKey.Ed25519`，
-HMAC 使用同时支持签发与验签的 `HmacSha256Key`。
+Java API 按实际能力组织，范围固定为 Ed25519 与 HMAC-SHA256：`TicketVerifier` 提供验签，
+`TicketSigner` 继承它并增加签发与验签视图 `verifier()`。Ed25519 使用 `Ed25519.Signer` / `Ed25519.Verifier`，
+HMAC 使用封装共享密钥的 `HmacSha256`。签发器可以直接签名，无须单独配置签名服务。
+
+```java
+var sender = Ed25519.loadSigner(privateFile, publicFile);
+TicketVerifier receiver = sender.verifier();
+byte[] signature = sender.sign(data);
+boolean valid = receiver.verify(data, signature);
+
+var shared = HmacSha256.loadOrCreate(sharedFile);
+boolean sharedValid = shared.verify(data, shared.sign(data));
+```
+
+`Ed25519.loadVerifier(publicFile)` 只加载公钥，`HmacSha256.load(sharedFile)` 只读取已同步的共享密钥。
+`DefaultChorusCoreEngine` 直接接收本地 `TicketSigner`；接收专用角色可传 `null`。
+`TrustedIssuer.verifiers()` 保存批准的验签视图，Ed25519 签发器传入批准记录时会收敛为仅含公钥的验签器。
+配置文件和票据格式沿用上文约定。
 
 Ticket 使用三段 Compact JWS，Header 为 `alg: Ed25519` 或 `alg: HS256`，以及固定的 `typ: chorus-ticket+jwt`；
 Claims 为 `version: 1`、`jti`、`iss`、`aud`、整秒 `iat/nbf/exp`、`identity` 与空 `extensions`。
