@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.4, 3.7, and 3.8
- * sync: Keep the versioned wire schema, strict parsing, and Ed25519 allowlist aligned.
+ * sync: Keep the wire schema, strict parsing, and issuer-bound algorithm allowlist aligned.
  * @endcontext
  */
 package me.pectics.chorus.core.crypto;
@@ -39,7 +39,6 @@ import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
 
 /** Bounded version-1 Compact JWS. Only approved local keys are used; no remote key discovery. */
 public final class TicketCodec {
-    private static final JWSAlgorithm ALGORITHM = new JWSAlgorithm("Ed25519");
     private static final JOSEObjectType TYPE = new JOSEObjectType("chorus-ticket+jwt");
     private static final Set<String> CLAIM_FIELDS =
             Set.of("version", "jti", "iss", "aud", "iat", "nbf", "exp", "identity", "extensions");
@@ -104,7 +103,10 @@ public final class TicketCodec {
         body.put("extensions", claims.extensions());
         var jws =
                 new JWSObject(
-                        new JWSHeader.Builder(ALGORITHM).type(TYPE).build(), new Payload(body));
+                        new JWSHeader.Builder(new JWSAlgorithm(key.algorithm().jwsName()))
+                                .type(TYPE)
+                                .build(),
+                        new Payload(body));
         try {
             jws.sign(new Signer(key));
         } catch (com.nimbusds.jose.JOSEException e) {
@@ -148,7 +150,10 @@ public final class TicketCodec {
             }
             var header = parseObject(new Base64URL(parts[0]).decode());
             var body = parseObject(new Base64URL(parts[1]).decode());
-            if (!"Ed25519".equals(header.get("alg"))) {
+            SignatureAlgorithm algorithm;
+            try {
+                algorithm = SignatureAlgorithm.fromJwsName((String) header.get("alg"));
+            } catch (IllegalArgumentException | ClassCastException unsupported) {
                 throw reject(TicketError.UNSUPPORTED_ALGORITHM);
             }
             if (!header.keySet().equals(Set.of("alg", "typ"))
@@ -161,6 +166,9 @@ public final class TicketCodec {
                             .orElseThrow(() -> reject(TicketError.UNKNOWN_ISSUER));
             if (!issuer.enabled()) {
                 throw reject(TicketError.UNTRUSTED_KEY);
+            }
+            if (issuer.keys().getFirst().algorithm() != algorithm) {
+                throw reject(TicketError.UNSUPPORTED_ALGORITHM);
             }
             var jws = JWSObject.parse(compact);
             boolean verified = false;
@@ -373,7 +381,7 @@ public final class TicketCodec {
         private final SigningKey key;
 
         private Signer(SigningKey key) {
-            super(Set.of(ALGORITHM));
+            super(Set.of(new JWSAlgorithm(key.algorithm().jwsName())));
             this.key = key;
         }
 
@@ -387,7 +395,7 @@ public final class TicketCodec {
         private final VerificationKey key;
 
         private Verifier(VerificationKey key) {
-            super(Set.of(ALGORITHM));
+            super(Set.of(new JWSAlgorithm(key.algorithm().jwsName())));
             this.key = key;
         }
 

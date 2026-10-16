@@ -38,7 +38,7 @@ public final class TestSupport {
     }
 
     public static SigningKey signingKey(KeyPair pair) {
-        return new SigningKey(pair.getPrivate(), pair.getPublic());
+        return new SigningKey.Ed25519(pair.getPrivate(), pair.getPublic());
     }
 
     public static IdentityClaim identity() {
@@ -93,7 +93,7 @@ public final class TestSupport {
                 List.of(
                         new TrustedIssuer(
                                 "gateway",
-                                List.of(new VerificationKey(pair.getPublic())),
+                                List.of(new VerificationKey.Ed25519(pair.getPublic())),
                                 true,
                                 policy())));
     }

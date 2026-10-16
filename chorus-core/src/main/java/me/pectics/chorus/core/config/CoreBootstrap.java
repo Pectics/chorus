@@ -208,7 +208,9 @@ public final class CoreBootstrap {
             Iterable<JsonNode> paths =
                     value.has("keys") ? value.get("keys") : List.of(value.get("key"));
             for (var key : paths) {
-                keys.add(new VerificationKey(Ed25519Keys.loadPublic(base.resolve(key.asString()))));
+                keys.add(
+                        new VerificationKey.Ed25519(
+                                Ed25519Keys.loadPublic(base.resolve(key.asString()))));
             }
             issuers.add(
                     new TrustedIssuer(

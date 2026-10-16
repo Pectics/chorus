@@ -17,7 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import me.pectics.chorus.core.config.CoreConfiguration;
-import me.pectics.chorus.core.crypto.Ed25519SignatureService;
+import me.pectics.chorus.core.crypto.JcaSignatureService;
 import me.pectics.chorus.core.crypto.KeyRing;
 import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.model.AuthType;
@@ -60,7 +60,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                 new TicketCodec(
                         configuration.maxPayloadBytes(),
                         configuration.maxPropertyBytes(),
-                        new Ed25519SignatureService());
+                        new JcaSignatureService());
         if (configuration.role().sender()) {
             keys.activeSigningKey();
         }

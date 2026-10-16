@@ -15,7 +15,7 @@ import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 
 /**
  * Local receiver approval of an issuer under one policy. Copies the key list and rejects invalid
- * issuer IDs, empty lists, and duplicate public keys.
+ * issuer IDs, empty lists, duplicate keys, and mixed algorithms.
  */
 public record TrustedIssuer(
         String issuerNodeId,
@@ -28,7 +28,11 @@ public record TrustedIssuer(
         }
         keys = List.copyOf(keys);
         if (keys.isEmpty() || new HashSet<>(keys).size() != keys.size()) {
-            throw new IllegalArgumentException("Issuer requires distinct approved public keys");
+            throw new IllegalArgumentException("Issuer requires distinct approved keys");
+        }
+        var algorithm = keys.getFirst().algorithm();
+        if (keys.stream().anyMatch(key -> key.algorithm() != algorithm)) {
+            throw new IllegalArgumentException("Issuer keys must use one algorithm");
         }
         Objects.requireNonNull(policy, "policy");
     }

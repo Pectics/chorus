@@ -132,7 +132,7 @@ class TicketCodecTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"none", "EdDSA", "HS256", "Ed448"})
-    void rejectsAlgorithmsOutsideTheSingleAllowlist(String algorithm) {
+    void rejectsAlgorithmsOutsideTheIssuerAllowlist(String algorithm) {
         rejects(
                 TestSupport.signRaw(part(0).replace("Ed25519", algorithm), part(1), pair),
                 TicketError.UNSUPPORTED_ALGORITHM);
@@ -151,7 +151,7 @@ class TicketCodecTest {
                 List.of(
                         new TrustedIssuer(
                                 "gateway",
-                                List.of(new VerificationKey(pair.getPublic())),
+                                List.of(new VerificationKey.Ed25519(pair.getPublic())),
                                 false,
                                 TestSupport.policy())));
         rejects(codec.encode(TestSupport.claims(), key), TicketError.UNTRUSTED_KEY);
@@ -161,7 +161,7 @@ class TicketCodecTest {
     void acceptsOverlappingApprovedRotationKeysAndRejectsInvalidReplacementAtomically() {
         var second = TestSupport.keyPair();
         var old = registries.findByIssuer("gateway").orElseThrow();
-        var newKey = new VerificationKey(second.getPublic());
+        var newKey = new VerificationKey.Ed25519(second.getPublic());
         var rotated =
                 new TrustedIssuer(
                         "gateway",
@@ -194,8 +194,8 @@ class TicketCodecTest {
     @Test
     void disablesAllIssuerKeysAndDoesNotFallBackToOtherIssuers() {
         var second = TestSupport.keyPair();
-        var firstKey = new VerificationKey(pair.getPublic());
-        var secondKey = new VerificationKey(second.getPublic());
+        var firstKey = new VerificationKey.Ed25519(pair.getPublic());
+        var secondKey = new VerificationKey.Ed25519(second.getPublic());
         var disabled =
                 new TrustedIssuer(
                         "gateway", List.of(firstKey, secondKey), false, TestSupport.policy());

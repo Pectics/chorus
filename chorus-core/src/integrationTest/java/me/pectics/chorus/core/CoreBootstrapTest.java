@@ -419,7 +419,8 @@ class CoreBootstrapTest {
                                 "key: missing.der\n  keys:\n    - preferred.der"));
         var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
         var approved = registries.findByIssuer("gateway").orElseThrow();
-        assertThat(approved.keys()).containsExactly(new VerificationKey(preferred.getPublic()));
+        assertThat(approved.keys())
+                .containsExactly(new VerificationKey.Ed25519(preferred.getPublic()));
         Files.writeString(
                 trust, Files.readString(trust).replace("key: missing.der", "key: public.der"));
         Files.delete(preferredFile);
@@ -456,7 +457,7 @@ class CoreBootstrapTest {
                 Files.readAllBytes(directory.resolve("public.der")));
         assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("distinct approved public keys");
+                .hasMessageContaining("distinct approved keys");
         assertThat(registries.findByIssuer("gateway").orElseThrow()).isSameAs(disabled);
     }
 

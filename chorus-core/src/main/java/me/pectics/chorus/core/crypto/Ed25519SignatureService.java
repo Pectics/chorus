@@ -9,7 +9,10 @@ import java.security.Signature;
 public final class Ed25519SignatureService implements SignatureService {
     @Override
     public byte[] sign(byte[] data, SigningKey key) {
-        return sign(data, key.privateKey());
+        if (!(key instanceof SigningKey.Ed25519 ed25519)) {
+            throw new IllegalArgumentException("An Ed25519 signing key is required");
+        }
+        return sign(data, ed25519.privateKey());
     }
 
     byte[] sign(byte[] data, PrivateKey key) {
@@ -25,7 +28,10 @@ public final class Ed25519SignatureService implements SignatureService {
 
     @Override
     public boolean verify(byte[] data, byte[] signature, VerificationKey key) {
-        return verify(data, signature, key.publicKey());
+        if (!(key instanceof VerificationKey.Ed25519 ed25519)) {
+            throw new IllegalArgumentException("An Ed25519 verification key is required");
+        }
+        return verify(data, signature, ed25519.publicKey());
     }
 
     boolean verify(byte[] data, byte[] signature, PublicKey key) {
