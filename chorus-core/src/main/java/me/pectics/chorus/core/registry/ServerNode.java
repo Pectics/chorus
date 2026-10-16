@@ -1,16 +1,14 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, section 3.2
+ * related: chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/servers.schema.json
+ * sync: Keep routing fields aligned with the directory schema and bootstrap assembly.
+ * @endcontext
+ */
 package me.pectics.chorus.core.registry;
 
-import java.util.Map;
-import java.util.Set;
-
 /** Administrator-approved routing data. A directory entry does not grant issuer trust. */
-public record ServerNode(
-        String nodeId,
-        String displayName,
-        String host,
-        int port,
-        Set<String> tags,
-        Map<String, String> metadata) {
+public record ServerNode(String nodeId, String displayName, String host, int port) {
     public ServerNode {
         if (nodeId == null
                 || !nodeId.matches("[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
@@ -23,7 +21,5 @@ public record ServerNode(
                 || port > 65535) {
             throw new IllegalArgumentException("Invalid server node");
         }
-        tags = Set.copyOf(tags);
-        metadata = Map.copyOf(metadata);
     }
 }

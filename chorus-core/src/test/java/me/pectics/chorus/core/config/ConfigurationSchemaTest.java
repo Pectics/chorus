@@ -30,7 +30,7 @@ class ConfigurationSchemaTest {
     static final String CORE =
             """
             {
-              "node": {"id": "backend", "capabilities": {"sender": false, "receiver": true}},
+              "node": {"id": "backend", "role": "BACKEND"},
               "cookie-key": "chorus:ticket",
               "crypto": {
                 "algorithm": "ED25519", "ticket-ttl": "15s", "max-ticket-lifetime": "15s",
@@ -48,8 +48,8 @@ class ConfigurationSchemaTest {
     static final String TRUST =
             """
             {"trusted-issuers": {"gateway": {
-              "keys": [{"kid": "key-1", "public-key-file": "gateway.pub"}],
-              "allowed-auth-types": ["MOJANG"], "allowed-providers": ["mojang"], "allowed-targets": ["backend"]
+              "keys": ["gateway.pub"],
+              "allowed-auth-types": ["MOJANG"], "allowed-providers": ["mojang"]
             }}}
             """;
     private static final SchemaRegistry REGISTRY =
@@ -80,27 +80,36 @@ class ConfigurationSchemaTest {
         }
     }
 
-    @Test
-    void capabilitiesControlRequiredSectionsWithinTheMainSchema() {
-        var core = fixture(Document.CORE);
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
-        ((ObjectNode) core).remove("replay");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
-        var capabilities = (ObjectNode) core.at("/node/capabilities");
-        capabilities.put("receiver", false).put("sender", true);
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+    @ParameterizedTest
+    @EnumSource(NodeRole.class)
+    void rolesControlRequiredSectionsWithinTheMainSchema(NodeRole role) {
+        var core = (ObjectNode) fixture(Document.CORE);
+        ((ObjectNode) core.get("node")).put("role", role.name());
+        assertThat(contract(Document.CORE).validate(core).isEmpty())
+                .isEqualTo(role == NodeRole.BACKEND);
         ((ObjectNode) core.get("crypto"))
-                .put("key-id", "key-1")
                 .put("private-key-file", "private.der")
                 .put("public-key-file", "public.der");
-        ((ObjectNode) core)
-                .set(
-                        "issuance",
-                        fixture(Document.TRUSTED_ISSUERS)
-                                .at("/trusted-issuers/gateway")
-                                .deepCopy());
-        ((ObjectNode) core.get("issuance")).remove("keys");
+        var issuance =
+                ((ObjectNode) fixture(Document.TRUSTED_ISSUERS).at("/trusted-issuers/gateway"));
+        issuance.remove("keys");
+        issuance.putArray("allowed-targets").add("backend");
+        core.set("issuance", issuance);
         assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        var withoutReplay = core.deepCopy();
+        withoutReplay.remove("replay");
+        assertThat(contract(Document.CORE).validate(withoutReplay).isEmpty())
+                .isEqualTo(role == NodeRole.GATEWAY);
+        var withoutIssuance = core.deepCopy();
+        withoutIssuance.remove("issuance");
+        assertThat(contract(Document.CORE).validate(withoutIssuance).isEmpty())
+                .isEqualTo(role == NodeRole.BACKEND);
+        for (String field : List.of("private-key-file", "public-key-file")) {
+            var withoutKey = core.deepCopy();
+            ((ObjectNode) withoutKey.get("crypto")).remove(field);
+            assertThat(contract(Document.CORE).validate(withoutKey).isEmpty())
+                    .isEqualTo(role == NodeRole.BACKEND);
+        }
     }
 
     @Test
@@ -108,7 +117,11 @@ class ConfigurationSchemaTest {
         for (String invalid :
                 List.of(
                         CORE.replace("\"id\": \"backend\"", "\"id\": \"bad id\""),
-                        CORE.replace("\"sender\": false", "\"sender\": \"false\""),
+                        CORE.replace("\"role\": \"BACKEND\"", "\"role\": false"),
+                        CORE.replace("BACKEND", "UNKNOWN"),
+                        CORE.replace(
+                                "\"role\": \"BACKEND\"",
+                                "\"role\": \"BACKEND\", \"capabilities\": {\"sender\": true, \"receiver\": true}"),
                         CORE.replace("\"algorithm\": \"ED25519\"", "\"algorithm\": \"HMAC\""),
                         CORE.replace(
                                 "\"algorithm\": \"ED25519\"",
@@ -128,6 +141,9 @@ class ConfigurationSchemaTest {
         assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
         core = (ObjectNode) fixture(Document.CORE);
         core.set("issuance", JSON.createObjectNode());
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        core = (ObjectNode) fixture(Document.CORE);
+        ((ObjectNode) core.get("node")).remove("role");
         assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
     }
 
@@ -181,13 +197,7 @@ class ConfigurationSchemaTest {
                         SERVERS.replace("25565", "65536"),
                         SERVERS.replace("localhost", "local host"),
                         SERVERS.replace(
-                                "\"port\": 25565",
-                                "\"port\": 25565, \"tags\": [\"public\", \"public\"]"),
-                        SERVERS.replace(
-                                "\"port\": 25565", "\"port\": 25565, \"tags\": [\"\u2003\"]"),
-                        SERVERS.replace(
-                                "\"port\": 25565",
-                                "\"port\": 25565, \"metadata\": {\"region\": 1}"),
+                                "\"port\": 25565", "\"port\": 25565, \"display-name\": \"\u2003\""),
                         SERVERS.replace("\"port\": 25565", "\"port\": 25565, \"typo\": true"),
                         SERVERS.replace("backend", "bad id"))) {
             assertThat(contract(Document.SERVERS).validate(JSON.readTree(invalid))).isNotEmpty();
@@ -200,6 +210,25 @@ class ConfigurationSchemaTest {
                 .isEmpty();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"tags", "metadata"})
+    void directorySchemaRejectsRemovedExtensionFields(String field) {
+        var servers = fixture(Document.SERVERS);
+        var entry = (ObjectNode) servers.at("/servers/backend");
+        if (field.equals("tags")) {
+            entry.putArray(field).add("lobby");
+        } else {
+            entry.putObject(field).put("region", "cn");
+        }
+        assertThat(contract(Document.SERVERS).validate(servers))
+                .anySatisfy(
+                        error -> {
+                            assertThat(error.getKeyword()).isEqualTo("additionalProperties");
+                            assertThat(error.getInstanceLocation().toString())
+                                    .isEqualTo("/servers/backend");
+                        });
+    }
+
     @Test
     void trustSchemaDefinesKeysAndEveryPolicyField() {
         for (String invalid :
@@ -208,20 +237,47 @@ class ConfigurationSchemaTest {
                         TRUST.replace("MOJANG", "UNKNOWN"),
                         TRUST.replace("[\"mojang\"]", "[\"mojang\", \"mojang\"]"),
                         TRUST.replace("[\"mojang\"]", "[\"Mojang\"]"),
-                        TRUST.replace("key-1", "bad key"),
+                        TRUST.replace("[\"gateway.pub\"]", "[]"),
+                        TRUST.replace("[\"gateway.pub\"]", "[\" \u2003\"]"),
+                        TRUST.replace("[\"gateway.pub\"]", "[null]"),
+                        TRUST.replace("[\"gateway.pub\"]", "[false]"),
+                        TRUST.replace("[\"gateway.pub\"]", "[\"gateway.pub\", \"gateway.pub\"]"),
                         TRUST.replace(
-                                "\"kid\": \"key-1\"", "\"kid\": \"key-1\", \"enabled\": \"false\""),
+                                "[\"gateway.pub\"]",
+                                "[{\"public-key-file\": \"gateway.pub\", \"enabled\": true}]"),
+                        TRUST.replace("\"keys\":", "\"enabled\": \"false\", \"keys\":"),
+                        TRUST.replace("\"keys\":", "\"allowed-targets\": [\"backend\"], \"keys\":"),
                         TRUST.replace("\"keys\":", "\"typo\": true, \"keys\":"))) {
             assertThat(contract(Document.TRUSTED_ISSUERS).validate(JSON.readTree(invalid)))
                     .isNotEmpty();
         }
         var trust = fixture(Document.TRUSTED_ISSUERS);
-        ((ObjectNode) trust.at("/trusted-issuers/gateway")).remove("allowed-targets");
+        ((ObjectNode) trust.at("/trusted-issuers/gateway")).remove("allowed-providers");
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+        trust = fixture(Document.TRUSTED_ISSUERS);
+        ((ObjectNode) trust.at("/trusted-issuers/gateway")).put("enabled", false);
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
         assertThat(
                         contract(Document.TRUSTED_ISSUERS)
                                 .validate(JSON.readTree("{\"trusted-issuers\":{}}")))
                 .isEmpty();
+    }
+
+    @Test
+    void schemasRejectRemovedKeyIdentifiers() {
+        var core = fixture(Document.CORE);
+        ((ObjectNode) core.get("crypto")).put("key-id", "removed");
+        assertThat(contract(Document.CORE).validate(core))
+                .anySatisfy(
+                        error -> assertThat(error.getKeyword()).isEqualTo("additionalProperties"));
+        var trust = fixture(Document.TRUSTED_ISSUERS);
+        ((ObjectNode) trust.at("/trusted-issuers/gateway"))
+                .putArray("keys")
+                .addObject()
+                .put("public-key-file", "gateway.pub")
+                .put("kid", "removed");
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust))
+                .anySatisfy(error -> assertThat(error.getKeyword()).isEqualTo("type"));
     }
 
     private static JsonNode fixture(Document document) {

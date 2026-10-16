@@ -32,7 +32,7 @@ Chorus 利用这些机制构建**无常驻游戏流量中转的跨服互联体�
 
 ### 1.2 为什么不能强制绑定客户端 IP
 
-例如：美国 Gateway → 日本 Backend A → 上海 Backend B。玩家可分别使用美国代理、日本代理及中国大陆直连。**出口 IP 不一致是正常情况，不构成默认风险信号。**
+例如：美国 Gateway → 日本 Peer A → 上海 Backend B。玩家可分别使用美国代理、日本代理及中国大陆直连。**出口 IP 不一致是正常情况，不构成默认风险信号。**
 
 因此 Chorus 的基础校验不使用 IP 绑定。以后确需提供 IP 附加策略时，也必须默认关闭，并不得阻碍规则分流。
 
@@ -125,15 +125,17 @@ chorus/
 | `chorus-velocity` | 入口网关或可用能力内的 Sender/Receiver，异步登录对接 | 假定具有与 Paper 相同的登录 API |
 | `chorus-fabric` | Fabric 登录状态机与 Cookie、Profile、Transfer 集成 | 将 Mixin 直接编入 Core |
 
-### 2.4 角色与能力分开
+### 2.4 角色决定发送和接收能力
 
-保留用户熟悉的 `GATEWAY` / `BACKEND` / `PEER` 角色名，但它们是**预设配置组合**，并非强制互斥的 API 类型。
+节点通过必填的 `role` 选择固定的操作范围：
 
-- Gateway：入口认证、通常可签发 Ticket。
-- Backend：以接收 Ticket 为主；若开启 Sender，亦可继续转服。
-- Peer：可双向转移，受签发者授权范围约束。
+| 角色 | 签发 Ticket | 接收 Ticket |
+|---|---|---|
+| `GATEWAY` | 是 | 否 |
+| `BACKEND` | 否 | 是 |
+| `PEER` | 是 | 是 |
 
-最终是否可 Sender / Receiver，以显式 `capabilities` 为准，不以角色名称推断安全权限。
+接收玩家后还需要继续转服的节点使用 `PEER`。不再提供独立的发送、接收能力开关；角色只决定操作是否可用，签发与接收仍分别受本节点签发策略、接收端信任策略约束。
 
 ---
 
@@ -160,8 +162,8 @@ chorus/
 
 #### 注册与信任分离
 
-- **`ServerNodeRegistry`**：节点 ID、显示名、连接地址、标签和在线状态，解决“往哪里转”。
-- **`TrustedIssuerRegistry`**：由管理员批准的签发者、公钥/指纹、签发来源范围、可访问节点范围，解决“信任谁”。
+- **`ServerNodeRegistry`**：节点 ID、显示名和连接地址，解决“往哪里转”。
+- **`TrustedIssuerRegistry`**：由本机管理员批准的签发者、公钥列表与身份来源范围，解决“本机信任谁”。
 - 心跳信息只用于 UI 与路由提示，不是授予身份签发权限的凭据。
 - 节点上报的候选公钥不能自动成为受信任公钥；密钥轮换需批准或受可信旧密钥授权的轮换流程。
 
@@ -177,21 +179,20 @@ chorus/
 
 ### 3.2 `registry` API 设计
 
+节点目录只保存节点 ID、显示名、主机名与端口；分组标签和通用元数据不纳入当前配置及模型。
+
 ```java
 package me.pectics.chorus.core.registry;
 
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 public record ServerNode(
     String nodeId,             // 全域唯一；建议约定 namespace/nodeId
     String displayName,
     String host,
-    int port,
-    Set<String> tags,
-    Map<String, String> metadata
+    int port
 ) {}
 
 public record RegistrySnapshot(
@@ -214,11 +215,14 @@ package me.pectics.chorus.core.registry;
 import java.util.Optional;
 
 public interface TrustedIssuerRegistry {
-    Optional<TrustedIssuer> find(String issuerNodeId, String keyId);
+    Optional<TrustedIssuer> findByIssuer(String issuerNodeId);
 }
 ```
 
-`TrustedIssuer` 内含验签公钥、启用状态、允许的 `AuthType` / `authProvider`、目标节点约束，以及经管理员批准的权限策略。应允许同一签发者在轮换期间存在多个可信 `kid`。
+`TrustedIssuer` 内含不可变验签公钥列表、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
+本机批准某个签发者即表示允许其在这些身份权限内向本机提供 Ticket，不再配置接收端目标列表；验票仍须检查 `aud` 等于本机节点 ID。
+同一签发者可在轮换期间保留多把可信公钥，所有公钥共用签发者的启用状态与策略；撤销单把公钥时将其从列表移除。
+配置、API 与 Ticket 均不使用密钥标识，接收端按签发节点 ID 查找批准记录；签发者启用时依次尝试其公钥，验签后使用该签发者的策略。
 
 写入型管理接口另行声明，例如 `ServerDirectoryAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
 
@@ -234,21 +238,19 @@ CREATE TABLE chorus_servers (
     host           TEXT NOT NULL,
     port           INTEGER NOT NULL,
     role_hint      TEXT,
-    metadata_json  TEXT,
     enabled        INTEGER NOT NULL DEFAULT 1,
     updated_at_ms  INTEGER NOT NULL
 );
 
 -- 管理员批准的信任条目；示例为按接收节点授权
 CREATE TABLE chorus_trusted_issuers (
-    receiver_node_id       TEXT NOT NULL,
-    issuer_node_id         TEXT NOT NULL,
-    key_id                 TEXT NOT NULL,
-    public_key_ed25519     TEXT NOT NULL,
-    policy_json            TEXT NOT NULL,
-    enabled                INTEGER NOT NULL DEFAULT 1,
-    updated_at_ms          INTEGER NOT NULL,
-    PRIMARY KEY (receiver_node_id, issuer_node_id, key_id)
+    receiver_node_id        TEXT NOT NULL,
+    issuer_node_id          TEXT NOT NULL,
+    public_keys_ed25519_json TEXT NOT NULL,
+    policy_json             TEXT NOT NULL,
+    enabled                 INTEGER NOT NULL DEFAULT 1,
+    updated_at_ms           INTEGER NOT NULL,
+    PRIMARY KEY (receiver_node_id, issuer_node_id)
 );
 
 -- 可选的节点观测数据；不用于授权
@@ -379,13 +381,13 @@ public record TicketClaims(
 - Cookie 最大 5120 字节；`core` 应检查**最终编码后的字节长度**。示例项目限额可取 4096 字节，但不是协议强制值。
 - 默认不压缩 Ticket；如果将来添加压缩，必须有版本标记、大小/解压上限与明确的编解码兼容测试。
 
-**密钥选择**：本地 KeyRing 按 `iss + kid` 查可信公钥，并校验 `alg` 白名单；不得使用 JWT 里给出的任意 URL 下载密钥。新节点上传公钥不会自动扩大信任集合。
+**密钥选择**：按 `iss` 查找本地批准的签发者，拒绝禁用的签发者，校验 `alg` 白名单并依次尝试其批准公钥；不得尝试其他签发者的公钥或使用 JWT 中的任意 URL 下载密钥。新节点上传公钥不会自动扩大信任集合。
 
 ### 3.5 `strategy`：身份解析与联盟信任
 
 将两类逻辑严格分开：
 
-1. **`IssuerTrustPolicy`**：决定某签发节点能否为某目标节点断言某 `authType + authProvider` 的身份；由 Receiver 配置裁定。
+1. **`IssuerTrustPolicy`**：决定本机是否接受某签发节点断言的 `authType + authProvider` 身份；由 Receiver 配置裁定。Sender 使用独立的 `IssuancePolicy`，在身份权限之外增加允许签发的目标列表。
 2. **`IdentityResolutionStrategy`**：已授权后，决定本地 GameProfile UUID 与皮肤属性。
 
 ```java
@@ -419,8 +421,8 @@ public interface IdentityResolutionStrategy {
 
 #### 互信集群与受控联盟
 
-- **私人互信集群**：管理员可给指定 Sender 较宽的身份断言权限，例如 Gateway 和可信 Backend 可重新签发已接受的身份。节点私钥泄露后，对该节点允许的权限范围承担相应风险。
-- **跨服主联盟**：默认不把外域节点等同于内部 Gateway。逐一授权签发者、公钥、身份来源与目标节点；`OFFLINE_RAW` 不应自动拥有 Mojang 断言权限。
+- **私人互信集群**：管理员可给指定 Sender 较宽的身份断言权限，例如 Gateway 可签发入口身份，可信 Peer 可重新签发已接受的身份。节点私钥泄露后，对该节点允许的权限范围承担相应风险。
+- **跨服主联盟**：默认不把外域节点等同于内部 Gateway。每个接收节点独立授权签发者、公钥与身份来源；`OFFLINE_RAW` 不应自动拥有 Mojang 断言权限。
 - **关键边界**：仅凭单层新签发 JWT，Receiver 无法密码学证明“外域 Peer 转发了原 Gateway 已验证的真实身份，而不是自己捏造同样的身份”。如果希望允许不完全可信节点中转官方身份，必须另行设计**原始身份凭证（Identity Attestation）+ 本次转移授权**的分层签名机制，或让 Receiver 自行复验；这项能力**尚未确认纳入 MVP**。
 
 签发者权限不取决于 Ticket 自己携带的数字 `trustLevel`。
@@ -469,7 +471,7 @@ Phase 1 的运维参数保持显式配置（§7.2）；不提供运行中修改�
 ```java
 public interface KeyRing {
     SigningKey activeSigningKey();
-    java.util.Optional<VerificationKey> findTrustedKey(String issuerNodeId, String kid);
+    java.util.List<VerificationKey> findTrustedKeys(String issuerNodeId);
 }
 
 public interface SignatureService {
@@ -541,7 +543,7 @@ public interface ChorusCoreEngine extends AutoCloseable {
 `verifyAndResolve()` 顺序：
 
 1. 限制总输入长度、解码复杂度；拒绝缺失的 Cookie / 不支持的结构版本。
-2. 从不可信 Header/Claim 读取最小 `kid/iss` 定位本地批准的密钥；检查 `alg` 白名单并先完成验签。
+2. 从不可信 Claim 读取 `iss` 定位本地批准且启用的签发者；检查 `alg` 白名单并依次尝试其公钥，先完成验签。
 3. 检查 `aud`、时间窗口、最大 Ticket 生存期、Transfer Intent、登录用户名（大小写完全一致）与 Receiver 授权策略。
 4. 如启用双端独立认证比对，检查平台提供的 `VerifiedExternalIdentity`，不能以客户端自报 UUID 代替。
 5. 计算 `ResolvedPlayerProfile`；失败不消耗 JTI。
@@ -557,16 +559,13 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 ### 3.9 统一配置 `chorus.yml`
 
-配置例子展示一个使用共享 SQL **节点目录**、但采用**本地 SQLite 票据防重放**的部署，旨在说明两者可以独立组合；并不代表 SQL 核销的最终选型已作决定。
+配置例子展示一个使用共享 SQL **节点目录**、但采用**本地 SQLite 票据防重放**的 Peer 部署，旨在说明两者可以独立组合；并不代表 SQL 核销的最终选型已作决定。
 
 ```yaml
 node:
   id: "operator-a/sh-survival-01"  # 跨管理域须唯一
   display-name: "上海生存一服"
-  role: BACKEND
-  capabilities:
-    sender: true
-    receiver: true
+  role: PEER
 
 cookie-key: "chorus:ticket"
 
@@ -598,6 +597,11 @@ verification:
   identity-strategy: ADOPT_UPSTREAM
   ip-binding-mode: DISABLED
 
+issuance:
+  allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
+  allowed-providers: [mojang, local]
+  allowed-targets: [operator-a/jp-backend-01]
+
 replay:
   mode: LOCAL_SQLITE          # 示例组合；共享 SQL 是否默认仍待评审
   file: "state/replay.db"
@@ -616,6 +620,10 @@ servers:
     host: sh.example.net
     port: 25565
     display-name: 上海生存服
+  operator-a/jp-backend-01:
+    host: jp.example.net
+    port: 25565
+    display-name: 日本后端服
 ```
 
 `trusted-issuers.yml` 示意接收端本地授权，不与普通 `servers` 列表混为一谈：
@@ -624,22 +632,18 @@ servers:
 trusted-issuers:
   operator-a/us-gateway-01:
     keys:
-      - kid: gateway-key-01
-        public-key-file: keys/gateway-key-01.pub
+      - keys/gateway.pub
     allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
     allowed-providers: [mojang, local]
-    allowed-targets: [operator-a/sh-survival-01]
 
   operator-b/peer-01:
     keys:
-      - kid: alliance-peer-01
-        public-key-file: keys/alliance-peer-01.pub
+      - keys/alliance-peer.pub
     allowed-auth-types: [OFFLINE_AUTH]
     allowed-providers: [operator-b/local]
-    allowed-targets: [operator-a/sh-survival-01]
 ```
 
-配置加载后须验证节点 ID、密钥指纹/算法、目标引用、策略字段、TTL、容量、路径及后台类型。`SHARED_SQL` 中的批准关系等价存储于管理员控制的信任记录；上述两个 YAML 适用于静态模式或可信本地备用快照。
+配置加载后须验证节点 ID、公钥算法、目标引用、策略字段、TTL、容量、路径及后台类型。`SHARED_SQL` 中的批准关系等价存储于管理员控制的信任记录；上述两个 YAML 适用于静态模式或可信本地备用快照。
 
 每种配置文件使用**独立、完整、可单独验证的 JSON Schema** 作为格式契约。当前契约版本为 `v1`，采用 JSON Schema Draft 2020-12：
 
@@ -651,7 +655,7 @@ trusted-issuers:
 
 各 Schema 在根节点定义对应文件的全部结构，拥有独立的版本化 `$id`，复用片段放在该文件内部的 `$defs`；不以聚合 Schema 的片段入口替代三个文件契约。
 字段、必填项、类型、枚举、值域、列表唯一性、条件规则和可声明的字符串语法优先在 Schema 中维护；
-例如 Sender 的密钥及签发策略、Receiver 的防重放配置条件必填，以及时长语法和整秒精度均由主配置 Schema 定义。
+例如 `GATEWAY` / `PEER` 的密钥及签发策略、`BACKEND` / `PEER` 的防重放配置条件必填，以及时长语法和整秒精度均由主配置 Schema 定义。
 文件格式演进应首先修改对应 Schema 及其契约测试，Java 适配所消费值的转换和运行时行为，不另维护一份配置字段白名单或格式校验表。
 
 `com.networknt:json-schema-validator` 从 Core JAR 加载每个文件的完整 Schema，运行时验证不依赖网络。
@@ -762,7 +766,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 2. 正版 → 旧离线 UUID 映射；离线 → 离线；双正版独立验证上下文比较。
 3. 外域不可信签发者、错误 provider/target、密钥替换、过期/未来票据拒绝。
 4. 同一 JTI 并发消费只有一次成功，容量满时 fail-closed，提交完成前不返回成功，重开后继续拒绝重放。
-5. JWT 规格、编码长度、异常字段、未知算法和未知 `kid`。
+5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准公钥签名。
 6. 静态目录变更、无外部数据库服务运行；共享目录故障缓存过期验证在 Phase 2 完成。
 
 ### Phase 2：共享目录 SQL 实现

@@ -26,15 +26,6 @@
           "display-name": {
             "$ref": "#/$defs/nonBlankString",
             "description": "Optional display label. Runtime assembly uses the node ID when absent."
-          },
-          "tags": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {"$ref": "#/$defs/nonBlankString"}
-          },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": {"type": "string"}
           }
         }
       }

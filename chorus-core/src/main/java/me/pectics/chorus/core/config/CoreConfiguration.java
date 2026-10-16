@@ -9,19 +9,18 @@ package me.pectics.chorus.core.config;
 import java.time.Duration;
 import java.util.Objects;
 import me.pectics.chorus.core.strategy.IdentityStrategy;
-import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
+import me.pectics.chorus.core.strategy.IssuancePolicy;
 
 /**
  * Immutable settings with explicit operational parameters until architecture 7.2 is settled.
  * Lifetimes and skew use whole seconds; TTL is positive and no larger than maxTicketLifetime.
  * Ticket bytes are limited to 5120; property bytes cannot exceed that configured ticket limit.
- * Sender requires policy. Invalid settings throw IllegalArgumentException or ArithmeticException
- * for overflowing durations.
+ * GATEWAY and PEER require an issuance policy. Invalid settings throw IllegalArgumentException or
+ * ArithmeticException for overflowing durations.
  */
 public record CoreConfiguration(
         String nodeId,
-        boolean sender,
-        boolean receiver,
+        NodeRole role,
         String cookieKey,
         Duration ticketTtl,
         Duration maxTicketLifetime,
@@ -30,8 +29,9 @@ public record CoreConfiguration(
         int maxPropertyBytes,
         boolean requireTransferIntent,
         IdentityStrategy identityStrategy,
-        IssuerTrustPolicy issuancePolicy) {
+        IssuancePolicy issuancePolicy) {
     public CoreConfiguration {
+        Objects.requireNonNull(role, "role");
         Objects.requireNonNull(ticketTtl, "ticketTtl");
         Objects.requireNonNull(maxTicketLifetime, "maxTicketLifetime");
         Objects.requireNonNull(clockSkew, "clockSkew");
@@ -56,7 +56,7 @@ public record CoreConfiguration(
             throw new IllegalArgumentException("Invalid ticket lifetime or size limits");
         }
         maxTicketLifetime.plus(clockSkew).toMillis();
-        if (sender && issuancePolicy == null) {
+        if (role.sender() && issuancePolicy == null) {
             throw new IllegalArgumentException("Sender requires explicit issuance permissions");
         }
     }

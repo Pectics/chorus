@@ -17,11 +17,10 @@ import java.util.Base64;
 public final class Ed25519Keys {
     private Ed25519Keys() {}
 
-    public static SigningKey load(String keyId, Path privateFile, Path publicFile)
+    public static SigningKey load(Path privateFile, Path publicFile)
             throws IOException, GeneralSecurityException {
         var factory = KeyFactory.getInstance("Ed25519");
         return new SigningKey(
-                keyId,
                 factory.generatePrivate(new PKCS8EncodedKeySpec(read(privateFile, "PRIVATE KEY"))),
                 loadPublic(publicFile));
     }

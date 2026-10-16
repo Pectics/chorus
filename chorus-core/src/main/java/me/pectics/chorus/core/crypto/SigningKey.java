@@ -4,9 +4,9 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 
 /** Active local key pair; private key material is never included in string representations. */
-public record SigningKey(String keyId, PrivateKey privateKey, PublicKey publicKey) {
+public record SigningKey(PrivateKey privateKey, PublicKey publicKey) {
     public SigningKey {
-        new VerificationKey(keyId, publicKey);
+        Ed25519Keys.requireEd25519(publicKey);
         Ed25519Keys.requireEd25519(privateKey);
         var service = new Ed25519SignatureService();
         byte[] probe =
@@ -18,6 +18,6 @@ public record SigningKey(String keyId, PrivateKey privateKey, PublicKey publicKe
 
     @Override
     public String toString() {
-        return "SigningKey[keyId=" + keyId + "]";
+        return "SigningKey[Ed25519]";
     }
 }

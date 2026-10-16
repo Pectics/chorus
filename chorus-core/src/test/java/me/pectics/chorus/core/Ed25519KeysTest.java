@@ -27,23 +27,23 @@ class Ed25519KeysTest {
                         + Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded())
                         + "\n-----END PRIVATE KEY-----\n");
         Files.write(publicFile, pair.getPublic().getEncoded());
-        assertThat(Ed25519Keys.load("key-1", privateFile, publicFile).publicKey())
+        assertThat(Ed25519Keys.load(privateFile, publicFile).publicKey())
                 .isEqualTo(pair.getPublic());
         Files.write(publicFile, TestSupport.keyPair().getPublic().getEncoded());
-        assertThatThrownBy(() -> Ed25519Keys.load("key-1", privateFile, publicFile))
+        assertThatThrownBy(() -> Ed25519Keys.load(privateFile, publicFile))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void rejectsEd448AndInvalidKeyFiles() throws Exception {
         var ed448 = KeyPairGenerator.getInstance("Ed448").generateKeyPair();
-        assertThatThrownBy(() -> new VerificationKey("key", ed448.getPublic()))
+        assertThatThrownBy(() -> new VerificationKey(ed448.getPublic()))
                 .isInstanceOf(IllegalArgumentException.class);
         Path file = directory.resolve("broken.key");
         Files.writeString(file, "not a key");
         assertThatThrownBy(() -> Ed25519Keys.loadPublic(file)).isInstanceOf(Exception.class);
         var pair = TestSupport.keyPair();
-        assertThat(new SigningKey("key", pair.getPrivate(), pair.getPublic()).toString())
-                .isEqualTo("SigningKey[keyId=key]");
+        assertThat(new SigningKey(pair.getPrivate(), pair.getPublic()).toString())
+                .isEqualTo("SigningKey[Ed25519]");
     }
 }

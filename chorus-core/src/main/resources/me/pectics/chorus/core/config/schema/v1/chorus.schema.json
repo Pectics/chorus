@@ -11,22 +11,13 @@
     "node": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "capabilities"],
+      "required": ["id", "role"],
       "properties": {
         "id": {"$ref": "#/$defs/nodeId"},
         "display-name": {"$ref": "#/$defs/nonBlankString"},
         "role": {
-          "description": "A descriptive role hint. Capabilities determine enabled operations.",
+          "description": "GATEWAY sends tickets, BACKEND receives tickets, and PEER supports both operations.",
           "enum": ["GATEWAY", "BACKEND", "PEER"]
-        },
-        "capabilities": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["sender", "receiver"],
-          "properties": {
-            "sender": {"type": "boolean"},
-            "receiver": {"type": "boolean"}
-          }
         }
       }
     },
@@ -41,7 +32,6 @@
       "required": ["algorithm", "ticket-ttl", "max-ticket-lifetime", "clock-skew", "max-ticket-bytes", "max-property-bytes"],
       "properties": {
         "algorithm": {"const": "ED25519"},
-        "key-id": {"$ref": "#/$defs/keyId"},
         "ticket-ttl": {
           "$ref": "#/$defs/wholeSecondDuration",
           "description": "A positive whole-second lifetime, no greater than max-ticket-lifetime."
@@ -155,14 +145,14 @@
         "properties": {
           "node": {
             "properties": {
-              "capabilities": {"properties": {"sender": {"const": true}}}
+              "role": {"enum": ["GATEWAY", "PEER"]}
             }
           }
         }
       },
       "then": {
         "required": ["issuance"],
-        "properties": {"crypto": {"required": ["key-id", "private-key-file", "public-key-file"]}}
+        "properties": {"crypto": {"required": ["private-key-file", "public-key-file"]}}
       }
     },
     {
@@ -170,7 +160,7 @@
         "properties": {
           "node": {
             "properties": {
-              "capabilities": {"properties": {"receiver": {"const": true}}}
+              "role": {"enum": ["BACKEND", "PEER"]}
             }
           }
         }
@@ -186,10 +176,6 @@
     "nodeId": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$(?![\\s\\S])"
-    },
-    "keyId": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9._-]{1,128}$(?![\\s\\S])"
     },
     "duration": {
       "description": "An unsigned integer followed by ms, s, m, or h, or the Java Duration ISO-8601 syntax. Range and normalized sign are checked during conversion.",

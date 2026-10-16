@@ -61,10 +61,10 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                         configuration.maxTicketBytes(),
                         configuration.maxPropertyBytes(),
                         new Ed25519SignatureService());
-        if (configuration.sender()) {
+        if (configuration.role().sender()) {
             keys.activeSigningKey();
         }
-        if (configuration.receiver()) {
+        if (configuration.role().receiver()) {
             Objects.requireNonNull(replay, "Receiver requires a replay guard");
         }
     }
@@ -84,7 +84,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         Objects.requireNonNull(request, "request");
         try {
             requireOpen();
-            if (!configuration.sender()) {
+            if (!configuration.role().sender()) {
                 throw reject(TicketError.CAPABILITY_DISABLED);
             }
             var identity = request.identity().claim();
@@ -132,7 +132,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         Objects.requireNonNull(request, "request");
         try {
             requireOpen();
-            if (!configuration.receiver()) {
+            if (!configuration.role().receiver()) {
                 throw reject(TicketError.CAPABILITY_DISABLED);
             }
             var decoded = codec.decode(request.cookiePayload(), issuers);
@@ -149,9 +149,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                 throw reject(TicketError.USERNAME_MISMATCH);
             }
             if (!supported(claims.identity().authType())
-                    || !decoded.issuer()
-                            .policy()
-                            .permits(claims.identity(), configuration.nodeId())) {
+                    || !decoded.issuer().policy().permits(claims.identity())) {
                 throw reject(TicketError.ISSUER_POLICY_DENIED);
             }
             if (configuration.identityStrategy() == IdentityStrategy.STRICT_ONLINE_MATCH) {

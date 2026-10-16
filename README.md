@@ -97,9 +97,6 @@ Phase 1 支持 `STATIC` 目录、`LOCAL_SQLITE`、`ADOPT_UPSTREAM`、`FORCE_OFFL
 node:
   id: backend
   role: BACKEND
-  capabilities:
-    sender: false
-    receiver: true
 cookie-key: chorus:ticket
 crypto:
   algorithm: ED25519
@@ -142,15 +139,13 @@ servers:
 trusted-issuers:
   gateway:
     keys:
-      - kid: gateway-key-01
-        public-key-file: keys/gateway.pub
+      - keys/gateway.pub
     allowed-auth-types: [MOJANG]
     allowed-providers: [mojang]
-    allowed-targets: [backend]
 ```
 
-配置 Gateway 时，把节点 ID 改为 `gateway`，显式设置 `sender: true`、`receiver: false`；在 `crypto` 中
-加入 `key-id: gateway-key-01`、`private-key-file: keys/gateway.key` 和 `public-key-file: keys/gateway.pub`，
+配置 Gateway 时，把节点 ID 改为 `gateway`，将 `role` 改为 `GATEWAY`；在 `crypto` 中
+加入 `private-key-file: keys/gateway.key` 和 `public-key-file: keys/gateway.pub`，
 并在根级加入签发权限（接收端仍独立裁定）：
 
 ```yaml
@@ -163,9 +158,12 @@ issuance:
 密钥由管理员提供：Ed25519 私钥使用 PKCS#8，公钥使用 X.509 SPKI，均支持 DER 或 PEM；加载失败不启用无签名模式。
 主配置内的路径相对 `chorus.yml`，信任公钥路径相对 `trusted-issuers.yml`。
 `CoreBootstrap.loadRegistries` / `reloadRegistries` 提供显式静态快照加载与替换；加载失败保留旧快照，不自动监视文件。
-同一签发者可批准多个 `kid` 支持轮换，删除或禁用条目会在快照替换后撤销相应信任。
+`GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay`。
+`issuance.allowed-targets` 限制本节点可以签发的目标；本机 `trusted-issuers` 只配置受信任签发者及其身份权限，验票时检查目标为本机。
+同一签发者的 `keys` 是公钥路径字符串列表，可保留多把公钥支持轮换；接收端依次尝试这些公钥。
+签发者级 `enabled: false` 会禁用其全部公钥；撤销单把公钥时从列表移除。配置变更在快照替换后生效。
 
-Ticket 只使用三段 Compact JWS，Header 固定 `alg: Ed25519`、`typ: chorus-ticket+jwt` 与 `kid`；
+Ticket 只使用三段 Compact JWS，Header 固定为 `alg: Ed25519` 与 `typ: chorus-ticket+jwt`；
 Claims 为 `version: 1`、`jti`、`iss`、`aud`、整秒 `iat/nbf/exp`、`identity` 与空 `extensions`。
 身份字段沿用 Java 模型名称；UUID 为标准小写连字符形式，用户名为 1～16 个 ASCII 字母、数字或下划线。
 Profile 至多一个 `textures`，可省略 `signature`，不接受 JSON null；总属性限额计入名称、值及签名的 UTF-8 字节。

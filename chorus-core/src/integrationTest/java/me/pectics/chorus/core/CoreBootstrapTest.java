@@ -21,6 +21,8 @@ import me.pectics.chorus.core.api.IssueTicketRequest;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.config.CoreBootstrap;
+import me.pectics.chorus.core.config.NodeRole;
+import me.pectics.chorus.core.crypto.StaticKeyRing;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +48,9 @@ class CoreBootstrapTest {
                   backend:
                     host: backend.example.net
                     port: 25565
+                  next-backend:
+                    host: next-backend.example.net
+                    port: 25565
                 """);
         Files.writeString(
                 directory.resolve("trusted-issuers.yml"),
@@ -53,26 +58,20 @@ class CoreBootstrapTest {
                 trusted-issuers:
                   gateway:
                     keys:
-                      - kid: key-1
-                        public-key-file: public.der
+                      - public.der
                     allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
                     allowed-providers: [mojang, local]
-                    allowed-targets: [backend]
                 """);
     }
 
-    private String configuration(String node, boolean sender, boolean receiver) {
+    private String configuration(String node, NodeRole role) {
         return """
                 node:
                   id: %s
-                  role: PEER
-                  capabilities:
-                    sender: %s
-                    receiver: %s
+                  role: %s
                 cookie-key: chorus:ticket
                 crypto:
                   algorithm: ED25519
-                  key-id: key-1
                   ticket-ttl: 15s
                   max-ticket-lifetime: 15s
                   clock-skew: 2s
@@ -98,10 +97,9 @@ class CoreBootstrapTest {
                 """
                 .formatted(
                         node,
-                        sender,
-                        receiver,
+                        role,
                         node,
-                        sender
+                        role.sender()
                                 ? """
                 issuance:
                   allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
@@ -118,8 +116,8 @@ class CoreBootstrapTest {
     @Test
     void configuredSenderToReceiverInheritsMojangIdentityAndRejectsReplayAfterRestart()
             throws Exception {
-        Path senderFile = write("gateway.yml", configuration("gateway", true, false));
-        Path receiverFile = write("backend.yml", configuration("backend", false, true));
+        Path senderFile = write("gateway.yml", configuration("gateway", NodeRole.GATEWAY));
+        Path receiverFile = write("backend.yml", configuration("backend", NodeRole.BACKEND));
         byte[] payload;
         try (var sender = CoreBootstrap.open(senderFile, clock)) {
             var ticket =
@@ -157,6 +155,45 @@ class CoreBootstrapTest {
     }
 
     @Test
+    void configuredPeerCanReceiveAndForwardUsingOnlyItsRole() throws Exception {
+        Path senderFile = write("gateway.yml", configuration("gateway", NodeRole.GATEWAY));
+        Path peerFile =
+                write(
+                        "peer.yml",
+                        configuration("backend", NodeRole.PEER)
+                                .replace(
+                                        "allowed-targets: [backend]",
+                                        "allowed-targets: [next-backend]"));
+        try (var sender = CoreBootstrap.open(senderFile, clock);
+                var peer = CoreBootstrap.open(peerFile, clock)) {
+            var issued =
+                    sender.issueTicket(
+                                    new IssueTicketRequest(
+                                            "backend",
+                                            new AuthenticatedIdentity(
+                                                    TestSupport.identity(), "gateway"),
+                                            Map.of()))
+                            .toCompletableFuture()
+                            .get(5, TimeUnit.SECONDS);
+            var accepted =
+                    peer.verifyAndResolve(
+                                    new VerifyTicketRequest(
+                                            issued.cookiePayload(),
+                                            new ReceiverLoginContext("Notch", true, null)))
+                            .toCompletableFuture()
+                            .get(5, TimeUnit.SECONDS);
+            var forwarded =
+                    peer.issueTicket(
+                                    new IssueTicketRequest(
+                                            "next-backend", accepted.retainedIdentity(), Map.of()))
+                            .toCompletableFuture()
+                            .get(5, TimeUnit.SECONDS);
+            assertThat(forwarded.targetServer().nodeId()).isEqualTo("next-backend");
+            assertThat(accepted.retainedIdentity().claim()).isEqualTo(TestSupport.identity());
+        }
+    }
+
+    @Test
     void staticReloadPublishesOnlyACompleteValidSnapshotAndDoesNotAgeOutStaticApproval()
             throws Exception {
         Path servers = directory.resolve("servers.yml");
@@ -170,9 +207,9 @@ class CoreBootstrapTest {
         assertThat(previous.servers().get("backend").port()).isEqualTo(25565);
         assertThat(registries.snapshot().stale()).isFalse();
         var approved = registries.snapshot();
-        Files.writeString(trust, Files.readString(trust).replace("[backend]", "[unknown]"));
+        Files.writeString(trust, Files.readString(trust).replace("public.der", "private.der"));
         assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(GeneralSecurityException.class);
         assertThat(registries.snapshot()).isSameAs(approved);
         Files.writeString(trust, "trusted-issuers: {gateway: {keys: []}}");
         assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
@@ -183,7 +220,7 @@ class CoreBootstrapTest {
     @Test
     void rejectsInvalidLimitsMissingIssuanceUnsupportedModesAndUnknownFieldsBeforeOpeningState()
             throws Exception {
-        String base = configuration("backend", false, true);
+        String base = configuration("backend", NodeRole.BACKEND);
         for (String invalid :
                 java.util.List.of(
                         base.replace("ticket-ttl: 15s", "ticket-ttl: 0s"),
@@ -213,7 +250,7 @@ class CoreBootstrapTest {
                     .isInstanceOf(IllegalArgumentException.class);
             assertThat(directory.resolve("state/backend.db")).doesNotExist();
         }
-        String sender = configuration("gateway", true, false);
+        String sender = configuration("gateway", NodeRole.GATEWAY);
         assertThatThrownBy(
                         () ->
                                 CoreBootstrap.open(
@@ -227,7 +264,7 @@ class CoreBootstrapTest {
     @Test
     void everyReferencedFileIsCheckedAgainstItsOwnCompleteSchemaBeforeOpeningState()
             throws Exception {
-        Path main = write("chorus.yml", configuration("backend", false, true));
+        Path main = write("chorus.yml", configuration("backend", NodeRole.BACKEND));
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         String original = Files.readString(servers);
@@ -252,7 +289,7 @@ class CoreBootstrapTest {
         Path main =
                 write(
                         "chorus.yml",
-                        configuration("backend", false, true) + "issuance: {typo: true}\n");
+                        configuration("backend", NodeRole.BACKEND) + "issuance: {typo: true}\n");
         assertThatThrownBy(() -> CoreBootstrap.open(main, clock))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("/issuance")
@@ -266,7 +303,7 @@ class CoreBootstrapTest {
             Path main =
                     write(
                             "chorus.yml",
-                            configuration("backend", false, true)
+                            configuration("backend", NodeRole.BACKEND)
                                     .replace("ticket-ttl: 15s", "ticket-ttl: " + duration));
             try (var core = CoreBootstrap.open(main, clock)) {
                 assertThat(core.getCookieKey()).isEqualTo("chorus:ticket");
@@ -280,7 +317,7 @@ class CoreBootstrapTest {
         Path trust = directory.resolve("trusted-issuers.yml");
         var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
         var previous = registries.snapshot();
-        var key = registries.find("gateway", "key-1").orElseThrow();
+        var keys = registries.findByIssuer("gateway");
         Files.writeString(servers, Files.readString(servers).replace("25565", "25566"));
         Files.writeString(
                 trust, Files.readString(trust).replace("[mojang, local]", "[mojang, mojang]"));
@@ -288,7 +325,7 @@ class CoreBootstrapTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("allowed-providers (uniqueItems)");
         assertThat(registries.snapshot()).isSameAs(previous);
-        assertThat(registries.find("gateway", "key-1")).contains(key);
+        assertThat(registries.findByIssuer("gateway")).isEqualTo(keys);
     }
 
     @Test
@@ -312,14 +349,48 @@ class CoreBootstrapTest {
     }
 
     @Test
+    void loadsMultipleIssuerKeysAndRejectsDuplicatePublicKeysWithoutReplacingApprovals()
+            throws Exception {
+        Path servers = directory.resolve("servers.yml");
+        Path trust = directory.resolve("trusted-issuers.yml");
+        Files.write(
+                directory.resolve("rotated.der"), TestSupport.keyPair().getPublic().getEncoded());
+        Files.writeString(
+                trust,
+                Files.readString(trust)
+                        .replace("- public.der", "- public.der\n      - rotated.der"));
+        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
+        var approved = registries.findByIssuer("gateway").orElseThrow();
+        assertThat(approved.keys()).hasSize(2);
+        assertThat(approved.enabled()).isTrue();
+        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway"))
+                .containsExactlyElementsOf(approved.keys());
+        Files.writeString(
+                trust,
+                Files.readString(trust).replace("    keys:", "    enabled: false\n    keys:"));
+        CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
+        var disabled = registries.findByIssuer("gateway").orElseThrow();
+        assertThat(disabled.enabled()).isFalse();
+        assertThat(disabled.keys()).containsExactlyElementsOf(approved.keys());
+        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway")).isEmpty();
+        Files.write(
+                directory.resolve("rotated.der"),
+                Files.readAllBytes(directory.resolve("public.der")));
+        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("distinct approved public keys");
+        assertThat(registries.findByIssuer("gateway").orElseThrow()).isSameAs(disabled);
+    }
+
+    @Test
     void brokenApprovedKeyDoesNotReplaceTheCurrentTrustSnapshot() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var approved = registries.find("gateway", "key-1").orElseThrow();
+        var approved = registries.findByIssuer("gateway");
         Files.writeString(directory.resolve("public.der"), "broken key");
         assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
                 .isInstanceOf(GeneralSecurityException.class);
-        assertThat(registries.find("gateway", "key-1")).contains(approved);
+        assertThat(registries.findByIssuer("gateway")).isEqualTo(approved);
     }
 }

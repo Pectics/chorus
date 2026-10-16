@@ -20,6 +20,7 @@ import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
+import me.pectics.chorus.core.strategy.IssuancePolicy;
 import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
 
 public final class TestSupport {
@@ -37,7 +38,7 @@ public final class TestSupport {
     }
 
     public static SigningKey signingKey(KeyPair pair) {
-        return new SigningKey("key-1", pair.getPrivate(), pair.getPublic());
+        return new SigningKey(pair.getPrivate(), pair.getPublic());
     }
 
     public static IdentityClaim identity() {
@@ -66,22 +67,33 @@ public final class TestSupport {
     public static IssuerTrustPolicy policy() {
         return new IssuerTrustPolicy(
                 Set.of(AuthType.MOJANG, AuthType.OFFLINE_AUTH, AuthType.OFFLINE_RAW),
-                Set.of("mojang", "local"),
-                Set.of("gateway", "backend"));
+                Set.of("mojang", "local"));
+    }
+
+    public static IssuancePolicy issuancePolicy() {
+        return new IssuancePolicy(policy(), Set.of("backend", "next-backend"));
     }
 
     public static ServerNode node(String id) {
-        return new ServerNode(id, id, "localhost", 25565, Set.of(), Map.of());
+        return new ServerNode(id, id, "localhost", 25565);
     }
 
     public static StaticRegistries registries(KeyPair pair) {
         return new StaticRegistries(
                 new RegistrySnapshot(
-                        Map.of("gateway", node("gateway"), "backend", node("backend")), NOW, false),
+                        Map.of(
+                                "gateway",
+                                node("gateway"),
+                                "backend",
+                                node("backend"),
+                                "next-backend",
+                                node("next-backend")),
+                        NOW,
+                        false),
                 List.of(
                         new TrustedIssuer(
                                 "gateway",
-                                new VerificationKey("key-1", pair.getPublic()),
+                                List.of(new VerificationKey(pair.getPublic())),
                                 true,
                                 policy())));
     }

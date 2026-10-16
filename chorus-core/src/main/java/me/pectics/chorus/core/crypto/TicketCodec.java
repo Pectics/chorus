@@ -104,8 +104,7 @@ public final class TicketCodec {
         body.put("extensions", claims.extensions());
         var jws =
                 new JWSObject(
-                        new JWSHeader.Builder(ALGORITHM).type(TYPE).keyID(key.keyId()).build(),
-                        new Payload(body));
+                        new JWSHeader.Builder(ALGORITHM).type(TYPE).build(), new Payload(body));
         try {
             jws.sign(new Signer(key));
         } catch (com.nimbusds.jose.JOSEException e) {
@@ -152,25 +151,26 @@ public final class TicketCodec {
             if (!"Ed25519".equals(header.get("alg"))) {
                 throw reject(TicketError.UNSUPPORTED_ALGORITHM);
             }
-            if (!header.keySet().equals(Set.of("alg", "kid", "typ"))
+            if (!header.keySet().equals(Set.of("alg", "typ"))
                     || !TYPE.toString().equals(header.get("typ"))) {
                 throw reject(TicketError.MALFORMED_TICKET);
             }
-            String kid = string(header, "kid");
             String issuerId = string(body, "iss");
             var issuer =
-                    issuers.find(issuerId, kid)
-                            .orElseThrow(
-                                    () ->
-                                            reject(
-                                                    issuers.containsIssuer(issuerId)
-                                                            ? TicketError.UNTRUSTED_KEY
-                                                            : TicketError.UNKNOWN_ISSUER));
+                    issuers.findByIssuer(issuerId)
+                            .orElseThrow(() -> reject(TicketError.UNKNOWN_ISSUER));
             if (!issuer.enabled()) {
                 throw reject(TicketError.UNTRUSTED_KEY);
             }
             var jws = JWSObject.parse(compact);
-            if (!jws.verify(new Verifier(issuer.key()))) {
+            boolean verified = false;
+            for (var key : issuer.keys()) {
+                if (jws.verify(new Verifier(key))) {
+                    verified = true;
+                    break;
+                }
+            }
+            if (!verified) {
                 throw reject(TicketError.INVALID_SIGNATURE);
             }
             if (!body.keySet().equals(CLAIM_FIELDS)) {

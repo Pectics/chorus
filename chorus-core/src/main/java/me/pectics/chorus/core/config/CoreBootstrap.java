@@ -19,7 +19,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
@@ -35,6 +34,7 @@ import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
 import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
 import me.pectics.chorus.core.strategy.IdentityStrategy;
+import me.pectics.chorus.core.strategy.IssuancePolicy;
 import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
 import tools.jackson.databind.JsonNode;
 
@@ -59,16 +59,13 @@ public final class CoreBootstrap {
             throws IOException, GeneralSecurityException, SQLException {
         var root = ConfigurationLoader.read(configurationFile, Document.CORE);
         Path base = configurationFile.toAbsolutePath().normalize().getParent();
-        var capabilities = root.at("/node/capabilities");
-        boolean sender = capabilities.get("sender").asBoolean();
-        boolean receiver = capabilities.get("receiver").asBoolean();
+        var role = NodeRole.valueOf(root.at("/node/role").asString());
         var crypto = root.get("crypto");
         var verification = root.get("verification");
         var configuration =
                 new CoreConfiguration(
                         root.at("/node/id").asString(),
-                        sender,
-                        receiver,
+                        role,
                         root.get("cookie-key").asString(),
                         duration(crypto.get("ticket-ttl")),
                         duration(crypto.get("max-ticket-lifetime")),
@@ -77,7 +74,11 @@ public final class CoreBootstrap {
                         crypto.get("max-property-bytes").asInt(),
                         verification.get("require-transfer-intent").asBoolean(),
                         IdentityStrategy.valueOf(verification.get("identity-strategy").asString()),
-                        sender ? policy(root.get("issuance")) : null);
+                        role.sender()
+                                ? new IssuancePolicy(
+                                        policy(root.get("issuance")),
+                                        strings(root.at("/issuance/allowed-targets")))
+                                : null);
         var files = root.at("/registry/static");
         var registries =
                 loadRegistries(
@@ -85,7 +86,7 @@ public final class CoreBootstrap {
                         base.resolve(files.get("trust-file").asString()),
                         clock);
         if (!registries.snapshot().servers().containsKey(configuration.nodeId())
-                || sender
+                || role.sender()
                         && !registries
                                 .snapshot()
                                 .servers()
@@ -95,14 +96,13 @@ public final class CoreBootstrap {
                     "Node and issuance targets must exist in the directory");
         }
         SigningKey key =
-                sender
+                role.sender()
                         ? Ed25519Keys.load(
-                                crypto.get("key-id").asString(),
                                 base.resolve(crypto.get("private-key-file").asString()),
                                 base.resolve(crypto.get("public-key-file").asString()))
                         : null;
         SqliteReplayGuard guard = null;
-        if (receiver) {
+        if (role.receiver()) {
             var replay = root.get("replay");
             guard =
                     new SqliteReplayGuard(
@@ -163,30 +163,22 @@ public final class CoreBootstrap {
                                     ? value.get("display-name").asString()
                                     : entry.getKey(),
                             value.get("host").asString(),
-                            value.get("port").asInt(),
-                            value.has("tags") ? strings(value.get("tags")) : Set.of(),
-                            value.has("metadata") ? stringMap(value.get("metadata")) : Map.of()));
+                            value.get("port").asInt()));
         }
         var issuers = new ArrayList<TrustedIssuer>();
         Path base = trustFile.toAbsolutePath().normalize().getParent();
         for (var entry : trust.properties()) {
             var value = entry.getValue();
-            var policy = policy(value);
+            var keys = new ArrayList<VerificationKey>();
             for (var key : value.get("keys")) {
-                boolean enabled =
-                        (!value.has("enabled") || value.get("enabled").asBoolean())
-                                && (!key.has("enabled") || key.get("enabled").asBoolean());
-                issuers.add(
-                        new TrustedIssuer(
-                                entry.getKey(),
-                                new VerificationKey(
-                                        key.get("kid").asString(),
-                                        Ed25519Keys.loadPublic(
-                                                base.resolve(
-                                                        key.get("public-key-file").asString()))),
-                                enabled,
-                                policy));
+                keys.add(new VerificationKey(Ed25519Keys.loadPublic(base.resolve(key.asString()))));
             }
+            issuers.add(
+                    new TrustedIssuer(
+                            entry.getKey(),
+                            keys,
+                            !value.has("enabled") || value.get("enabled").asBoolean(),
+                            policy(value)));
         }
         return new Approved(
                 new RegistrySnapshot(servers, clock.instant(), false), List.copyOf(issuers));
@@ -196,23 +188,13 @@ public final class CoreBootstrap {
         var types = new HashSet<AuthType>();
         value.get("allowed-auth-types")
                 .forEach(item -> types.add(AuthType.valueOf(item.asString())));
-        return new IssuerTrustPolicy(
-                types,
-                strings(value.get("allowed-providers")),
-                strings(value.get("allowed-targets")));
+        return new IssuerTrustPolicy(types, strings(value.get("allowed-providers")));
     }
 
     private static Set<String> strings(JsonNode value) {
         var result = new HashSet<String>();
         value.forEach(item -> result.add(item.asString()));
         return Set.copyOf(result);
-    }
-
-    private static Map<String, String> stringMap(JsonNode value) {
-        var result = new HashMap<String, String>();
-        value.properties()
-                .forEach(entry -> result.put(entry.getKey(), entry.getValue().asString()));
-        return Map.copyOf(result);
     }
 
     private static Duration duration(JsonNode node) {

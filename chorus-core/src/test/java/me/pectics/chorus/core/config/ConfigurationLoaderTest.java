@@ -52,11 +52,11 @@ class ConfigurationLoaderTest {
                 "servers: {}\nservers: {}",
                 "servers: !!java.util.HashMap {}",
                 "servers: {a: &node {host: localhost, port: 25565}, b: *node}",
-                "servers: {backend: {host: localhost, port: 25565, metadata: {1: value}}}",
-                "servers: {backend: {host: localhost, port: 25565, metadata: {date: 2026-10-16}}}",
+                "servers: {1: {host: localhost, port: 25565}}",
+                "servers: {backend: {host: 2026-10-16, port: 25565}}",
                 "servers: {backend: {host: localhost, port: .nan}}",
                 "servers: {backend: {host: !!binary bG9jYWxob3N0, port: 25565}}",
-                "servers: {backend: {host: localhost, port: 25565, tags: !!set {tag: null}}}",
+                "servers: !!set {backend: null}",
                 "servers: {}\n---\nservers: {}"
             })
     void rejectsUnsafeYamlAndNonJsonTypes(String yaml) throws Exception {

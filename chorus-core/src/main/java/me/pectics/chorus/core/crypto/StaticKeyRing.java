@@ -1,7 +1,7 @@
 package me.pectics.chorus.core.crypto;
 
+import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
 
@@ -24,9 +24,10 @@ public final class StaticKeyRing implements KeyRing {
     }
 
     @Override
-    public Optional<VerificationKey> findTrustedKey(String issuerNodeId, String kid) {
-        return issuers.find(issuerNodeId, kid)
+    public List<VerificationKey> findTrustedKeys(String issuerNodeId) {
+        return issuers.findByIssuer(issuerNodeId)
                 .filter(TrustedIssuer::enabled)
-                .map(TrustedIssuer::key);
+                .map(TrustedIssuer::keys)
+                .orElse(List.of());
     }
 }
