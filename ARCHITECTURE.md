@@ -83,7 +83,7 @@ chorus/
 │       ├── registry/                   # ServerNodeRegistry、TrustedIssuerRegistry
 │       │   ├── staticconfig/           # 静态 YAML 快照实现
 │       │   └── sql/                    # 可选的 Turso/libSQL 与 JDBC 实现
-│       ├── strategy/                   # UUID / Profile 身份解析策略
+│       ├── policy/                     # UUID / Profile 身份解析策略
 │       └── state/                      # ReplayGuard：仅负责 Ticket 防重放
 │           ├── sqlite/                 # 本地 SQLite 持久化消费记录
 │           ├── sql/                    # 可选 SQL 实现；后端选型待确定
@@ -384,15 +384,15 @@ public record TicketClaims(
 
 **密钥选择**：按 `iss` 查找本地批准的签发者，拒绝禁用的签发者，校验 `alg` 白名单并依次尝试其批准公钥；不得尝试其他签发者的公钥或使用 JWT 中的任意 URL 下载密钥。新节点上传公钥不会自动扩大信任集合。
 
-### 3.5 `strategy`：身份解析与联盟信任
+### 3.5 `policy`：身份解析与联盟信任
 
 将两类逻辑严格分开：
 
 1. **`IssuerTrustPolicy`**：决定本机是否接受某签发节点断言的 `authType + authProvider` 身份；由 Receiver 配置裁定。Sender 使用独立的 `IssuancePolicy`，在身份权限之外增加允许签发的目标列表。
-2. **`IdentityResolutionStrategy`**：已授权后，决定本地 GameProfile UUID 与皮肤属性。
+2. **`IdentityResolutionPolicy`**：已授权后，决定本地 GameProfile UUID 与皮肤属性。
 
 ```java
-package me.pectics.chorus.core.strategy;
+package me.pectics.chorus.core.policy;
 
 import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ProfileProperty;
@@ -406,7 +406,7 @@ public record ResolvedPlayerProfile(
     IdentityClaim originalIdentity
 ) {}
 
-public interface IdentityResolutionStrategy {
+public interface IdentityResolutionPolicy {
     ResolvedPlayerProfile resolve(IdentityClaim identity);
 }
 ```
@@ -494,7 +494,7 @@ import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
-import me.pectics.chorus.core.strategy.ResolvedPlayerProfile;
+import me.pectics.chorus.core.policy.ResolvedPlayerProfile;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;

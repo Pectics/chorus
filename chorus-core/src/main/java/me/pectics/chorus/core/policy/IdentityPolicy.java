@@ -1,11 +1,11 @@
-package me.pectics.chorus.core.strategy;
+package me.pectics.chorus.core.policy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import me.pectics.chorus.core.model.IdentityClaim;
 
 /** STRICT_ONLINE_MATCH additionally requires the engine's independent authentication check. */
-public enum IdentityStrategy implements IdentityResolutionStrategy {
+public enum IdentityPolicy implements IdentityResolutionPolicy {
     ADOPT_UPSTREAM,
     FORCE_OFFLINE_UUID,
     STRICT_ONLINE_MATCH;

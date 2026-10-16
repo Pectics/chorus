@@ -28,14 +28,14 @@ import me.pectics.chorus.core.crypto.SigningKey;
 import me.pectics.chorus.core.crypto.StaticKeyRing;
 import me.pectics.chorus.core.crypto.VerificationKey;
 import me.pectics.chorus.core.model.AuthType;
+import me.pectics.chorus.core.policy.IdentityPolicy;
+import me.pectics.chorus.core.policy.IssuancePolicy;
+import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
 import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
-import me.pectics.chorus.core.strategy.IdentityStrategy;
-import me.pectics.chorus.core.strategy.IssuancePolicy;
-import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -73,7 +73,7 @@ public final class CoreBootstrap {
                         crypto.get("max-ticket-bytes").asInt(),
                         crypto.get("max-property-bytes").asInt(),
                         verification.get("require-transfer-intent").asBoolean(),
-                        IdentityStrategy.valueOf(verification.get("identity-strategy").asString()),
+                        IdentityPolicy.valueOf(verification.get("identity-strategy").asString()),
                         role.sender()
                                 ? new IssuancePolicy(
                                         policy(root.get("issuance")),

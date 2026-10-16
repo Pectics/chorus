@@ -1,4 +1,4 @@
-package me.pectics.chorus.core.strategy;
+package me.pectics.chorus.core.policy;
 
 import java.util.List;
 import java.util.Objects;

@@ -2,7 +2,7 @@ package me.pectics.chorus.core.api;
 
 import java.util.Objects;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
-import me.pectics.chorus.core.strategy.ResolvedPlayerProfile;
+import me.pectics.chorus.core.policy.ResolvedPlayerProfile;
 
 /** Returned only after durable consumption; later platform failures do not restore the ticket. */
 public record VerifyTicketResult(

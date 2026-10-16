@@ -16,12 +16,12 @@ import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ProfileProperty;
 import me.pectics.chorus.core.model.TicketClaims;
+import me.pectics.chorus.core.policy.IssuancePolicy;
+import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
-import me.pectics.chorus.core.strategy.IssuancePolicy;
-import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
 
 public final class TestSupport {
     public static final Instant NOW = Instant.parse("2026-10-16T00:00:00Z");

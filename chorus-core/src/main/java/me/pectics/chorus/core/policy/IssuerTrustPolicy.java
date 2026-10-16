@@ -1,4 +1,4 @@
-package me.pectics.chorus.core.strategy;
+package me.pectics.chorus.core.policy;
 
 import java.util.Set;
 import me.pectics.chorus.core.model.AuthType;

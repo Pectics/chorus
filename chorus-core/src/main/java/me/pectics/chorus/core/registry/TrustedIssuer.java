@@ -11,7 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import me.pectics.chorus.core.crypto.VerificationKey;
-import me.pectics.chorus.core.strategy.IssuerTrustPolicy;
+import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 
 /**
  * Local receiver approval of an issuer under one policy. Copies the key list and rejects invalid

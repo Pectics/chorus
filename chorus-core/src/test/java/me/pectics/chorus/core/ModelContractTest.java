@@ -14,7 +14,7 @@ import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ProfileProperty;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import me.pectics.chorus.core.model.TicketClaims;
-import me.pectics.chorus.core.strategy.IdentityStrategy;
+import me.pectics.chorus.core.policy.IdentityPolicy;
 import org.junit.jupiter.api.Test;
 
 class ModelContractTest {
@@ -30,8 +30,8 @@ class ModelContractTest {
                         UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5"),
                         properties);
         properties.clear();
-        var adopted = IdentityStrategy.ADOPT_UPSTREAM.resolve(identity);
-        var offline = IdentityStrategy.FORCE_OFFLINE_UUID.resolve(identity);
+        var adopted = IdentityPolicy.ADOPT_UPSTREAM.resolve(identity);
+        var offline = IdentityPolicy.FORCE_OFFLINE_UUID.resolve(identity);
         assertThat(adopted.finalUuid()).isEqualTo(identity.sourceUuid());
         assertThat(offline.finalUuid())
                 .isEqualTo(UUID.fromString("b50ad385-829d-3141-a216-7e7d7539ba7f"));

@@ -8,8 +8,8 @@ package me.pectics.chorus.core.config;
 
 import java.time.Duration;
 import java.util.Objects;
-import me.pectics.chorus.core.strategy.IdentityStrategy;
-import me.pectics.chorus.core.strategy.IssuancePolicy;
+import me.pectics.chorus.core.policy.IdentityPolicy;
+import me.pectics.chorus.core.policy.IssuancePolicy;
 
 /**
  * Immutable settings with explicit operational parameters until architecture 7.2 is settled.
@@ -28,14 +28,14 @@ public record CoreConfiguration(
         int maxTicketBytes,
         int maxPropertyBytes,
         boolean requireTransferIntent,
-        IdentityStrategy identityStrategy,
+        IdentityPolicy identityPolicy,
         IssuancePolicy issuancePolicy) {
     public CoreConfiguration {
         Objects.requireNonNull(role, "role");
         Objects.requireNonNull(ticketTtl, "ticketTtl");
         Objects.requireNonNull(maxTicketLifetime, "maxTicketLifetime");
         Objects.requireNonNull(clockSkew, "clockSkew");
-        Objects.requireNonNull(identityStrategy, "identityStrategy");
+        Objects.requireNonNull(identityPolicy, "identityPolicy");
         if (nodeId == null
                 || !nodeId.matches("[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
                 || cookieKey == null

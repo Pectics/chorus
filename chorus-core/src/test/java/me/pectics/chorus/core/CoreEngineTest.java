@@ -30,9 +30,9 @@ import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import me.pectics.chorus.core.model.TicketClaims;
 import me.pectics.chorus.core.model.VerifiedExternalIdentity;
+import me.pectics.chorus.core.policy.IdentityPolicy;
 import me.pectics.chorus.core.state.ReplayDecision;
 import me.pectics.chorus.core.state.ReplayGuard;
-import me.pectics.chorus.core.strategy.IdentityStrategy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -42,8 +42,7 @@ class CoreEngineTest {
     private final RecordingGuard replay = new RecordingGuard();
     private final ReceiverLoginContext login = new ReceiverLoginContext("Notch", true, null);
 
-    public static CoreConfiguration configuration(
-            String id, NodeRole role, IdentityStrategy strategy) {
+    public static CoreConfiguration configuration(String id, NodeRole role, IdentityPolicy policy) {
         return new CoreConfiguration(
                 id,
                 role,
@@ -54,14 +53,14 @@ class CoreEngineTest {
                 4096,
                 2048,
                 true,
-                strategy,
+                policy,
                 role.sender() ? TestSupport.issuancePolicy() : null);
     }
 
-    private DefaultChorusCoreEngine engine(String id, NodeRole role, IdentityStrategy strategy) {
+    private DefaultChorusCoreEngine engine(String id, NodeRole role, IdentityPolicy policy) {
         var registry = TestSupport.registries(pair);
         return new DefaultChorusCoreEngine(
-                configuration(id, role, strategy),
+                configuration(id, role, policy),
                 registry,
                 registry,
                 new StaticKeyRing(role.sender() ? TestSupport.signingKey(pair) : null, registry),
@@ -87,9 +86,9 @@ class CoreEngineTest {
 
     @Test
     void gatewayToPeerMapsOfflineUuidAndRetainsSourceForTheNextHop() {
-        try (var sender = engine("gateway", NodeRole.GATEWAY, IdentityStrategy.ADOPT_UPSTREAM);
+        try (var sender = engine("gateway", NodeRole.GATEWAY, IdentityPolicy.ADOPT_UPSTREAM);
                 var receiver =
-                        engine("backend", NodeRole.PEER, IdentityStrategy.FORCE_OFFLINE_UUID)) {
+                        engine("backend", NodeRole.PEER, IdentityPolicy.FORCE_OFFLINE_UUID)) {
             var issued =
                     sender.issueTicket(
                                     new IssueTicketRequest(
@@ -142,7 +141,7 @@ class CoreEngineTest {
                         TestSupport.NOW.plusSeconds(15),
                         identity,
                         "backend");
-        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityStrategy.ADOPT_UPSTREAM)) {
+        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityPolicy.ADOPT_UPSTREAM)) {
             var accepted =
                     receiver.verifyAndResolve(request(claims, login)).toCompletableFuture().join();
             assertThat(accepted.resolvedProfile().finalUuid()).isEqualTo(identity.sourceUuid());
@@ -152,7 +151,7 @@ class CoreEngineTest {
 
     @Test
     void loginAndPolicyFailuresDoNotConsumeAndExactUsernameCanStillSucceed() {
-        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityStrategy.ADOPT_UPSTREAM)) {
+        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityPolicy.ADOPT_UPSTREAM)) {
             rejects(
                     receiver.verifyAndResolve(
                             request(
@@ -206,7 +205,7 @@ class CoreEngineTest {
 
     @Test
     void checksLifetimeFutureTimesAndTheExactExpiryToleranceBoundary() {
-        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityStrategy.ADOPT_UPSTREAM)) {
+        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityPolicy.ADOPT_UPSTREAM)) {
             rejects(
                     receiver.verifyAndResolve(
                             request(
@@ -270,7 +269,7 @@ class CoreEngineTest {
     @Test
     void strictMatchRequiresAllIndependentIdentifiersWithoutConsumingFailures() {
         try (var receiver =
-                engine("backend", NodeRole.BACKEND, IdentityStrategy.STRICT_ONLINE_MATCH)) {
+                engine("backend", NodeRole.BACKEND, IdentityPolicy.STRICT_ONLINE_MATCH)) {
             rejects(
                     receiver.verifyAndResolve(request(TestSupport.claims(), login)),
                     TicketError.EXTERNAL_IDENTITY_MISMATCH);
@@ -307,7 +306,7 @@ class CoreEngineTest {
     @Test
     void doesNotCompleteBeforeConsumptionConfirmationAndRejectsUnknownOutcomes() {
         replay.pending = new CompletableFuture<>();
-        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityStrategy.ADOPT_UPSTREAM)) {
+        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityPolicy.ADOPT_UPSTREAM)) {
             var pending =
                     receiver.verifyAndResolve(request(TestSupport.claims(), login))
                             .toCompletableFuture();
@@ -323,7 +322,7 @@ class CoreEngineTest {
             names = {"REPLAYED", "UNAVAILABLE", "CAPACITY_EXCEEDED"})
     void replayRefusalsNeverReturnAProfile(ReplayDecision decision) {
         replay.pending = CompletableFuture.completedFuture(decision);
-        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityStrategy.ADOPT_UPSTREAM)) {
+        try (var receiver = engine("backend", NodeRole.BACKEND, IdentityPolicy.ADOPT_UPSTREAM)) {
             TicketError error =
                     switch (decision) {
                         case REPLAYED -> TicketError.REPLAYED;
@@ -337,7 +336,7 @@ class CoreEngineTest {
 
     @Test
     void roleOperationsExtensionsAndLifecycleAreEnforced() {
-        var receiver = engine("backend", NodeRole.BACKEND, IdentityStrategy.ADOPT_UPSTREAM);
+        var receiver = engine("backend", NodeRole.BACKEND, IdentityPolicy.ADOPT_UPSTREAM);
         rejects(
                 receiver.issueTicket(
                         new IssueTicketRequest(
@@ -351,7 +350,7 @@ class CoreEngineTest {
                 receiver.verifyAndResolve(request(TestSupport.claims(), login)),
                 TicketError.ENGINE_CLOSED);
         assertThat(replay.closes).isEqualTo(1);
-        try (var sender = engine("gateway", NodeRole.GATEWAY, IdentityStrategy.ADOPT_UPSTREAM)) {
+        try (var sender = engine("gateway", NodeRole.GATEWAY, IdentityPolicy.ADOPT_UPSTREAM)) {
             rejects(
                     sender.verifyAndResolve(request(TestSupport.claims(), login)),
                     TicketError.CAPABILITY_DISABLED);

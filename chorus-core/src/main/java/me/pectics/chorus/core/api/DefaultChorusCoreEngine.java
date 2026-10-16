@@ -24,11 +24,11 @@ import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import me.pectics.chorus.core.model.TicketClaims;
+import me.pectics.chorus.core.policy.IdentityPolicy;
+import me.pectics.chorus.core.policy.ResolvedPlayerProfile;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
 import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
 import me.pectics.chorus.core.state.ReplayGuard;
-import me.pectics.chorus.core.strategy.IdentityStrategy;
-import me.pectics.chorus.core.strategy.ResolvedPlayerProfile;
 
 /**
  * Phase-1 engine. Takes ownership of ReplayGuard; other injected collaborators remain caller-owned.
@@ -152,7 +152,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                     || !decoded.issuer().policy().permits(claims.identity())) {
                 throw reject(TicketError.ISSUER_POLICY_DENIED);
             }
-            if (configuration.identityStrategy() == IdentityStrategy.STRICT_ONLINE_MATCH) {
+            if (configuration.identityPolicy() == IdentityPolicy.STRICT_ONLINE_MATCH) {
                 var verified = login.independentlyVerified();
                 var identity = claims.identity();
                 if (verified == null
@@ -165,7 +165,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             }
             ResolvedPlayerProfile profile;
             try {
-                profile = configuration.identityStrategy().resolve(claims.identity());
+                profile = configuration.identityPolicy().resolve(claims.identity());
             } catch (RuntimeException resolutionFailure) {
                 throw reject(TicketError.PROFILE_RESOLUTION_FAILED);
             }

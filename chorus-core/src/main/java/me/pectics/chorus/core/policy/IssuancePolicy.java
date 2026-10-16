@@ -1,11 +1,11 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.5 and 3.8
- * related: chorus-core/src/main/java/me/pectics/chorus/core/strategy/IssuerTrustPolicy.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/policy/IssuerTrustPolicy.java
  * sync: Sender target permissions do not replace the receiver's local issuer approval.
  * @endcontext
  */
-package me.pectics.chorus.core.strategy;
+package me.pectics.chorus.core.policy;
 
 import java.util.Objects;
 import java.util.Set;
