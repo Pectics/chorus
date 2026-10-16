@@ -38,6 +38,7 @@ public final class SqliteCrashProbe {
                             + TestSupport.NOW.plusSeconds(17).toEpochMilli()
                             + ")");
         }
+        guard.close();
         Runtime.getRuntime().halt(0);
     }
 }

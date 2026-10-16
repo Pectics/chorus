@@ -9,5 +9,6 @@
     "**/.gradle": true,
     "**/build": true,
     "**/.loom": true
-  }
+  },
+  "java.configuration.updateBuildConfiguration": "interactive"
 }
