@@ -170,7 +170,9 @@ public final class CoreBootstrap {
         for (var entry : trust.properties()) {
             var value = entry.getValue();
             var keys = new ArrayList<VerificationKey>();
-            for (var key : value.get("keys")) {
+            Iterable<JsonNode> paths =
+                    value.has("keys") ? value.get("keys") : List.of(value.get("key"));
+            for (var key : paths) {
                 keys.add(new VerificationKey(Ed25519Keys.loadPublic(base.resolve(key.asString()))));
             }
             issuers.add(

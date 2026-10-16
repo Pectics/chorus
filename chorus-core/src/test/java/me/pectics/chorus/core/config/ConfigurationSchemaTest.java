@@ -264,6 +264,36 @@ class ConfigurationSchemaTest {
     }
 
     @Test
+    void trustSchemaAcceptsEitherKeyFormOrBothAndRequiresAtLeastOne() {
+        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var issuer = (ObjectNode) trust.at("/trusted-issuers/gateway");
+        issuer.put("key", "gateway.pub");
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
+        issuer.remove("keys");
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
+        issuer.remove("key");
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+    }
+
+    @Test
+    void trustSchemaValidatesEachPresentKeyFieldWithoutFallingBackFromInvalidKeys() {
+        for (String invalid : List.of("null", "false", "42", "[]", "{}", "\"\"", "\" \u2003\"")) {
+            var trust = fixture(Document.TRUSTED_ISSUERS);
+            var issuer = (ObjectNode) trust.at("/trusted-issuers/gateway");
+            issuer.set("key", JSON.readTree(invalid));
+            assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+            issuer.remove("keys");
+            assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+        }
+        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var issuer = (ObjectNode) trust.at("/trusted-issuers/gateway");
+        issuer.put("key", "gateway.pub");
+        issuer.putArray("keys");
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust))
+                .anySatisfy(error -> assertThat(error.getKeyword()).isEqualTo("minItems"));
+    }
+
+    @Test
     void schemasRejectRemovedKeyIdentifiers() {
         var core = fixture(Document.CORE);
         ((ObjectNode) core.get("crypto")).put("key-id", "removed");

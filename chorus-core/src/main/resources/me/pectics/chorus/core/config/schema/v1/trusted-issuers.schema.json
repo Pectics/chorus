@@ -14,13 +14,19 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["keys", "allowed-auth-types", "allowed-providers"],
+        "required": ["allowed-auth-types", "allowed-providers"],
+        "anyOf": [{"required": ["key"]}, {"required": ["keys"]}],
         "properties": {
           "enabled": {
             "type": "boolean",
             "description": "When absent the issuer is enabled. False disables all of this issuer's keys."
           },
+          "key": {
+            "$ref": "#/$defs/nonBlankString",
+            "description": "Shorthand for a one-element keys list. Ed25519 X.509 SPKI public key path, relative to this trust file. Only used when keys is absent."
+          },
           "keys": {
+            "description": "Approved public key paths. Takes precedence over key when both are present.",
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,

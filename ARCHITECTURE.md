@@ -222,6 +222,7 @@ public interface TrustedIssuerRegistry {
 `TrustedIssuer` 内含不可变验签公钥列表、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
 本机批准某个签发者即表示允许其在这些身份权限内向本机提供 Ticket，不再配置接收端目标列表；验票仍须检查 `aud` 等于本机节点 ID。
 同一签发者可在轮换期间保留多把可信公钥，所有公钥共用签发者的启用状态与策略；撤销单把公钥时将其从列表移除。
+静态配置的 `key: path` 等价于 `keys: [path]`，两者至少提供一个；同时提供时只加载 `keys`，不合并或回退到 `key`。
 配置、API 与 Ticket 均不使用密钥标识，接收端按签发节点 ID 查找批准记录；签发者启用时依次尝试其公钥，验签后使用该签发者的策略。
 
 写入型管理接口另行声明，例如 `ServerDirectoryAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
@@ -637,8 +638,7 @@ trusted-issuers:
     allowed-providers: [mojang, local]
 
   operator-b/peer-01:
-    keys:
-      - keys/alliance-peer.pub
+    key: keys/alliance-peer.pub
     allowed-auth-types: [OFFLINE_AUTH]
     allowed-providers: [operator-b/local]
 ```

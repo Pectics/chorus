@@ -10,6 +10,7 @@ package me.pectics.chorus.core;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
@@ -23,6 +24,7 @@ import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.config.CoreBootstrap;
 import me.pectics.chorus.core.config.NodeRole;
 import me.pectics.chorus.core.crypto.StaticKeyRing;
+import me.pectics.chorus.core.crypto.VerificationKey;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -346,6 +348,45 @@ class CoreBootstrapTest {
                     .isInstanceOf(IllegalArgumentException.class);
             assertThat(registries.snapshot()).isSameAs(approved);
         }
+    }
+
+    @Test
+    void singleKeyPathLoadsTheSameApprovalAsAOneElementList() throws Exception {
+        Path servers = directory.resolve("servers.yml");
+        Path trust = directory.resolve("trusted-issuers.yml");
+        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
+        var original = registries.findByIssuer("gateway").orElseThrow();
+        Files.writeString(
+                trust,
+                Files.readString(trust).replace("keys:\n      - public.der", "key: public.der"));
+        CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
+        assertThat(registries.findByIssuer("gateway")).contains(original);
+        assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway"))
+                .containsExactlyElementsOf(original.keys());
+    }
+
+    @Test
+    void keysOverrideSingleKeyWithoutReadingItOrFallingBackOnLoadFailure() throws Exception {
+        Path servers = directory.resolve("servers.yml");
+        Path trust = directory.resolve("trusted-issuers.yml");
+        Path preferredFile = directory.resolve("preferred.der");
+        var preferred = TestSupport.keyPair();
+        Files.write(preferredFile, preferred.getPublic().getEncoded());
+        Files.writeString(
+                trust,
+                Files.readString(trust)
+                        .replace(
+                                "keys:\n      - public.der",
+                                "key: missing.der\n    keys:\n      - preferred.der"));
+        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
+        var approved = registries.findByIssuer("gateway").orElseThrow();
+        assertThat(approved.keys()).containsExactly(new VerificationKey(preferred.getPublic()));
+        Files.writeString(
+                trust, Files.readString(trust).replace("key: missing.der", "key: public.der"));
+        Files.delete(preferredFile);
+        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+                .isInstanceOf(IOException.class);
+        assertThat(registries.findByIssuer("gateway").orElseThrow()).isSameAs(approved);
     }
 
     @Test
