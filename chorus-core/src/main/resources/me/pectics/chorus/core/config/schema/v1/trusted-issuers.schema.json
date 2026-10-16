@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:chorus:configuration:trusted-issuers:v1",
+  "$comment": "The complete trusted-issuers.yml v1 format contract. See ARCHITECTURE.md sections 3.2 and 3.9. Runtime assembly checks public keys, duplicate issuer/key bindings, and target references.",
+  "title": "Chorus issuer trust directory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trusted-issuers"],
+  "properties": {
+    "trusted-issuers": {
+      "description": "Administrator-approved issuer policies indexed by issuer node ID. An empty mapping grants no trust.",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/nodeId"},
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["keys", "allowed-auth-types", "allowed-providers", "allowed-targets"],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "When absent the issuer is enabled. False disables all of this issuer's keys."
+          },
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kid", "public-key-file"],
+              "properties": {
+                "kid": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._-]{1,128}$(?![\\s\\S])"
+                },
+                "public-key-file": {
+                  "$ref": "#/$defs/nonBlankString",
+                  "description": "Ed25519 X.509 SPKI public key path, relative to this trust file."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "When absent the key is enabled, subject to its issuer's enabled flag."
+                }
+              }
+            }
+          },
+          "allowed-auth-types": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"enum": ["MOJANG", "OFFLINE_AUTH", "OFFLINE_RAW", "YGGDRASIL", "FLOODGATE"]}
+          },
+          "allowed-providers": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$(?![\\s\\S])"}
+          },
+          "allowed-targets": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/nodeId"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nodeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$(?![\\s\\S])"
+    },
+    "nonBlankString": {
+      "type": "string",
+      "pattern": "[^\\u0009-\\u000d\\u001c-\\u0020\\u1680\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]"
+    }
+  }
+}

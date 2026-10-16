@@ -22,6 +22,11 @@ configurations[integrationTest.runtimeOnlyConfigurationName].extendsFrom(
 
 dependencies {
     implementation(libs.snakeyaml)
+    implementation(libs.json.schema.validator) {
+        // Keep YAML parsing under the loader's explicit resource and type limits.
+        exclude(group = "tools.jackson.dataformat", module = "jackson-dataformat-yaml")
+    }
+    implementation(libs.jackson.databind)
     implementation(libs.nimbus.jose.jwt)
     runtimeOnly(libs.sqlite.jdbc)
 

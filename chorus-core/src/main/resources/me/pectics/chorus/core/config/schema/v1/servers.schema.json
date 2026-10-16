@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:chorus:configuration:servers:v1",
+  "$comment": "The complete servers.yml v1 format contract. See ARCHITECTURE.md section 3.9. Runtime directory entries do not grant issuer trust.",
+  "title": "Chorus server directory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["servers"],
+  "properties": {
+    "servers": {
+      "description": "Administrator-approved routes indexed by node ID. Empty directories are valid snapshots.",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/nodeId"},
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["host", "port"],
+        "properties": {
+          "host": {
+            "description": "Client-visible hostname or IP address without whitespace.",
+            "type": "string",
+            "minLength": 1,
+            "not": {"pattern": "[\\u0009-\\u000d\\u001c-\\u0020\\u1680\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]"}
+          },
+          "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+          "display-name": {
+            "$ref": "#/$defs/nonBlankString",
+            "description": "Optional display label. Runtime assembly uses the node ID when absent."
+          },
+          "tags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/nonBlankString"}
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nodeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$(?![\\s\\S])"
+    },
+    "nonBlankString": {
+      "type": "string",
+      "pattern": "[^\\u0009-\\u000d\\u001c-\\u0020\\u1680\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]"
+    }
+  }
+}

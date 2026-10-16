@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:chorus:configuration:chorus:v1",
+  "$comment": "The complete chorus.yml v1 format contract. See ARCHITECTURE.md section 3.9. Update this document and its contract tests when the file format changes.",
+  "title": "Chorus configuration v1",
+  "description": "Static Core configuration. Operational limits are explicit; no defaults are supplied. Runtime assembly checks duration arithmetic, field relationships, key contents, and directory references.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["node", "cookie-key", "crypto", "registry", "verification"],
+  "properties": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "capabilities"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nodeId"},
+        "display-name": {"$ref": "#/$defs/nonBlankString"},
+        "role": {
+          "description": "A descriptive role hint. Capabilities determine enabled operations.",
+          "enum": ["GATEWAY", "BACKEND", "PEER"]
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sender", "receiver"],
+          "properties": {
+            "sender": {"type": "boolean"},
+            "receiver": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "cookie-key": {
+      "description": "The namespaced Minecraft Cookie key shared by sender and receiver.",
+      "type": "string",
+      "pattern": "^[a-z0-9_.-]+:[a-z0-9/._-]+$(?![\\s\\S])"
+    },
+    "crypto": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "ticket-ttl", "max-ticket-lifetime", "clock-skew", "max-ticket-bytes", "max-property-bytes"],
+      "properties": {
+        "algorithm": {"const": "ED25519"},
+        "key-id": {"$ref": "#/$defs/keyId"},
+        "ticket-ttl": {
+          "$ref": "#/$defs/wholeSecondDuration",
+          "description": "A positive whole-second lifetime, no greater than max-ticket-lifetime."
+        },
+        "max-ticket-lifetime": {
+          "$ref": "#/$defs/wholeSecondDuration",
+          "description": "The maximum accepted whole-second lifetime. Must cover ticket-ttl."
+        },
+        "clock-skew": {
+          "$ref": "#/$defs/wholeSecondDuration",
+          "description": "A nonnegative whole-second clock allowance, bound to the replay database."
+        },
+        "max-ticket-bytes": {"type": "integer", "minimum": 1, "maximum": 5120},
+        "max-property-bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5120,
+          "description": "The UTF-8 profile property budget. Must not exceed max-ticket-bytes."
+        },
+        "compress-payload": {"const": false},
+        "private-key-file": {
+          "$ref": "#/$defs/nonBlankString",
+          "description": "PKCS#8 Ed25519 private key path, relative to chorus.yml. Required for sender."
+        },
+        "public-key-file": {
+          "$ref": "#/$defs/nonBlankString",
+          "description": "Matching X.509 SPKI public key path, relative to chorus.yml. Required for sender."
+        }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "static"],
+      "properties": {
+        "mode": {"const": "STATIC"},
+        "static": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["servers-file", "trust-file"],
+          "properties": {
+            "servers-file": {
+              "$ref": "#/$defs/nonBlankString",
+              "description": "Server directory path, relative to chorus.yml. Validated with servers.schema.json."
+            },
+            "trust-file": {
+              "$ref": "#/$defs/nonBlankString",
+              "description": "Trust directory path, relative to chorus.yml. Validated with trusted-issuers.schema.json."
+            }
+          }
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require-transfer-intent", "identity-strategy"],
+      "properties": {
+        "require-transfer-intent": {"type": "boolean"},
+        "identity-strategy": {"enum": ["ADOPT_UPSTREAM", "FORCE_OFFLINE_UUID", "STRICT_ONLINE_MATCH"]},
+        "ip-binding-mode": {"const": "DISABLED"}
+      }
+    },
+    "issuance": {
+      "description": "Explicit sender permissions. Receivers independently enforce their own trust policies.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed-auth-types", "allowed-providers", "allowed-targets"],
+      "properties": {
+        "allowed-auth-types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["MOJANG", "OFFLINE_AUTH", "OFFLINE_RAW", "YGGDRASIL", "FLOODGATE"]}
+        },
+        "allowed-providers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$(?![\\s\\S])"}
+        },
+        "allowed-targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nodeId"}
+        }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "file", "capacity", "busy-timeout"],
+      "properties": {
+        "mode": {"const": "LOCAL_SQLITE"},
+        "file": {
+          "$ref": "#/$defs/nonBlankString",
+          "description": "Persistent SQLite path, relative to chorus.yml. Preserve the database and its WAL."
+        },
+        "capacity": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "busy-timeout": {
+          "$ref": "#/$defs/duration",
+          "description": "A positive lock wait whose whole milliseconds are in the range 1..2147483647."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "node": {
+            "properties": {
+              "capabilities": {"properties": {"sender": {"const": true}}}
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["issuance"],
+        "properties": {"crypto": {"required": ["key-id", "private-key-file", "public-key-file"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "node": {
+            "properties": {
+              "capabilities": {"properties": {"receiver": {"const": true}}}
+            }
+          }
+        }
+      },
+      "then": {"required": ["replay"]}
+    }
+  ],
+  "$defs": {
+    "nonBlankString": {
+      "type": "string",
+      "pattern": "[^\\u0009-\\u000d\\u001c-\\u0020\\u1680\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]"
+    },
+    "nodeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$(?![\\s\\S])"
+    },
+    "keyId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$(?![\\s\\S])"
+    },
+    "duration": {
+      "description": "An unsigned integer followed by ms, s, m, or h, or the Java Duration ISO-8601 syntax. Range and normalized sign are checked during conversion.",
+      "type": "string",
+      "pattern": "^(?:[0-9]+(?:ms|s|m|h)|[+-]?[Pp](?=[+-]?[0-9]+[Dd]|[Tt])(?:[+-]?[0-9]+[Dd])?(?:[Tt](?=[+-]?[0-9])(?:[+-]?[0-9]+[Hh])?(?:[+-]?[0-9]+[Mm])?(?:[+-]?[0-9]+(?:[.,][0-9]{0,9})?[Ss])?)?)$(?![\\s\\S])"
+    },
+    "wholeSecondDuration": {
+      "$ref": "#/$defs/duration",
+      "description": "Whole-second precision, including exact multiples of 1000ms and ISO fractions containing only zeroes.",
+      "allOf": [
+        {"not": {"pattern": "[.,][0-9]*[1-9]"}},
+        {"if": {"pattern": "ms$"}, "then": {"pattern": "^(?:0+|[0-9]+000)ms$(?![\\s\\S])"}}
+      ]
+    }
+  }
+}
