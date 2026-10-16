@@ -53,7 +53,14 @@
       "additionalProperties": false,
       "required": ["algorithm"],
       "properties": {
-        "algorithm": {"const": "ED25519"},
+        "algorithm": {
+          "enum": ["ED25519", "HMAC_SHA256"],
+          "description": "Local signing algorithm. Each trusted issuer independently specifies its verification algorithm."
+        },
+        "key": {
+          "$ref": "#/$defs/nonBlankString",
+          "description": "Raw 32-byte HMAC-SHA256 secret path relative to chorus.yml. Required for HMAC senders; generated only if missing. Distribute the same file to trusted receivers."
+        },
         "private-key": {
           "$ref": "#/$defs/nonBlankString",
           "description": "PKCS#8 Ed25519 private key path relative to chorus.yml. Required for sender."
@@ -62,7 +69,14 @@
           "$ref": "#/$defs/nonBlankString",
           "description": "Matching X.509 SPKI public key path relative to chorus.yml. Required for sender."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"algorithm": {"const": "ED25519"}}},
+          "then": {"not": {"required": ["key"]}},
+          "else": {"not": {"anyOf": [{"required": ["private-key"]}, {"required": ["public-key"]}]}}
+        }
+      ]
     },
     "registry": {
       "type": "object",
@@ -171,7 +185,13 @@
       "if": {"properties": {"node": {"properties": {"role": {"enum": ["GATEWAY", "PEER"]}}}}},
       "then": {
         "required": ["issuance"],
-        "properties": {"crypto": {"required": ["private-key", "public-key"]}}
+        "properties": {
+          "crypto": {
+            "if": {"properties": {"algorithm": {"const": "ED25519"}}},
+            "then": {"required": ["private-key", "public-key"]},
+            "else": {"required": ["key"]}
+          }
+        }
       }
     },
     {

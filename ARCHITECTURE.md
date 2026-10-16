@@ -148,7 +148,7 @@ chorus/
 提供两个互斥的**目录来源模式**：
 
 1. **`STATIC`**：每台 Chorus 节点读取管理员提供的本地 `servers` 与 `trusted-issuers` 配置。不存在自动同步权威；管理员负责分发与更新一致的配置，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
-2. **`SHARED_SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。服务器运行时获取可信快照，使用本地缓存解析目标地址并获取已批准的公钥绑定。Turso/libSQL 是推荐适配实现之一，标准 JDBC 是可选后端。
+2. **`SHARED_SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。服务器运行时获取可信快照，使用本地缓存解析目标地址并获取已批准的验签密钥绑定。Turso/libSQL 是推荐适配实现之一，标准 JDBC 是可选后端。
 
 两种模式使用相同的 Core 读取接口；目录选择由 `registry.provider` 表达，防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选目录数据库。
 
@@ -163,7 +163,7 @@ chorus/
 #### 注册与信任分离
 
 - **`ServerNodeRegistry`**：节点 ID、显示名和连接地址，解决“往哪里转”。
-- **`TrustedIssuerRegistry`**：由本机管理员批准的签发者、公钥列表与身份来源范围，解决“本机信任谁”。
+- **`TrustedIssuerRegistry`**：由本机管理员批准的签发者、算法、验签密钥列表与身份来源范围，解决“本机信任谁”。
 - 心跳信息只用于 UI 与路由提示，不是授予身份签发权限的凭据。
 - 节点上报的候选公钥不能自动成为受信任公钥；密钥轮换需批准或受可信旧密钥授权的轮换流程。
 
@@ -171,9 +171,9 @@ chorus/
 
 #### 缓存与数据库故障
 
-- 上次**经过批准**的目录与公钥快照可以留在内存中；共享数据库临时不可用时，继续使用该快照执行静态路由与本地验签。
+- 上次**经过批准**的目录与验签密钥快照可以留在内存中；共享数据库临时不可用时，继续使用该快照执行静态路由与本地验签。
 - 缓存中不存在的新节点、陌生公钥、未经批准的密钥变更，一律不因数据库故障而自动被接受。
-- 快照的最大可用陈旧时间由配置控制；过期则拒绝依赖该信息的新转移。**撤销公钥传播会受缓存期限影响**，文档必须公开此取舍。
+- 快照的最大可用陈旧时间由配置控制；过期则拒绝依赖该信息的新转移。**撤销密钥传播会受缓存期限影响**，文档必须公开此取舍。
 - 节点冷启动且数据库不可用、又没有可验证的本地可信快照时不能凭空发现其他服务器；可使用管理员提供的静态备用快照。
 - **不能把 SQL 票据核销错误自动降级为本地核销**：两个后端不共享消费记录，会造成票据重复接受。控制面缓存策略与数据面 ReplayGuard 故障策略是两回事。
 
@@ -219,11 +219,12 @@ public interface TrustedIssuerRegistry {
 }
 ```
 
-`TrustedIssuer` 内含不可变验签公钥列表、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
+`TrustedIssuer` 内含不可变验签密钥列表、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
 本机批准某个签发者即表示允许其在这些身份权限内向本机提供 Ticket，不再配置接收端目标列表；验票仍须检查 `aud` 等于本机节点 ID。
-同一签发者可在轮换期间保留多把可信公钥，所有公钥共用签发者的启用状态与策略；撤销单把公钥时将其从列表移除。
+同一签发者可在轮换期间保留多把同算法的可信密钥，所有密钥共用签发者的启用状态与策略；撤销单把密钥时将其从列表移除。
+静态信任条目的 `algorithm` 为 `ED25519` 或 `HMAC_SHA256`，省略时沿用 `ED25519`；HMAC 必须显式批准。同一签发者的全部密钥绑定同一算法，不根据文件内容或票据 Header 自动转换类型。
 静态配置的 `key: path` 等价于 `keys: [path]`，两者至少提供一个；同时提供时只加载 `keys`，不合并或回退到 `key`。
-配置、API 与 Ticket 均不使用密钥标识，接收端按签发节点 ID 查找批准记录；签发者启用时依次尝试其公钥，验签后使用该签发者的策略。
+配置、API 与 Ticket 均不使用密钥标识，接收端按签发节点 ID 查找批准记录；签发者启用时依次尝试其批准密钥，验签后使用该签发者的策略。
 
 写入型管理接口另行声明，例如 `ServerDirectoryAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
 
@@ -373,7 +374,7 @@ public record TicketClaims(
 约定：
 
 - 默认单 Cookie：`chorus:ticket`。
-- 首版使用 JWS Compact Serialization + Ed25519，仅签发和接收 RFC 9864 的 `alg=Ed25519`，不接收旧 `EdDSA` 标识。HMAC-SHA256 保留为未来受限可选算法，不进入 Phase 1。
+- 使用 JWS Compact Serialization，支持 Ed25519（RFC 9864 的 `alg=Ed25519`）及互信部署可选的 HMAC-SHA256（`alg=HS256`）；不接收旧 `EdDSA` 标识或无签名算法。
 - JWT 标准 `iat` / `nbf` / `exp` 使用 **NumericDate 秒**；Java API 使用 `Instant`，配置 TTL 使用 `Duration`，不要把自定义毫秒直接写进标准时间字段。
 - `jti` 用密码学安全随机值（如 UUIDv4）即可，不强制 UUIDv7。
 - `iss` / `aud` 使用集群中明确约定的唯一节点 ID；跨管理域建议使用全域命名，如 `operator-a/gateway-01`。
@@ -382,7 +383,7 @@ public record TicketClaims(
 - Cookie 最大 5120 字节；`core` 应检查**最终编码后的字节长度**。示例项目限额可取 4096 字节，但不是协议强制值。
 - 默认不压缩 Ticket；如果将来添加压缩，必须有版本标记、大小/解压上限与明确的编解码兼容测试。
 
-**密钥选择**：按 `iss` 查找本地批准的签发者，拒绝禁用的签发者，校验 `alg` 白名单并依次尝试其批准公钥；不得尝试其他签发者的公钥或使用 JWT 中的任意 URL 下载密钥。新节点上传公钥不会自动扩大信任集合。
+**密钥选择**：按 `iss` 查找本地批准的签发者，拒绝禁用的签发者，校验 `alg` 与该签发者批准的算法完全一致，并依次尝试其批准密钥；不得将 Ed25519 公钥转换成 HMAC 密钥，不得尝试其他签发者的密钥或使用 JWT 中的任意 URL 下载密钥。新节点上传公钥不会自动扩大信任集合。
 
 ### 3.5 `policy`：身份解析与联盟信任
 
@@ -422,8 +423,8 @@ public interface IdentityResolutionPolicy {
 
 #### 互信集群与受控联盟
 
-- **私人互信集群**：管理员可给指定 Sender 较宽的身份断言权限，例如 Gateway 可签发入口身份，可信 Peer 可重新签发已接受的身份。节点私钥泄露后，对该节点允许的权限范围承担相应风险。
-- **跨服主联盟**：默认不把外域节点等同于内部 Gateway。每个接收节点独立授权签发者、公钥与身份来源；`OFFLINE_RAW` 不应自动拥有 Mojang 断言权限。
+- **私人互信集群**：管理员可给指定 Sender 较宽的身份断言权限，例如 Gateway 可签发入口身份，可信 Peer 可重新签发已接受的身份。节点签名密钥泄露后，对该密钥所批准的签发者权限范围承担相应风险。HMAC 的每个共享文件持有者均可签发相同密钥覆盖的身份声明，不能用共享密钥在这些持有者之间隔离签发权限。
+- **跨服主联盟**：默认不把外域节点等同于内部 Gateway。每个接收节点独立授权签发者、验签密钥与身份来源；`OFFLINE_RAW` 不应自动拥有 Mojang 断言权限。
 - **关键边界**：仅凭单层新签发 JWT，Receiver 无法密码学证明“外域 Peer 转发了原 Gateway 已验证的真实身份，而不是自己捏造同样的身份”。如果希望允许不完全可信节点中转官方身份，必须另行设计**原始身份凭证（Identity Attestation）+ 本次转移授权**的分层签名机制，或让 Receiver 自行复验；这项能力**尚未确认纳入 MVP**。
 
 签发者权限不取决于 Ticket 自己携带的数字 `trustLevel`。
@@ -481,7 +482,13 @@ public interface SignatureService {
 }
 ```
 
-密钥轮换：一个签发者可同时保留旧验签公钥与新 ACTIVE 签发私钥；撤销需通过受信任配置/管理员命令传播，数据库故障缓存期的撤销延迟必须被接受并记录。密钥加载失败时禁止以无签名模式继续。
+`SigningKey` / `VerificationKey` 为按算法区分的 sealed interface；Ed25519 分别使用 `SigningKey.Ed25519` / `VerificationKey.Ed25519`，共享密钥 `HmacSha256Key` 同时实现签发与验签接口。密码操作使用每次调用独立的 JCA 实例，HS256 使用常量时间比较。
+
+密钥轮换：一个签发者可同时批准多把同算法验签密钥，签发端使用当前本地密钥；撤销通过受信任配置传播，数据库故障缓存期的撤销延迟必须被接受并记录。密钥加载失败时禁止以无签名模式继续。
+
+Ed25519 继续加载管理员提供的 PKCS#8 私钥与 X.509 SPKI 公钥（DER / PEM）。HMAC 的 `crypto.key` 指定原始 32 字节 `.key` 文件：签发角色在文件不存在时用密码学安全随机数生成，创建父目录，以排他方式创建文件，并在文件内容持久化后返回；支持 POSIX 权限时新文件设为 `0600`。已有文件直接复用，空文件、长度错误、读取或写入失败均拒绝，不覆盖或自动重置已有密钥。写入中断可能留下无效文件，后续启动仍拒绝，需管理员修复。
+
+管理员将同一 `.key` 文件同步给需要信任该签发者的节点；信任加载与重载只读取文件，缺失时不生成替代密钥。接收专用节点不生成本地签发密钥。先验证所有配置文件的 Schema 和目录目标引用，再生成本地签发密钥、加载批准密钥，最后打开防重放状态；因此 Peer 可在同一次启动中引用刚生成的本地密钥。当前 HMAC 支持静态文件分发，不新增共享 SQL 的密钥存储设计。
 
 ### 3.8 `ChorusCoreEngine` 对外 API
 
@@ -544,7 +551,7 @@ public interface ChorusCoreEngine extends AutoCloseable {
 `verifyAndResolve()` 顺序：
 
 1. 限制总输入长度、解码复杂度；拒绝缺失的 Cookie / 不支持的结构版本。
-2. 从不可信 Claim 读取 `iss` 定位本地批准且启用的签发者；检查 `alg` 白名单并依次尝试其公钥，先完成验签。
+2. 从不可信 Claim 读取 `iss` 定位本地批准且启用的签发者；检查 `alg` 与该签发者批准的算法一致，并依次尝试其密钥，先完成验签。
 3. 检查 `aud`、时间窗口、最大 Ticket 生存期、Transfer Intent、登录用户名（大小写完全一致）与 Receiver 授权策略。
 4. 如启用双端独立认证比对，检查平台提供的 `VerifiedExternalIdentity`，不能以客户端自报 UUID 代替。
 5. 计算 `ResolvedPlayerProfile`；失败不消耗 JTI。
@@ -556,7 +563,7 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 `COOKIE_MISSING`、`MALFORMED_TICKET`、`UNSUPPORTED_VERSION`、`UNSUPPORTED_ALGORITHM`、`UNKNOWN_ISSUER`、`UNTRUSTED_KEY`、`INVALID_SIGNATURE`、`EXPIRED`、`NOT_YET_VALID`、`INVALID_LIFETIME`、`TARGET_MISMATCH`、`TRANSFER_REQUIRED`、`USERNAME_MISMATCH`、`ISSUER_POLICY_DENIED`、`EXTERNAL_IDENTITY_MISMATCH`、`PROFILE_RESOLUTION_FAILED`、`REPLAYED`、`REPLAY_UNAVAILABLE`、`TICKET_TOO_LARGE`。
 
-预期验证失败使用可区分的业务拒绝结果/异常；密钥损坏、数据库初始化失败等基础设施错误另作报告。日志不得记录完整 Cookie、私钥或数据库凭据。
+预期验证失败使用可区分的业务拒绝结果/异常；密钥损坏、数据库初始化失败等基础设施错误另作报告。日志不得记录完整 Cookie、私钥、共享密钥或数据库凭据。
 
 ### 3.9 统一配置 `chorus.yml`
 
@@ -620,7 +627,7 @@ operator-a/jp-backend-01:
   display-name: Japan Backend
 ```
 
-`trusted-issuers.yml` 直接以签发者 ID 为根键，表示本机批准的公钥与身份来源权限；`allowed-auth-schemes` 使用现有 `AuthType` 的认证来源名称，不改变 Ticket 身份字段。
+`trusted-issuers.yml` 直接以签发者 ID 为根键，表示本机批准的算法、验签密钥与身份来源权限；`allowed-auth-schemes` 使用现有 `AuthType` 的认证来源名称，不改变 Ticket 身份字段。
 
 ```yaml
 operator-a/us-gateway-01:
@@ -639,6 +646,9 @@ operator-b/peer-01:
 
 | 配置 | 契约含义 | 当前实现状态 |
 |---|---|---|
+| `crypto.algorithm: ED25519` | 本节点签发使用 `private-key / public-key`，JWS 为 `Ed25519` | 已实现；管理员提供密钥对 |
+| `crypto.algorithm: HMAC_SHA256` | 本节点签发使用 `key`，JWS 为 `HS256` | 已实现；签发角色缺失时生成 `.key`，管理员分发同一文件 |
+| 信任条目 `algorithm: ED25519 / HMAC_SHA256` | 为该签发者的全部 `key / keys` 绑定验签算法；省略为 `ED25519` | 已实现；信任加载不生成密钥，不跨算法回退 |
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
 | `ticket.compression: ZSTD / GZIP` | 指定压缩方式 | TODO：编码帧、版本兼容、解压限额与编解码尚未实现；启动拒绝 |
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
@@ -650,7 +660,7 @@ operator-b/peer-01:
 `ticket.max-payload-bytes` 限制包含 JWS 编码与签名的完整 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
 `issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
-文件路径相对主配置，信任公钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
+文件路径相对主配置，信任密钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
 每种配置文件使用**独立、完整、可单独验证的 JSON Schema** 作为格式契约。当前契约版本为 `v1`，采用 JSON Schema Draft 2020-12：
 
@@ -750,7 +760,7 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 
 ### 5.3 可观测性
 
-统计 Ticket 签发、验证、拒绝、过期、重放、策略拒绝、缓存陈旧、目录同步失败。日志可记录 issuer、aud、jti 摘要和错误码，不记录完整 Cookie、私钥、数据库令牌。
+统计 Ticket 签发、验证、拒绝、过期、重放、策略拒绝、缓存陈旧、目录同步失败。日志可记录 issuer、aud、jti 摘要和错误码，不记录完整 Cookie、私钥、共享密钥、数据库令牌。
 
 ---
 
@@ -761,7 +771,7 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立使用章节：
 
 - 领域模型与配置校验。
-- Ed25519 KeyRing、JWS 编解码、密钥信任绑定。
+- Ed25519 / HMAC-SHA256 KeyRing、JWS 编解码、算法与密钥信任绑定；共享密钥文件缺失生成与手动分发。
 - 静态节点目录 + 可信签发者策略（不依赖共享数据库服务）。
 - `ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID`；`STRICT_ONLINE_MATCH` 的核心比较逻辑可用纯对象测试验证。
 - 本地 SQLite ReplayGuard 与可替换 SPI，含真实文件上的持久化、并发与重启验证；共享 SQL 核销不纳入第一阶段。
@@ -773,7 +783,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 2. 正版 → 旧离线 UUID 映射；离线 → 离线；双正版独立验证上下文比较。
 3. 外域不可信签发者、错误 provider/target、密钥替换、过期/未来票据拒绝。
 4. 同一 JTI 并发消费只有一次成功，容量满时 fail-closed，提交完成前不返回成功，重开后继续拒绝重放。
-5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准公钥签名。
+5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准密钥签名、HS256 与 Ed25519 算法混淆拒绝。
 6. 静态目录变更、无外部数据库服务运行；共享目录故障缓存过期验证在 Phase 2 完成。
 
 ### Phase 2：共享目录 SQL 实现

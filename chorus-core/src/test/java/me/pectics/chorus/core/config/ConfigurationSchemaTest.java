@@ -18,6 +18,7 @@ import com.networknt.schema.SpecificationVersion;
 import java.math.BigDecimal;
 import java.util.List;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -110,6 +111,44 @@ class ConfigurationSchemaTest {
             assertThat(contract(Document.CORE).validate(withoutKey).isEmpty())
                     .isEqualTo(role == NodeRole.BACKEND);
         }
+    }
+
+    @ParameterizedTest
+    @EnumSource(NodeRole.class)
+    void hmacSendersRequireOneSharedKeyWithoutPublicOrPrivateKeyFields(NodeRole role) {
+        var core = (ObjectNode) fixture(Document.CORE);
+        ((ObjectNode) core.get("node")).put("role", role.name());
+        var crypto = (ObjectNode) core.get("crypto");
+        crypto.put("algorithm", "HMAC_SHA256").put("key", "keys/shared.key");
+        var issuance = (ObjectNode) fixture(Document.TRUSTED_ISSUERS).at("/gateway");
+        issuance.remove("keys");
+        issuance.put("ttl", "15s");
+        issuance.putArray("allowed-targets").add("backend");
+        core.set("issuance", issuance);
+        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        crypto.remove("key");
+        assertThat(contract(Document.CORE).validate(core).isEmpty())
+                .isEqualTo(role == NodeRole.BACKEND);
+        crypto.put("key", "keys/shared.key");
+        for (String field : List.of("private-key", "public-key")) {
+            crypto.put(field, "legacy.der");
+            assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+            crypto.remove(field);
+        }
+        crypto.put("algorithm", "ED25519");
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+    }
+
+    @ParameterizedTest
+    @EnumSource(SignatureAlgorithm.class)
+    void trustSchemaAcceptsExplicitSupportedAlgorithmsAndRejectsUnknownOnes(
+            SignatureAlgorithm algorithm) {
+        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var issuer = (ObjectNode) trust.get("gateway");
+        issuer.put("algorithm", algorithm.name());
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
+        issuer.put("algorithm", "HS512");
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
     }
 
     @Test

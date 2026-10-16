@@ -24,6 +24,8 @@ import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
 import me.pectics.chorus.core.crypto.Ed25519Keys;
+import me.pectics.chorus.core.crypto.HmacSha256Keys;
+import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.crypto.SigningKey;
 import me.pectics.chorus.core.crypto.StaticKeyRing;
 import me.pectics.chorus.core.crypto.VerificationKey;
@@ -82,27 +84,22 @@ public final class CoreBootstrap {
                                         strings(root.at("/issuance/allowed-targets")))
                                 : null);
         var files = root.at("/registry/static");
-        var registries =
-                loadRegistries(
-                        base.resolve(files.get("servers-path").asString()),
-                        base.resolve(files.get("issuers-path").asString()),
-                        clock);
-        if (!registries.snapshot().servers().containsKey(configuration.nodeId())
+        Path serversFile = base.resolve(files.get("servers-path").asString());
+        Path trustFile = base.resolve(files.get("issuers-path").asString());
+        var directory =
+                readDirectory(ConfigurationLoader.read(serversFile, Document.SERVERS), clock);
+        var trust = ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS);
+        if (!directory.servers().containsKey(configuration.nodeId())
                 || role.sender()
-                        && !registries
-                                .snapshot()
+                        && !directory
                                 .servers()
                                 .keySet()
                                 .containsAll(configuration.issuancePolicy().allowedTargets())) {
             throw new IllegalArgumentException(
                     "Node and issuance targets must exist in the directory");
         }
-        SigningKey key =
-                role.sender()
-                        ? Ed25519Keys.load(
-                                base.resolve(crypto.get("private-key").asString()),
-                                base.resolve(crypto.get("public-key").asString()))
-                        : null;
+        SigningKey key = role.sender() ? loadSigningKey(crypto, base) : null;
+        var registries = new StaticRegistries(directory, readIssuers(trust, trustFile));
         SqliteReplayGuard guard = null;
         if (role.receiver()) {
             var replay = root.at("/replay-guard/local");
@@ -132,6 +129,18 @@ public final class CoreBootstrap {
     }
 
     private record Approved(RegistrySnapshot directory, List<TrustedIssuer> issuers) {}
+
+    private static SigningKey loadSigningKey(JsonNode crypto, Path base)
+            throws IOException, GeneralSecurityException {
+        return switch (SignatureAlgorithm.valueOf(crypto.get("algorithm").asString())) {
+            case ED25519 ->
+                    Ed25519Keys.load(
+                            base.resolve(crypto.get("private-key").asString()),
+                            base.resolve(crypto.get("public-key").asString()));
+            case HMAC_SHA256 ->
+                    HmacSha256Keys.loadOrCreate(base.resolve(crypto.get("key").asString()));
+        };
+    }
 
     private static void requireImplementedOptions(JsonNode root) {
         switch (root.at("/ticket/compression").asString()) {
@@ -181,6 +190,10 @@ public final class CoreBootstrap {
             throws IOException, GeneralSecurityException {
         var directory = ConfigurationLoader.read(serversFile, Document.SERVERS);
         var trust = ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS);
+        return new Approved(readDirectory(directory, clock), readIssuers(trust, trustFile));
+    }
+
+    private static RegistrySnapshot readDirectory(JsonNode directory, Clock clock) {
         var servers = new HashMap<String, ServerNode>();
         for (var entry : directory.properties()) {
             var value = entry.getValue();
@@ -200,17 +213,30 @@ public final class CoreBootstrap {
                             host,
                             Integer.parseInt(address.substring(separator + 1))));
         }
+        return new RegistrySnapshot(servers, clock.instant(), false);
+    }
+
+    private static List<TrustedIssuer> readIssuers(JsonNode trust, Path trustFile)
+            throws IOException, GeneralSecurityException {
         var issuers = new ArrayList<TrustedIssuer>();
         Path base = trustFile.toAbsolutePath().normalize().getParent();
         for (var entry : trust.properties()) {
             var value = entry.getValue();
+            var algorithm =
+                    value.has("algorithm")
+                            ? SignatureAlgorithm.valueOf(value.get("algorithm").asString())
+                            : SignatureAlgorithm.ED25519;
             var keys = new ArrayList<VerificationKey>();
             Iterable<JsonNode> paths =
                     value.has("keys") ? value.get("keys") : List.of(value.get("key"));
             for (var key : paths) {
+                Path path = base.resolve(key.asString());
                 keys.add(
-                        new VerificationKey.Ed25519(
-                                Ed25519Keys.loadPublic(base.resolve(key.asString()))));
+                        switch (algorithm) {
+                            case ED25519 ->
+                                    new VerificationKey.Ed25519(Ed25519Keys.loadPublic(path));
+                            case HMAC_SHA256 -> HmacSha256Keys.load(path);
+                        });
             }
             issuers.add(
                     new TrustedIssuer(
@@ -219,8 +245,7 @@ public final class CoreBootstrap {
                             !value.has("enabled") || value.get("enabled").asBoolean(),
                             policy(value)));
         }
-        return new Approved(
-                new RegistrySnapshot(servers, clock.instant(), false), List.copyOf(issuers));
+        return List.copyOf(issuers);
     }
 
     private static IssuerTrustPolicy policy(JsonNode value) {

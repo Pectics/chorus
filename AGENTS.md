@@ -22,7 +22,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - 当前主要开发并纳入 Git 白名单 / Gradle 的模块只有 `chorus-core` 和 `chorus-common`。
 - `chorus-paper`、`chorus-velocity`、`chorus-fabric` 仍是架构规划的一部分；本地可能存在暂存骨架，
   **有意被 Git 忽略且不纳入构建**。不得因为目录存在就自动启用、放行或补全平台实现。
-- Core 已实现 Phase 1：静态 YAML 目录与信任、Ed25519 Ticket、身份策略、SQLite 持久化防重放与异步 Engine；
+- Core 已实现 Phase 1：静态 YAML 目录与信任、Ed25519 / HMAC-SHA256 Ticket、身份策略、SQLite 持久化防重放与异步 Engine；
   单测与本地集成测试覆盖核心闭环。Common 仍只有包职责说明；共享 SQL 与平台接入尚未实现。
 - 实施顺序遵循架构 §6：先完成并测试 Core，再推进共享 SQL 目录，随后只验证一条
   **正版 Gateway → 离线 Paper Backend** 路线；其他平台与扩展场景按后续阶段推进。
@@ -103,7 +103,7 @@ feat(core): Add the verification pipeline
   修改格式时同步核对装配所消费的值、公共领域不变量和引用，具体边界见架构 §3.9。
   Schema 中预留但尚未实现的选项须保留可检索的 `TODO`，在架构契约记录实现状态，并由运行时明确拒绝。
 - 平台 API 使用 `compileOnly` / `modImplementation`，不打入产物；具体登录接口和最低兼容版本须实测。
-- 日志不得记录完整 Cookie、私钥或数据库凭据。
+- 日志不得记录完整 Cookie、私钥、共享密钥或数据库凭据。
 - 本地 ReplayGuard 使用 SQLite，持久化提交确认后才返回成功；保留原数据库及 WAL，故障时拒绝，不回退内存。
 - 架构 §7.2 的管理方式、核销默认后端、心跳权限、联盟 Attestation、数据库支持矩阵、平台最低版本和运维默认参数仍未决定。
   实现所需临时选择保持可替换，并标注 `UNDECIDED`（未决）及设计出处，不将示例值写成产品承诺。

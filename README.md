@@ -88,7 +88,7 @@ Java 消费验证后的值，负责转换、字段间数值关系、密钥内容
 
 Phase 1 支持 `STATIC` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
-共享 SQL、HMAC、压缩、通用属性与非空扩展尚未实现。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
+共享 SQL、压缩、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519 与 HMAC-SHA256。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
 
 下面是 Receiver 的 `chorus.yml`。**UNDECIDED（架构 §7.2）：寿命、时钟容差、字节限额、容量和锁等待时间均为示例，
 没有隐式运维默认值。** 发送端的 `issuance.ttl`、`verification.max-lifetime` 与 `verification.clock-skew` 要求整秒；TTL 为正且不超过最大寿命，Cookie 限额不能超过 5120。
@@ -158,17 +158,47 @@ issuance:
 `REGISTRY` 的设计语义为复用 `registry` 数据库，不能与 `registry.provider: STATIC` 组合，该约束由 Schema 校验。
 `LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
 
-密钥由管理员提供：Ed25519 私钥使用 PKCS#8，公钥使用 X.509 SPKI，均支持 DER 或 PEM；加载失败不启用无签名模式。
-主配置内的路径相对 `chorus.yml`，信任公钥路径相对 `trusted-issuers.yml`。
+Ed25519 密钥由管理员提供：私钥使用 PKCS#8，公钥使用 X.509 SPKI，均支持 DER 或 PEM；加载失败不启用无签名模式。
+主配置内的路径相对 `chorus.yml`，信任密钥路径相对 `trusted-issuers.yml`。
 `CoreBootstrap.loadRegistries` / `reloadRegistries` 提供显式静态快照加载与替换；加载失败保留旧快照，不自动监视文件。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
 主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时目录显示名来自 `servers.yml`，未配置时使用节点 ID。
-单把公钥可用 `key: keys/gateway.pub`，等价于 `keys: [keys/gateway.pub]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
-`keys` 是公钥路径字符串列表，可保留多把公钥支持轮换；接收端依次尝试这些公钥。
-签发者级 `enabled: false` 会禁用其全部公钥；撤销单把公钥时从列表移除。配置变更在快照替换后生效。
+单把验签密钥可用 `key: keys/gateway.pub`，等价于 `keys: [keys/gateway.pub]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
+`keys` 是密钥路径字符串列表，可保留多把同算法密钥支持轮换；接收端依次尝试这些密钥。
+签发者级 `enabled: false` 会禁用其全部密钥；撤销单把密钥时从列表移除。配置变更在快照替换后生效。
 
-Ticket 只使用三段 Compact JWS，Header 固定为 `alg: Ed25519` 与 `typ: chorus-ticket+jwt`；
+互信服务器也可以选择 **HMAC-SHA256**，只需同步一个共享 `.key` 文件。签发端将 `crypto` 改为：
+
+```yaml
+crypto:
+  algorithm: HMAC_SHA256
+  key: keys/shared.key
+```
+
+首次启动时，若文件不存在，Core 自动创建父目录并生成 32 字节随机二进制密钥；支持 POSIX 权限时新文件设为 `0600`。
+后续启动复用原文件。已有文件为空、长度错误或无法读取时启动失败，不会覆盖或重新生成；写入中断遗留的无效文件需管理员修复。
+将生成的文件原样复制到接收节点，再在接收节点的 `trusted-issuers.yml` 中批准：
+
+```yaml
+gateway:
+  algorithm: HMAC_SHA256
+  key: keys/shared.key
+  allowed-auth-schemes: [MOJANG]
+  allowed-providers: [mojang]
+```
+
+上述接收端路径相对 `trusted-issuers.yml`。接收专用节点的 `crypto` 可只保留 `algorithm: HMAC_SHA256`；
+它从信任条目加载同步的文件，不生成本地签发密钥，信任文件缺失时拒绝启动。
+`crypto.algorithm` 选择本节点的签发算法，各信任条目的 `algorithm` 独立决定验签算法；同一接收节点可信任不同算法的不同签发者。
+信任条目省略 `algorithm` 时沿用 `ED25519`，因此现有 Ed25519 配置继续可用；HMAC 必须显式指定。
+同一签发者的 `key` / `keys` 使用同一算法，优先级和轮换规则与 Ed25519 相同。
+共享该文件的节点均有能力签发对应密钥覆盖的票据，应只在互信节点之间分发。
+
+直接使用 Java 密钥 API 时，Ed25519 构造器为 `SigningKey.Ed25519` / `VerificationKey.Ed25519`，
+HMAC 使用同时支持签发与验签的 `HmacSha256Key`。
+
+Ticket 使用三段 Compact JWS，Header 为 `alg: Ed25519` 或 `alg: HS256`，以及固定的 `typ: chorus-ticket+jwt`；
 Claims 为 `version: 1`、`jti`、`iss`、`aud`、整秒 `iat/nbf/exp`、`identity` 与空 `extensions`。
 身份字段沿用 Java 模型名称；UUID 为标准小写连字符形式，用户名为 1～16 个 ASCII 字母、数字或下划线。
 Profile 至多一个 `textures`，可省略 `signature`，不接受 JSON null；总属性限额计入名称、值及签名的 UTF-8 字节。
