@@ -82,83 +82,87 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 各 Schema 的根节点就是对应文件的完整格式，可以单独用于编辑器或其他 Draft 2020-12 验证器。
 运行时使用 `com.networknt:json-schema-validator` 从 Core JAR 加载对应 Schema，无需联网获取。
 字段结构、必填项、类型、枚举、数值范围、列表唯一性、条件规则与时长语法均在 Schema 中定义；配置格式变化优先修改对应 Schema 和契约测试。
-只有启用 Sender 时才要求签发密钥与 `issuance`，只有启用 Receiver 时才要求 `replay`；已出现的配置段均接受结构验证。
+只有启用 Sender 时才要求签发密钥与 `issuance`，只有启用 Receiver 时才要求 `replay-guard`；已出现的配置段均接受结构验证。
 Java 消费验证后的值，负责转换、字段间数值关系、密钥内容和跨文件引用。校验失败不打开状态库、不替换已批准快照。
 错误包含文件、JSON Pointer 字段路径及校验关键字；YAML 解析保留 1 MiB 大小、深度、重复键、别名和类型限制。
 
-Phase 1 支持 `STATIC` 目录、`LOCAL_SQLITE`、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
+Phase 1 支持 `STATIC` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
 共享 SQL、HMAC、压缩、通用属性与非空扩展尚未实现。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
 
 下面是 Receiver 的 `chorus.yml`。**UNDECIDED（架构 §7.2）：寿命、时钟容差、字节限额、容量和锁等待时间均为示例，
-没有隐式运维默认值。** TTL、最大寿命和时钟容差要求整秒，TTL 为正且不超过最大寿命；Cookie 限额不能超过 5120。
+没有隐式运维默认值。** 发送端的 `issuance.ttl`、`verification.max-lifetime` 与 `verification.clock-skew` 要求整秒；TTL 为正且不超过最大寿命，Cookie 限额不能超过 5120。
 
 ```yaml
 node:
   id: backend
   role: BACKEND
-cookie-key: chorus:ticket
+ticket:
+  cookie-key: chorus:ticket
+  max-payload-bytes: 4096
+  max-property-bytes: 2048
+  compression: NONE
 crypto:
   algorithm: ED25519
-  ticket-ttl: 15s
-  max-ticket-lifetime: 15s
-  clock-skew: 2s
-  max-ticket-bytes: 4096
-  max-property-bytes: 2048
 registry:
-  mode: STATIC
+  provider: STATIC
   static:
-    servers-file: servers.yml
-    trust-file: trusted-issuers.yml
+    servers-path: servers.yml
+    issuers-path: trusted-issuers.yml
 verification:
-  require-transfer-intent: true
-  identity-strategy: ADOPT_UPSTREAM
-  ip-binding-mode: DISABLED
-replay:
-  mode: LOCAL_SQLITE
-  file: state/replay.db
-  capacity: 10000
-  busy-timeout: 1s
+  max-lifetime: 15s
+  clock-skew: 2s
+  enforce-transfer-intent: true
+  identity-policy: ADOPT_UPSTREAM
+  ip-binding: DISABLED
+replay-guard:
+  backend: LOCAL
+  local:
+    path: state/replay.db
+    max-entries: 10000
+    busy-timeout: 1s
 ```
 
-`servers.yml`：
+`servers.yml` 按节点 ID 平铺；`address` 包含主机与端口，IPv6 写作 `"[::1]:25565"`，加载时不进行 DNS 查询：
 
 ```yaml
-servers:
-  gateway:
-    host: gateway.example.net
-    port: 25565
-  backend:
-    host: backend.example.net
-    port: 25565
+gateway:
+  address: gateway.example.net:25565
+backend:
+  address: backend.example.net:25565
 ```
 
-`trusted-issuers.yml` 的每个公钥绑定都由管理员批准；目录中的节点不会自动获得信任：
+`trusted-issuers.yml` 按签发者 ID 平铺；每项由本机管理员批准，目录中的节点不会自动获得信任：
 
 ```yaml
-trusted-issuers:
-  gateway:
-    key: keys/gateway.pub
-    allowed-auth-types: [MOJANG]
-    allowed-providers: [mojang]
+gateway:
+  key: keys/gateway.pub
+  allowed-auth-schemes: [MOJANG]
+  allowed-providers: [mojang]
 ```
 
 配置 Gateway 时，把节点 ID 改为 `gateway`，将 `role` 改为 `GATEWAY`；在 `crypto` 中
-加入 `private-key-file: keys/gateway.key` 和 `public-key-file: keys/gateway.pub`，
-并在根级加入签发权限（接收端仍独立裁定）：
+加入 `private-key: keys/gateway.key` 和 `public-key: keys/gateway.pub`，
+并在 `verification` 前加入签发权限（接收端仍独立裁定）：
 
 ```yaml
 issuance:
-  allowed-auth-types: [MOJANG]
+  ttl: 15s
+  allowed-auth-schemes: [MOJANG]
   allowed-providers: [mojang]
   allowed-targets: [backend]
 ```
 
+配置契约列出 `ticket.compression: NONE | ZSTD | GZIP` 与 `replay-guard.backend: LOCAL | REGISTRY | REDIS`。
+**TODO（未实现）**：`ZSTD` / `GZIP` 压缩及 `REGISTRY` / `REDIS` 防重放后端均尚未实现，当前启动会在读取目录或打开状态库前拒绝这些选项；运行时代码和 Schema 均保留 TODO 定位。
+`REGISTRY` 的设计语义为复用 `registry` 数据库，不能与 `registry.provider: STATIC` 组合，该约束由 Schema 校验。
+`LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
+
 密钥由管理员提供：Ed25519 私钥使用 PKCS#8，公钥使用 X.509 SPKI，均支持 DER 或 PEM；加载失败不启用无签名模式。
 主配置内的路径相对 `chorus.yml`，信任公钥路径相对 `trusted-issuers.yml`。
 `CoreBootstrap.loadRegistries` / `reloadRegistries` 提供显式静态快照加载与替换；加载失败保留旧快照，不自动监视文件。
-`GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay`。
-`issuance.allowed-targets` 限制本节点可以签发的目标；本机 `trusted-issuers` 只配置受信任签发者及其身份权限，验票时检查目标为本机。
+`GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
+`issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
 单把公钥可用 `key: keys/gateway.pub`，等价于 `keys: [keys/gateway.pub]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
 `keys` 是公钥路径字符串列表，可保留多把公钥支持轮换；接收端依次尝试这些公钥。
 签发者级 `enabled: false` 会禁用其全部公钥；撤销单把公钥时从列表移除。配置变更在快照替换后生效。

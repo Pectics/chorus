@@ -43,21 +43,21 @@ public final class TicketCodec {
     private static final JOSEObjectType TYPE = new JOSEObjectType("chorus-ticket+jwt");
     private static final Set<String> CLAIM_FIELDS =
             Set.of("version", "jti", "iss", "aud", "iat", "nbf", "exp", "identity", "extensions");
-    private final int maxTicketBytes;
+    private final int maxPayloadBytes;
     private final int maxPropertyBytes;
     private final SignatureService signatures;
 
     /**
      * Limits are explicit configuration, not product defaults. Property size counts UTF-8 bytes.
      */
-    public TicketCodec(int maxTicketBytes, int maxPropertyBytes, SignatureService signatures) {
-        if (maxTicketBytes < 1
-                || maxTicketBytes > 5120
+    public TicketCodec(int maxPayloadBytes, int maxPropertyBytes, SignatureService signatures) {
+        if (maxPayloadBytes < 1
+                || maxPayloadBytes > 5120
                 || maxPropertyBytes < 1
-                || maxPropertyBytes > maxTicketBytes) {
+                || maxPropertyBytes > maxPayloadBytes) {
             throw new IllegalArgumentException("Invalid ticket or property size limit");
         }
-        this.maxTicketBytes = maxTicketBytes;
+        this.maxPayloadBytes = maxPayloadBytes;
         this.maxPropertyBytes = maxPropertyBytes;
         this.signatures = java.util.Objects.requireNonNull(signatures, "signatures");
     }
@@ -111,7 +111,7 @@ public final class TicketCodec {
             throw new IllegalStateException("Ticket signing failed", e);
         }
         byte[] result = jws.serialize().getBytes(StandardCharsets.US_ASCII);
-        if (result.length > maxTicketBytes) {
+        if (result.length > maxPayloadBytes) {
             throw reject(TicketError.TICKET_TOO_LARGE);
         }
         return result;
@@ -124,7 +124,7 @@ public final class TicketCodec {
         if (bytes == null || bytes.length == 0) {
             throw reject(TicketError.COOKIE_MISSING);
         }
-        if (bytes.length > maxTicketBytes) {
+        if (bytes.length > maxPayloadBytes) {
             throw reject(TicketError.TICKET_TOO_LARGE);
         }
         try {

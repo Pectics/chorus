@@ -31,26 +31,25 @@ class ConfigurationSchemaTest {
             """
             {
               "node": {"id": "backend", "role": "BACKEND"},
-              "cookie-key": "chorus:ticket",
-              "crypto": {
-                "algorithm": "ED25519", "ticket-ttl": "15s", "max-ticket-lifetime": "15s",
-                "clock-skew": "2s", "max-ticket-bytes": 4096, "max-property-bytes": 2048
-              },
-              "registry": {"mode": "STATIC", "static": {"servers-file": "servers.yml", "trust-file": "trusted-issuers.yml"}},
-              "verification": {"require-transfer-intent": true, "identity-strategy": "ADOPT_UPSTREAM"},
-              "replay": {"mode": "LOCAL_SQLITE", "file": "state/replay.db", "capacity": 100, "busy-timeout": "500ms"}
+              "ticket": {"cookie-key": "chorus:ticket", "max-payload-bytes": 4096,
+                "max-property-bytes": 2048, "compression": "NONE"},
+              "crypto": {"algorithm": "ED25519"},
+              "registry": {"provider": "STATIC", "static": {"servers-path": "servers.yml", "issuers-path": "trusted-issuers.yml"}},
+              "verification": {"max-lifetime": "15s", "clock-skew": "2s",
+                "enforce-transfer-intent": true, "identity-policy": "ADOPT_UPSTREAM"},
+              "replay-guard": {"backend": "LOCAL", "local": {"path": "state/replay.db", "max-entries": 100, "busy-timeout": "500ms"}}
             }
             """;
     static final String SERVERS =
             """
-            {"servers": {"backend": {"host": "localhost", "port": 25565}}}
+            {"backend": {"address": "localhost:25565"}}
             """;
     static final String TRUST =
             """
-            {"trusted-issuers": {"gateway": {
+            {"gateway": {
               "keys": ["gateway.pub"],
-              "allowed-auth-types": ["MOJANG"], "allowed-providers": ["mojang"]
-            }}}
+              "allowed-auth-schemes": ["MOJANG"], "allowed-providers": ["mojang"]
+            }}
             """;
     private static final SchemaRegistry REGISTRY =
             SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
@@ -69,7 +68,8 @@ class ConfigurationSchemaTest {
             assertThat(meta.validate(schema)).isEmpty();
             assertThat(schema.get("$id").asString()).endsWith(":v1");
             assertThat(schema.get("type").asString()).isEqualTo("object");
-            assertThat(schema.has("properties")).isTrue();
+            assertThat(schema.has("properties") || schema.get("additionalProperties").isObject())
+                    .isTrue();
             assertThat(schema.has("$ref")).isFalse();
             assertThat(contract(document).validate(fixture(document))).isEmpty();
             for (var other : Document.values()) {
@@ -88,23 +88,23 @@ class ConfigurationSchemaTest {
         assertThat(contract(Document.CORE).validate(core).isEmpty())
                 .isEqualTo(role == NodeRole.BACKEND);
         ((ObjectNode) core.get("crypto"))
-                .put("private-key-file", "private.der")
-                .put("public-key-file", "public.der");
-        var issuance =
-                ((ObjectNode) fixture(Document.TRUSTED_ISSUERS).at("/trusted-issuers/gateway"));
+                .put("private-key", "private.der")
+                .put("public-key", "public.der");
+        var issuance = ((ObjectNode) fixture(Document.TRUSTED_ISSUERS).at("/gateway"));
         issuance.remove("keys");
+        issuance.put("ttl", "15s");
         issuance.putArray("allowed-targets").add("backend");
         core.set("issuance", issuance);
         assertThat(contract(Document.CORE).validate(core)).isEmpty();
         var withoutReplay = core.deepCopy();
-        withoutReplay.remove("replay");
+        withoutReplay.remove("replay-guard");
         assertThat(contract(Document.CORE).validate(withoutReplay).isEmpty())
                 .isEqualTo(role == NodeRole.GATEWAY);
         var withoutIssuance = core.deepCopy();
         withoutIssuance.remove("issuance");
         assertThat(contract(Document.CORE).validate(withoutIssuance).isEmpty())
                 .isEqualTo(role == NodeRole.BACKEND);
-        for (String field : List.of("private-key-file", "public-key-file")) {
+        for (String field : List.of("private-key", "public-key")) {
             var withoutKey = core.deepCopy();
             ((ObjectNode) withoutKey.get("crypto")).remove(field);
             assertThat(contract(Document.CORE).validate(withoutKey).isEmpty())
@@ -128,9 +128,10 @@ class ConfigurationSchemaTest {
                                 "\"algorithm\": \"ED25519\", \"compress-payload\": true"),
                         CORE.replace("4096", "5121"),
                         CORE.replace("2048", "0"),
-                        CORE.replace("\"capacity\": 100", "\"capacity\": 2147483648"),
+                        CORE.replace("\"max-entries\": 100", "\"max-entries\": 2147483648"),
                         CORE.replace("STATIC", "SHARED_SQL"),
-                        CORE.replace("LOCAL_SQLITE", "LOCAL_MEMORY"),
+                        CORE.replace("LOCAL", "UNKNOWN"),
+                        CORE.replace("NONE", "UNKNOWN"),
                         CORE.replace("ADOPT_UPSTREAM", "UNKNOWN"),
                         CORE.replace(
                                 "\"id\": \"backend\"", "\"id\": \"backend\", \"typo\": true"))) {
@@ -163,7 +164,7 @@ class ConfigurationSchemaTest {
             })
     void mainSchemaAcceptsSupportedWholeSecondDurationSpellings(String duration) {
         var core = fixture(Document.CORE);
-        ((ObjectNode) core.get("crypto")).put("ticket-ttl", duration);
+        ((ObjectNode) core.get("verification")).put("max-lifetime", duration);
         assertThat(contract(Document.CORE).validate(core)).isEmpty();
     }
 
@@ -185,36 +186,55 @@ class ConfigurationSchemaTest {
     void mainSchemaRejectsInvalidDurationSyntaxAndPrecisionWithoutJavaConfigurationChecks(
             String duration) {
         var core = fixture(Document.CORE);
-        ((ObjectNode) core.get("crypto")).put("ticket-ttl", duration);
+        ((ObjectNode) core.get("verification")).put("max-lifetime", duration);
         assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
     }
 
     @Test
-    void directorySchemaEnforcesEntryShapesAndExactNumericBounds() {
+    void directorySchemaEnforcesFlatEntriesAndAddressBounds() {
         for (String invalid :
                 List.of(
                         SERVERS.replace("25565", "0"),
                         SERVERS.replace("25565", "65536"),
+                        SERVERS.replace("25565", "25565.0"),
                         SERVERS.replace("localhost", "local host"),
-                        SERVERS.replace(
-                                "\"port\": 25565", "\"port\": 25565, \"display-name\": \"\u2003\""),
-                        SERVERS.replace("\"port\": 25565", "\"port\": 25565, \"typo\": true"),
-                        SERVERS.replace("backend", "bad id"))) {
+                        SERVERS.replace("localhost", ""),
+                        SERVERS.replace("localhost:25565", "::1:25565"),
+                        SERVERS.replace("localhost:25565", "[::1:25565"),
+                        SERVERS.replace("localhost:25565", "localhost"),
+                        SERVERS.replace("backend", "bad id"),
+                        "{\"servers\":" + SERVERS + "}",
+                        "{\"backend\":{\"host\":\"localhost\",\"port\":25565}}")) {
             assertThat(contract(Document.SERVERS).validate(JSON.readTree(invalid))).isNotEmpty();
         }
+        assertThat(contract(Document.SERVERS).validate(JSON.readTree("{}"))).isEmpty();
+        var core = fixture(Document.CORE);
+        ((ObjectNode) core.get("ticket"))
+                .put("max-payload-bytes", new BigDecimal("4096.0000000000000000001"));
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "localhost:1",
+                "mc.example.net:65535",
+                "127.0.0.1:25565",
+                "[::1]:25565",
+                "[2001:db8::1]:25565",
+                "[fe80::1%eth0]:25565"
+            })
+    void directorySchemaAcceptsExplicitHostnameIpv4AndBracketedIpv6Addresses(String address) {
         var servers = fixture(Document.SERVERS);
-        ((ObjectNode) servers.at("/servers/backend"))
-                .put("port", new BigDecimal("25565.0000000000000000001"));
-        assertThat(contract(Document.SERVERS).validate(servers)).isNotEmpty();
-        assertThat(contract(Document.SERVERS).validate(JSON.readTree("{\"servers\":{}}")))
-                .isEmpty();
+        ((ObjectNode) servers.get("backend")).put("address", address);
+        assertThat(contract(Document.SERVERS).validate(servers)).isEmpty();
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"tags", "metadata"})
     void directorySchemaRejectsRemovedExtensionFields(String field) {
         var servers = fixture(Document.SERVERS);
-        var entry = (ObjectNode) servers.at("/servers/backend");
+        var entry = (ObjectNode) servers.at("/backend");
         if (field.equals("tags")) {
             entry.putArray(field).add("lobby");
         } else {
@@ -225,7 +245,7 @@ class ConfigurationSchemaTest {
                         error -> {
                             assertThat(error.getKeyword()).isEqualTo("additionalProperties");
                             assertThat(error.getInstanceLocation().toString())
-                                    .isEqualTo("/servers/backend");
+                                    .isEqualTo("/backend");
                         });
     }
 
@@ -252,21 +272,18 @@ class ConfigurationSchemaTest {
                     .isNotEmpty();
         }
         var trust = fixture(Document.TRUSTED_ISSUERS);
-        ((ObjectNode) trust.at("/trusted-issuers/gateway")).remove("allowed-providers");
+        ((ObjectNode) trust.at("/gateway")).remove("allowed-providers");
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
         trust = fixture(Document.TRUSTED_ISSUERS);
-        ((ObjectNode) trust.at("/trusted-issuers/gateway")).put("enabled", false);
+        ((ObjectNode) trust.at("/gateway")).put("enabled", false);
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
-        assertThat(
-                        contract(Document.TRUSTED_ISSUERS)
-                                .validate(JSON.readTree("{\"trusted-issuers\":{}}")))
-                .isEmpty();
+        assertThat(contract(Document.TRUSTED_ISSUERS).validate(JSON.readTree("{}"))).isEmpty();
     }
 
     @Test
     void trustSchemaAcceptsEitherKeyFormOrBothAndRequiresAtLeastOne() {
         var trust = fixture(Document.TRUSTED_ISSUERS);
-        var issuer = (ObjectNode) trust.at("/trusted-issuers/gateway");
+        var issuer = (ObjectNode) trust.at("/gateway");
         issuer.put("key", "gateway.pub");
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
         issuer.remove("keys");
@@ -279,18 +296,61 @@ class ConfigurationSchemaTest {
     void trustSchemaValidatesEachPresentKeyFieldWithoutFallingBackFromInvalidKeys() {
         for (String invalid : List.of("null", "false", "42", "[]", "{}", "\"\"", "\" \u2003\"")) {
             var trust = fixture(Document.TRUSTED_ISSUERS);
-            var issuer = (ObjectNode) trust.at("/trusted-issuers/gateway");
+            var issuer = (ObjectNode) trust.at("/gateway");
             issuer.set("key", JSON.readTree(invalid));
             assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
             issuer.remove("keys");
             assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
         }
         var trust = fixture(Document.TRUSTED_ISSUERS);
-        var issuer = (ObjectNode) trust.at("/trusted-issuers/gateway");
+        var issuer = (ObjectNode) trust.at("/gateway");
         issuer.put("key", "gateway.pub");
         issuer.putArray("keys");
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust))
                 .anySatisfy(error -> assertThat(error.getKeyword()).isEqualTo("minItems"));
+    }
+
+    @Test
+    void schemaRecordsReservedOptionsAndRejectsRegistryReplayWithStaticFiles() {
+        for (String compression : List.of("NONE", "ZSTD", "GZIP")) {
+            var core = fixture(Document.CORE);
+            ((ObjectNode) core.get("ticket")).put("compression", compression);
+            assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        }
+        var core = fixture(Document.CORE);
+        var replay = (ObjectNode) core.get("replay-guard");
+        replay.put("backend", "REDIS");
+        replay.putObject("redis");
+        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        replay.put("backend", "REGISTRY");
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        replay.put("backend", "LOCAL");
+        replay.remove("local");
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+    }
+
+    @Test
+    void schemasRejectLegacyRootWrappersAndRenamedPermissions() {
+        assertThat(
+                        contract(Document.TRUSTED_ISSUERS)
+                                .validate(JSON.readTree("{\"trusted-issuers\":" + TRUST + "}")))
+                .isNotEmpty();
+        assertThat(
+                        contract(Document.TRUSTED_ISSUERS)
+                                .validate(
+                                        JSON.readTree(
+                                                TRUST.replace(
+                                                        "allowed-auth-schemes",
+                                                        "allowed-auth-types"))))
+                .isNotEmpty();
+        assertThat(
+                        contract(Document.CORE)
+                                .validate(
+                                        JSON.readTree(
+                                                CORE.replace(
+                                                        "enforce-transfer-intent",
+                                                        "require-transfer-intent"))))
+                .isNotEmpty();
     }
 
     @Test
@@ -301,10 +361,10 @@ class ConfigurationSchemaTest {
                 .anySatisfy(
                         error -> assertThat(error.getKeyword()).isEqualTo("additionalProperties"));
         var trust = fixture(Document.TRUSTED_ISSUERS);
-        ((ObjectNode) trust.at("/trusted-issuers/gateway"))
+        ((ObjectNode) trust.at("/gateway"))
                 .putArray("keys")
                 .addObject()
-                .put("public-key-file", "gateway.pub")
+                .put("public-key", "gateway.pub")
                 .put("kid", "removed");
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust))
                 .anySatisfy(error -> assertThat(error.getKeyword()).isEqualTo("type"));

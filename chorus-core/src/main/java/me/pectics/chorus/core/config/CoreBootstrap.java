@@ -58,22 +58,24 @@ public final class CoreBootstrap {
     public static ChorusCoreEngine open(Path configurationFile, Clock clock)
             throws IOException, GeneralSecurityException, SQLException {
         var root = ConfigurationLoader.read(configurationFile, Document.CORE);
+        requireImplementedOptions(root);
         Path base = configurationFile.toAbsolutePath().normalize().getParent();
         var role = NodeRole.valueOf(root.at("/node/role").asString());
         var crypto = root.get("crypto");
+        var ticket = root.get("ticket");
         var verification = root.get("verification");
         var configuration =
                 new CoreConfiguration(
                         root.at("/node/id").asString(),
                         role,
-                        root.get("cookie-key").asString(),
-                        duration(crypto.get("ticket-ttl")),
-                        duration(crypto.get("max-ticket-lifetime")),
-                        duration(crypto.get("clock-skew")),
-                        crypto.get("max-ticket-bytes").asInt(),
-                        crypto.get("max-property-bytes").asInt(),
-                        verification.get("require-transfer-intent").asBoolean(),
-                        IdentityPolicy.valueOf(verification.get("identity-strategy").asString()),
+                        ticket.get("cookie-key").asString(),
+                        role.sender() ? duration(root.at("/issuance/ttl")) : null,
+                        duration(verification.get("max-lifetime")),
+                        duration(verification.get("clock-skew")),
+                        ticket.get("max-payload-bytes").asInt(),
+                        ticket.get("max-property-bytes").asInt(),
+                        verification.get("enforce-transfer-intent").asBoolean(),
+                        IdentityPolicy.valueOf(verification.get("identity-policy").asString()),
                         role.sender()
                                 ? new IssuancePolicy(
                                         policy(root.get("issuance")),
@@ -82,8 +84,8 @@ public final class CoreBootstrap {
         var files = root.at("/registry/static");
         var registries =
                 loadRegistries(
-                        base.resolve(files.get("servers-file").asString()),
-                        base.resolve(files.get("trust-file").asString()),
+                        base.resolve(files.get("servers-path").asString()),
+                        base.resolve(files.get("issuers-path").asString()),
                         clock);
         if (!registries.snapshot().servers().containsKey(configuration.nodeId())
                 || role.sender()
@@ -98,18 +100,18 @@ public final class CoreBootstrap {
         SigningKey key =
                 role.sender()
                         ? Ed25519Keys.load(
-                                base.resolve(crypto.get("private-key-file").asString()),
-                                base.resolve(crypto.get("public-key-file").asString()))
+                                base.resolve(crypto.get("private-key").asString()),
+                                base.resolve(crypto.get("public-key").asString()))
                         : null;
         SqliteReplayGuard guard = null;
         if (role.receiver()) {
-            var replay = root.get("replay");
+            var replay = root.at("/replay-guard/local");
             guard =
                     new SqliteReplayGuard(
-                            base.resolve(replay.get("file").asString()),
+                            base.resolve(replay.get("path").asString()),
                             configuration.nodeId(),
                             configuration.clockSkew(),
-                            replay.get("capacity").asInt(),
+                            replay.get("max-entries").asInt(),
                             duration(replay.get("busy-timeout")),
                             clock);
         }
@@ -131,6 +133,35 @@ public final class CoreBootstrap {
 
     private record Approved(RegistrySnapshot directory, List<TrustedIssuer> issuers) {}
 
+    private static void requireImplementedOptions(JsonNode root) {
+        switch (root.at("/ticket/compression").asString()) {
+            case "NONE" -> {}
+            case "ZSTD", "GZIP" -> {
+                // TODO: Add versioned compression framing and bounded decompression to TicketCodec.
+                throw new IllegalArgumentException("ticket.compression is not implemented");
+            }
+            default -> throw new IllegalStateException("Unknown schema-approved compression");
+        }
+        var replay = root.get("replay-guard");
+        if (replay != null) {
+            switch (replay.get("backend").asString()) {
+                case "LOCAL" -> {}
+                case "REGISTRY" -> {
+                    // TODO: Reuse the configured registry database for durable ticket consumption.
+                    throw new IllegalArgumentException(
+                            "replay-guard.backend REGISTRY is not implemented");
+                }
+                case "REDIS" -> {
+                    // TODO: Define Redis settings and implement a durable Redis ReplayGuard.
+                    throw new IllegalArgumentException(
+                            "replay-guard.backend REDIS is not implemented");
+                }
+                default ->
+                        throw new IllegalStateException("Unknown schema-approved replay backend");
+            }
+        }
+    }
+
     /** Key paths are relative to the trust file. Both files must satisfy their own schemas. */
     public static StaticRegistries loadRegistries(Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
@@ -148,13 +179,17 @@ public final class CoreBootstrap {
 
     private static Approved readRegistries(Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
-        var directory = ConfigurationLoader.read(serversFile, Document.SERVERS).get("servers");
-        var trust =
-                ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS)
-                        .get("trusted-issuers");
+        var directory = ConfigurationLoader.read(serversFile, Document.SERVERS);
+        var trust = ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS);
         var servers = new HashMap<String, ServerNode>();
         for (var entry : directory.properties()) {
             var value = entry.getValue();
+            String address = value.get("address").asString();
+            int separator = address.lastIndexOf(':');
+            String host = address.substring(0, separator);
+            if (host.startsWith("[")) {
+                host = host.substring(1, host.length() - 1);
+            }
             servers.put(
                     entry.getKey(),
                     new ServerNode(
@@ -162,8 +197,8 @@ public final class CoreBootstrap {
                             value.has("display-name")
                                     ? value.get("display-name").asString()
                                     : entry.getKey(),
-                            value.get("host").asString(),
-                            value.get("port").asInt()));
+                            host,
+                            Integer.parseInt(address.substring(separator + 1))));
         }
         var issuers = new ArrayList<TrustedIssuer>();
         Path base = trustFile.toAbsolutePath().normalize().getParent();
@@ -188,7 +223,7 @@ public final class CoreBootstrap {
 
     private static IssuerTrustPolicy policy(JsonNode value) {
         var types = new HashSet<AuthType>();
-        value.get("allowed-auth-types")
+        value.get("allowed-auth-schemes")
                 .forEach(item -> types.add(AuthType.valueOf(item.asString())));
         return new IssuerTrustPolicy(types, strings(value.get("allowed-providers")));
     }

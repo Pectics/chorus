@@ -4,30 +4,24 @@
   "$comment": "The complete servers.yml v1 format contract. See ARCHITECTURE.md section 3.9. Runtime directory entries do not grant issuer trust.",
   "title": "Chorus server directory v1",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["servers"],
-  "properties": {
-    "servers": {
-      "description": "Administrator-approved routes indexed by node ID. Empty directories are valid snapshots.",
-      "type": "object",
-      "propertyNames": {"$ref": "#/$defs/nodeId"},
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["host", "port"],
-        "properties": {
-          "host": {
-            "description": "Client-visible hostname or IP address without whitespace.",
-            "type": "string",
-            "minLength": 1,
-            "not": {"pattern": "[\\u0009-\\u000d\\u001c-\\u0020\\u1680\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]"}
-          },
-          "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-          "display-name": {
-            "$ref": "#/$defs/nonBlankString",
-            "description": "Optional display label. Runtime assembly uses the node ID when absent."
-          }
-        }
+  "propertyNames": {
+    "$ref": "#/$defs/nodeId"
+  },
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "address"
+    ],
+    "properties": {
+      "address": {
+        "type": "string",
+        "description": "Client-visible hostname or IPv4 plus port, or bracketed IPv6 plus port. Port is a decimal integer in 1..65535; no DNS resolution is performed.",
+        "pattern": "^(?:[^:\\[\\]\\u0009-\\u000d\\u001c-\\u0020\\u1680\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]+|\\[(?=[^\\]]*:)[0-9A-Fa-f:.]+(?:%[A-Za-z0-9_.~-]+)?\\]):(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$(?![\\s\\S])"
+      },
+      "display-name": {
+        "$ref": "#/$defs/nonBlankString",
+        "description": "Optional display label. Runtime assembly uses the node ID when absent."
       }
     }
   },

@@ -58,7 +58,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.codec =
                 new TicketCodec(
-                        configuration.maxTicketBytes(),
+                        configuration.maxPayloadBytes(),
                         configuration.maxPropertyBytes(),
                         new Ed25519SignatureService());
         if (configuration.role().sender()) {
@@ -112,7 +112,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                             request.targetNodeId(),
                             issuedAt,
                             issuedAt,
-                            issuedAt.plus(configuration.ticketTtl()),
+                            issuedAt.plus(configuration.issuanceTtl()),
                             identity,
                             request.extensions());
             return CompletableFuture.completedFuture(
@@ -142,7 +142,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             }
             validateTimes(claims);
             ReceiverLoginContext login = request.loginContext();
-            if (configuration.requireTransferIntent() && !login.transferred()) {
+            if (configuration.enforceTransferIntent() && !login.transferred()) {
                 throw reject(TicketError.TRANSFER_REQUIRED);
             }
             if (!claims.identity().username().equals(login.loginUsername())) {
@@ -204,7 +204,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         Duration lifetime = Duration.between(claims.issuedAt(), claims.expiresAt());
         if (lifetime.isNegative()
                 || lifetime.isZero()
-                || lifetime.compareTo(configuration.maxTicketLifetime()) > 0
+                || lifetime.compareTo(configuration.maxLifetime()) > 0
                 || claims.notBefore().isBefore(claims.issuedAt())
                 || !claims.notBefore().isBefore(claims.expiresAt())) {
             throw reject(TicketError.INVALID_LIFETIME);

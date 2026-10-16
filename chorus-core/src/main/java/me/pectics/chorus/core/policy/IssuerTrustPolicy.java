@@ -5,11 +5,11 @@ import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.IdentityClaim;
 
 /** Explicit authentication types and providers accepted from an issuer by the local receiver. */
-public record IssuerTrustPolicy(Set<AuthType> allowedAuthTypes, Set<String> allowedProviders) {
+public record IssuerTrustPolicy(Set<AuthType> allowedAuthSchemes, Set<String> allowedProviders) {
     public IssuerTrustPolicy {
-        allowedAuthTypes = Set.copyOf(allowedAuthTypes);
+        allowedAuthSchemes = Set.copyOf(allowedAuthSchemes);
         allowedProviders = Set.copyOf(allowedProviders);
-        if (allowedAuthTypes.isEmpty()
+        if (allowedAuthSchemes.isEmpty()
                 || allowedProviders.isEmpty()
                 || allowedProviders.stream()
                         .anyMatch(p -> !p.matches("[a-z0-9][a-z0-9._/-]{0,127}"))) {
@@ -18,7 +18,7 @@ public record IssuerTrustPolicy(Set<AuthType> allowedAuthTypes, Set<String> allo
     }
 
     public boolean permits(IdentityClaim identity) {
-        return allowedAuthTypes.contains(identity.authType())
+        return allowedAuthSchemes.contains(identity.authType())
                 && allowedProviders.contains(identity.authProvider());
     }
 }

@@ -47,7 +47,7 @@ class CoreEngineTest {
                 id,
                 role,
                 "chorus:ticket",
-                Duration.ofSeconds(15),
+                role.sender() ? Duration.ofSeconds(15) : null,
                 Duration.ofSeconds(15),
                 Duration.ofSeconds(2),
                 4096,

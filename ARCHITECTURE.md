@@ -150,7 +150,7 @@ chorus/
 1. **`STATIC`**：每台 Chorus 节点读取管理员提供的本地 `servers` 与 `trusted-issuers` 配置。不存在自动同步权威；管理员负责分发与更新一致的配置，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
 2. **`SHARED_SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。服务器运行时获取可信快照，使用本地缓存解析目标地址并获取已批准的公钥绑定。Turso/libSQL 是推荐适配实现之一，标准 JDBC 是可选后端。
 
-两种模式使用相同的 Core 读取接口；不要将 `SHARED_SQL` 和 `SQL_REPLAY` 绑定成一个开关。
+两种模式使用相同的 Core 读取接口；目录选择由 `registry.provider` 表达，防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选目录数据库。
 
 跨服主联盟中不必要求所有服主共用一个具有写权限的数据库。可为每个管理域维护自己的目录，再在本地明确授权**外域签发者**。本地管理员选择信任哪些外域公钥和身份类型。
 
@@ -227,7 +227,7 @@ public interface TrustedIssuerRegistry {
 
 写入型管理接口另行声明，例如 `ServerDirectoryAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
 
-### 3.3 共享数据库存储草案（只在 `SHARED_SQL` / `SQL_REPLAY` 模式启用）
+### 3.3 共享数据库存储草案（共享目录与 `REGISTRY` 防重放后端的实现草案）
 
 此处 SQL 示例以 SQLite/libSQL 兼容方言表达。MySQL/PostgreSQL 必须实现对应的 dialect、迁移及并发测试，不能认为 `DELETE ... RETURNING` 在所有 JDBC 数据库中通用。
 
@@ -457,9 +457,9 @@ public interface ReplayGuard {
 }
 ```
 
-**本地模式 `LOCAL_SQLITE`**：`aud` 指向一个接收节点及其持久数据库。Receiver 完成其他校验后，以唯一约束原子插入已消费记录；Sender 无须预登记。采用 WAL 与 `synchronous=FULL`，确认事务持久化提交后才成功完成 `CompletionStage`，无需逐票等待 checkpoint。记录至少保留到 `exp + clockSkew`，容量不足不能驱逐仍可能有效的记录。数据库 I/O 在专用执行器上执行。本地状态绑定节点 ID 与清理使用的时钟容差，发现不匹配则拒绝启用。正常进程重启复用原数据库，不需要启动隔离窗口；数据库及 WAL 必须保存在持久本地存储，删除、回滚旧备份或换空路径不属于普通重启保证。已有数据库损坏、提交失败或结果未知时拒绝，不自动重建或降级内存。
+**本地后端 `LOCAL`（SQLite）**：`aud` 指向一个接收节点及其持久数据库。Receiver 完成其他校验后，以唯一约束原子插入已消费记录；Sender 无须预登记。采用 WAL 与 `synchronous=FULL`，确认事务持久化提交后才成功完成 `CompletionStage`，无需逐票等待 checkpoint。记录至少保留到 `exp + clockSkew`，容量不足不能驱逐仍可能有效的记录。数据库 I/O 在专用执行器上执行。本地状态绑定节点 ID 与清理使用的时钟容差，发现不匹配则拒绝启用。正常进程重启复用原数据库，不需要启动隔离窗口；数据库及 WAL 必须保存在持久本地存储，删除、回滚旧备份或换空路径不属于普通重启保证。已有数据库损坏、提交失败或结果未知时拒绝，不自动重建或降级内存。
 
-**SQL 模式 `SQL_DATABASE`（可选，最终默认未定）**：Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
+**`REGISTRY` 后端（TODO，未实现，最终默认未定）**：该后端复用 `registry` 配置的数据库，不能用于 `STATIC` 目录；预登记方案中 Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
 
 **待确认选型**：共享 SQL 对节点目录是否有用，与 Ticket 是否应注册/核销于 SQL 是两个独立决策。MVP 可以先实现本地 SQLite ReplayGuard 以测试核心协议；这不代表最终产品默认一定选本地核销。
 
@@ -560,90 +560,95 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 ### 3.9 统一配置 `chorus.yml`
 
-配置例子展示一个使用共享 SQL **节点目录**、但采用**本地 SQLite 票据防重放**的 Peer 部署，旨在说明两者可以独立组合；并不代表 SQL 核销的最终选型已作决定。
+下例展示使用 `STATIC` 节点目录与 `LOCAL` SQLite 防重放的 Peer。UNDECIDED（§7.2）：所有运维参数均为显式示例值，须根据部署实测调整。
 
 ```yaml
 node:
-  id: "operator-a/sh-survival-01"  # 跨管理域须唯一
-  display-name: "上海生存一服"
+  id: operator-a/sh-survival-01
+  display-name: Shanghai Survival
   role: PEER
 
-cookie-key: "chorus:ticket"
+ticket:
+  cookie-key: chorus:ticket
+  max-payload-bytes: 4096
+  max-property-bytes: 2048
+  compression: NONE
 
 crypto:
   algorithm: ED25519
-  ticket-ttl: 15s               # 示例值，需按跨国转移测试调优
-  clock-skew: 2s
-  max-ticket-bytes: 4096       # 内部限制；Minecraft Cookie 上限是 5120
-  compress-payload: false
-  private-key-file: "keys/local_ed25519.key"
-  public-key-file: "keys/local_ed25519.pub"
+  private-key: keys/local_ed25519.key
+  public-key: keys/local_ed25519.pub
 
 registry:
-  mode: SHARED_SQL            # SHARED_SQL | STATIC
-  cache:
-    allow-stale-on-error: true
-    max-stale: 1h             # 示例值；对应撤销延迟的可用性取舍
-  sql:
-    backend: TURSO_HTTP      # 或受支持的 JDBC dialect
-    url: "${CHORUS_DATABASE_URL}"
-    read-token: "${CHORUS_DATABASE_READ_TOKEN}"
-  # STATIC 模式从本地管理员维护的文件读取节点和信任信息
+  provider: STATIC
   static:
-    servers-file: "servers.yml"
-    trust-file: "trusted-issuers.yml"
-
-verification:
-  require-transfer-intent: true
-  identity-strategy: ADOPT_UPSTREAM
-  ip-binding-mode: DISABLED
+    servers-path: servers.yml
+    issuers-path: trusted-issuers.yml
 
 issuance:
-  allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
+  ttl: 15s
+  allowed-auth-schemes: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
   allowed-providers: [mojang, local]
   allowed-targets: [operator-a/jp-backend-01]
 
-replay:
-  mode: LOCAL_SQLITE          # 示例组合；共享 SQL 是否默认仍待评审
-  file: "state/replay.db"
-  # Both local SQLite and shared SQL fail closed on storage errors.
+verification:
+  max-lifetime: 15s
+  clock-skew: 2s
+  enforce-transfer-intent: true
+  identity-policy: ADOPT_UPSTREAM
+  ip-binding: DISABLED
+
+replay-guard:
+  backend: LOCAL
+  local:
+    path: state/replay.db
+    max-entries: 10000
+    busy-timeout: 1s
 ```
 
-`servers.yml` 可采用管理员熟悉的 Proxy 风格：
+`servers.yml` 直接以节点 ID 为根键，`address` 合并主机与端口；IPv6 使用带方括号的形式，例如 `"[::1]:25565"`。端口必须为 1～65535 的十进制整数，加载不进行 DNS 查询。运行时 `ServerNode` 继续提供拆分后的 `host`、`port`，便于平台发送 Transfer。
 
 ```yaml
-servers:
-  operator-a/us-gateway-01:
-    host: gateway.example.net
-    port: 25565
-    display-name: Gateway
-  operator-a/sh-survival-01:
-    host: sh.example.net
-    port: 25565
-    display-name: 上海生存服
-  operator-a/jp-backend-01:
-    host: jp.example.net
-    port: 25565
-    display-name: 日本后端服
+operator-a/us-gateway-01:
+  address: gateway.example.net:25565
+  display-name: Gateway
+operator-a/sh-survival-01:
+  address: sh.example.net:25565
+  display-name: Shanghai Survival
+operator-a/jp-backend-01:
+  address: jp.example.net:25565
+  display-name: Japan Backend
 ```
 
-`trusted-issuers.yml` 示意接收端本地授权，不与普通 `servers` 列表混为一谈：
+`trusted-issuers.yml` 直接以签发者 ID 为根键，表示本机批准的公钥与身份来源权限；`allowed-auth-schemes` 使用现有 `AuthType` 的认证来源名称，不改变 Ticket 身份字段。
 
 ```yaml
-trusted-issuers:
-  operator-a/us-gateway-01:
-    keys:
-      - keys/gateway.pub
-    allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
-    allowed-providers: [mojang, local]
+operator-a/us-gateway-01:
+  keys:
+    - keys/gateway.pub
+  allowed-auth-schemes: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
+  allowed-providers: [mojang, local]
 
-  operator-b/peer-01:
-    key: keys/alliance-peer.pub
-    allowed-auth-types: [OFFLINE_AUTH]
-    allowed-providers: [operator-b/local]
+operator-b/peer-01:
+  key: keys/alliance-peer.pub
+  allowed-auth-schemes: [OFFLINE_AUTH]
+  allowed-providers: [operator-b/local]
 ```
 
-配置加载后须验证节点 ID、公钥算法、目标引用、策略字段、TTL、容量、路径及后台类型。`SHARED_SQL` 中的批准关系等价存储于管理员控制的信任记录；上述两个 YAML 适用于静态模式或可信本地备用快照。
+**配置与实现状态契约**：
+
+| 配置 | 契约含义 | 当前实现状态 |
+|---|---|---|
+| `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
+| `ticket.compression: ZSTD / GZIP` | 指定压缩方式 | TODO：编码帧、版本兼容、解压限额与编解码尚未实现；启动拒绝 |
+| `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
+| `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`STATIC` 时无效 | TODO：共享目录数据库适配与核销尚未实现；启动拒绝 |
+| `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
+
+这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在目录读取与状态库打开前明确拒绝，`REGISTRY + STATIC` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
+`ticket.max-payload-bytes` 限制包含 JWS 编码与签名的完整 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
+`issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
+文件路径相对主配置，信任公钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
 每种配置文件使用**独立、完整、可单独验证的 JSON Schema** 作为格式契约。当前契约版本为 `v1`，采用 JSON Schema Draft 2020-12：
 
@@ -800,7 +805,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 ### 7.2 未决定，不得擅自当作既定需求
 
 1. **管理员管理方式**：完全静态配置、游戏内管理命令、两者并存及跨节点同步的交付范围；数据库管理员凭据如何安全分发。
-2. **Ticket 核销的最终默认后端**：LOCAL_SQLITE 还是共享 SQL_DATABASE，以及何种规模/可靠性目标才需要 SQL。
+2. **Ticket 核销的最终默认后端**：`LOCAL`、`REGISTRY` 还是 `REDIS`，以及何种规模/可靠性目标才需要 SQL。
 3. **节点心跳**：共享数据库是否提供安全且足够细粒度的写权限，若不能则如何上报。
 4. **受控联盟深度**：是否需要外域不完全可信 Peer 对上游认证结果进行无权伪造的转发；若需要，再设计双层签名 Attestation。
 5. **数据库支持矩阵**：Turso/libSQL 及哪些 JDBC 方言进入首版；各自事务与核销语义需要集成测试。

@@ -43,72 +43,68 @@ class CoreBootstrapTest {
         Files.writeString(
                 directory.resolve("servers.yml"),
                 """
-                servers:
-                  gateway:
-                    host: gateway.example.net
-                    port: 25565
-                  backend:
-                    host: backend.example.net
-                    port: 25565
-                  next-backend:
-                    host: next-backend.example.net
-                    port: 25565
+                gateway:
+                  address: gateway.example.net:25565
+                backend:
+                  address: backend.example.net:25565
+                next-backend:
+                  address: next-backend.example.net:25565
                 """);
         Files.writeString(
                 directory.resolve("trusted-issuers.yml"),
                 """
-                trusted-issuers:
-                  gateway:
-                    keys:
-                      - public.der
-                    allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
-                    allowed-providers: [mojang, local]
+                gateway:
+                  keys:
+                    - public.der
+                  allowed-auth-schemes: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
+                  allowed-providers: [mojang, local]
                 """);
     }
 
     private String configuration(String node, NodeRole role) {
+        String issuance =
+                role.sender()
+                        ? """
+                issuance:
+                  ttl: 15s
+                  allowed-auth-schemes: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
+                  allowed-providers: [mojang, local]
+                  allowed-targets: [backend]
+                """
+                        : "";
         return """
                 node:
                   id: %s
                   role: %s
-                cookie-key: chorus:ticket
+                ticket:
+                  cookie-key: chorus:ticket
+                  max-payload-bytes: 4096
+                  max-property-bytes: 2048
+                  compression: NONE
                 crypto:
                   algorithm: ED25519
-                  ticket-ttl: 15s
-                  max-ticket-lifetime: 15s
-                  clock-skew: 2s
-                  max-ticket-bytes: 4096
-                  max-property-bytes: 2048
-                  private-key-file: private.der
-                  public-key-file: public.der
+                  private-key: private.der
+                  public-key: public.der
                 registry:
-                  mode: STATIC
+                  provider: STATIC
                   static:
-                    servers-file: servers.yml
-                    trust-file: trusted-issuers.yml
-                verification:
-                  require-transfer-intent: true
-                  identity-strategy: ADOPT_UPSTREAM
-                  ip-binding-mode: DISABLED
-                replay:
-                  mode: LOCAL_SQLITE
-                  file: state/%s.db
-                  capacity: 100
-                  busy-timeout: 500ms
+                    servers-path: servers.yml
+                    issuers-path: trusted-issuers.yml
                 %s
+                verification:
+                  max-lifetime: 15s
+                  clock-skew: 2s
+                  enforce-transfer-intent: true
+                  identity-policy: ADOPT_UPSTREAM
+                  ip-binding: DISABLED
+                replay-guard:
+                  backend: LOCAL
+                  local:
+                    path: state/%s.db
+                    max-entries: 100
+                    busy-timeout: 500ms
                 """
-                .formatted(
-                        node,
-                        role,
-                        node,
-                        role.sender()
-                                ? """
-                issuance:
-                  allowed-auth-types: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
-                  allowed-providers: [mojang, local]
-                  allowed-targets: [backend]
-                """
-                                : "");
+                .formatted(node, role, issuance, node);
     }
 
     private Path write(String name, String config) throws Exception {
@@ -133,6 +129,7 @@ class CoreBootstrapTest {
                             .get(5, TimeUnit.SECONDS);
             payload = ticket.cookiePayload();
             assertThat(ticket.targetServer().host()).isEqualTo("backend.example.net");
+            assertThat(ticket.expiresAt()).isEqualTo(TestSupport.NOW.plusSeconds(15));
         }
         Files.delete(directory.resolve("private.der"));
         var request =
@@ -213,7 +210,7 @@ class CoreBootstrapTest {
         assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
                 .isInstanceOf(GeneralSecurityException.class);
         assertThat(registries.snapshot()).isSameAs(approved);
-        Files.writeString(trust, "trusted-issuers: {gateway: {keys: []}}");
+        Files.writeString(trust, "gateway: {keys: []}");
         assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(registries.snapshot()).isSameAs(approved);
@@ -222,30 +219,30 @@ class CoreBootstrapTest {
     @Test
     void rejectsInvalidLimitsMissingIssuanceUnsupportedModesAndUnknownFieldsBeforeOpeningState()
             throws Exception {
-        String base = configuration("backend", NodeRole.BACKEND);
+        String base = configuration("backend", NodeRole.PEER);
         for (String invalid :
                 java.util.List.of(
-                        base.replace("ticket-ttl: 15s", "ticket-ttl: 0s"),
-                        base.replace("ticket-ttl: 15s", "ticket-ttl: 500ms"),
-                        base.replace("max-ticket-lifetime: 15s", "max-ticket-lifetime: 14s"),
-                        base.replace("max-ticket-bytes: 4096", "max-ticket-bytes: 5121"),
+                        base.replace("ttl: 15s", "ttl: 0s"),
+                        base.replace("ttl: 15s", "ttl: 500ms"),
+                        base.replace("max-lifetime: 15s", "max-lifetime: 14s"),
+                        base.replace("max-payload-bytes: 4096", "max-payload-bytes: 5121"),
                         base.replace("max-property-bytes: 2048", "max-property-bytes: 4097"),
                         base.replace("clock-skew: 2s", "clock-skew: -PT1S"),
-                        base.replace("ticket-ttl: 15s", "ticket-ttl: 999999999999999999999h"),
+                        base.replace("ttl: 15s", "ttl: 999999999999999999999h"),
                         base.replace("busy-timeout: 500ms", "busy-timeout: 0ms"),
                         base.replace("busy-timeout: 500ms", "busy-timeout: 2147483648ms"),
-                        base.replace("mode: STATIC", "mode: SHARED_SQL"),
-                        base.replace("mode: LOCAL_SQLITE", "mode: LOCAL_MEMORY"),
+                        base.replace("provider: STATIC", "provider: SHARED_SQL"),
+                        base.replace("backend: LOCAL", "backend: UNKNOWN"),
                         base.replace(
-                                "identity-strategy: ADOPT_UPSTREAM",
-                                "identity-strategy: FEDERATED_NAMESPACE"),
+                                "identity-policy: ADOPT_UPSTREAM",
+                                "identity-policy: FEDERATED_NAMESPACE"),
                         base.replace("algorithm: ED25519", "algorithm: HMAC"),
                         base.replace(
                                 "algorithm: ED25519",
                                 "algorithm: ED25519\n  compress-payload: true"),
                         base.replace(
-                                "require-transfer-intent: true",
-                                "require-transfer-intent: yes-please"),
+                                "enforce-transfer-intent: true",
+                                "enforce-transfer-intent: yes-please"),
                         base + "unrecognized-option: true\n")) {
             Path file = write("invalid.yml", invalid);
             assertThatThrownBy(() -> CoreBootstrap.open(file, clock))
@@ -264,19 +261,61 @@ class CoreBootstrapTest {
     }
 
     @Test
+    void parsesBracketedIpv6AddressesWithoutResolvingHosts() throws Exception {
+        Path servers = directory.resolve("servers.yml");
+        Files.writeString(
+                servers,
+                Files.readString(servers)
+                        .replace(
+                                "address: backend.example.net:25565",
+                                "address: \"[2001:db8::1]:25566\""));
+        var registries =
+                CoreBootstrap.loadRegistries(
+                        servers, directory.resolve("trusted-issuers.yml"), clock);
+        var backend = registries.find("backend").orElseThrow();
+        assertThat(backend.host()).isEqualTo("2001:db8::1");
+        assertThat(backend.port()).isEqualTo(25566);
+    }
+
+    @Test
+    void rejectsTodoOptionsBeforeReadingReferencedFilesOrOpeningState() throws Exception {
+        Files.delete(directory.resolve("servers.yml"));
+        Files.delete(directory.resolve("trusted-issuers.yml"));
+        String base = configuration("backend", NodeRole.BACKEND);
+        for (String unsupported :
+                java.util.List.of(
+                        base.replace("compression: NONE", "compression: ZSTD"),
+                        base.replace("compression: NONE", "compression: GZIP"),
+                        base.replace("backend: LOCAL", "backend: REDIS"))) {
+            Path file = write("unsupported.yml", unsupported);
+            assertThatThrownBy(() -> CoreBootstrap.open(file, clock))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("not implemented");
+        }
+        Path registryReplay =
+                write("registry-replay.yml", base.replace("backend: LOCAL", "backend: REGISTRY"));
+        assertThatThrownBy(() -> CoreBootstrap.open(registryReplay, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Schema validation failed");
+        assertThat(directory.resolve("state")).doesNotExist();
+    }
+
+    @Test
     void everyReferencedFileIsCheckedAgainstItsOwnCompleteSchemaBeforeOpeningState()
             throws Exception {
         Path main = write("chorus.yml", configuration("backend", NodeRole.BACKEND));
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         String original = Files.readString(servers);
-        Files.writeString(servers, "trusted-issuers: {}");
+        Files.writeString(
+                servers,
+                "gateway: {key: public.der, allowed-auth-schemes: [MOJANG], allowed-providers: [mojang]}");
         assertThatThrownBy(() -> CoreBootstrap.open(main, clock))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(servers.toString())
                 .hasMessageContaining("Schema validation failed");
         Files.writeString(servers, original);
-        Files.writeString(trust, "servers: {}");
+        Files.writeString(trust, "backend: {address: localhost:25565}");
         assertThatThrownBy(() -> CoreBootstrap.open(main, clock))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(trust.toString())
@@ -306,7 +345,7 @@ class CoreBootstrapTest {
                     write(
                             "chorus.yml",
                             configuration("backend", NodeRole.BACKEND)
-                                    .replace("ticket-ttl: 15s", "ticket-ttl: " + duration));
+                                    .replace("max-lifetime: 15s", "max-lifetime: " + duration));
             try (var core = CoreBootstrap.open(main, clock)) {
                 assertThat(core.getCookieKey()).isEqualTo("chorus:ticket");
             }
@@ -338,10 +377,10 @@ class CoreBootstrapTest {
         var approved = registries.snapshot();
         for (String invalid :
                 java.util.List.of(
-                        "servers: {}\nservers: {}\n",
-                        "servers: !!java.util.HashMap {}\n",
-                        "servers: {gateway: &node {host: localhost, port: 25565}, backend: *node}\n",
-                        "servers: {gateway: {host: localhost, port: 70000}}\n")) {
+                        "backend: {}\nbackend: {}\n",
+                        "!!java.util.HashMap {}\n",
+                        "gateway: &node {address: localhost:25565}\nbackend: *node\n",
+                        "gateway: {address: localhost:70000}\n")) {
             Files.writeString(servers, invalid);
             assertThatThrownBy(
                             () -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
@@ -358,7 +397,7 @@ class CoreBootstrapTest {
         var original = registries.findByIssuer("gateway").orElseThrow();
         Files.writeString(
                 trust,
-                Files.readString(trust).replace("keys:\n      - public.der", "key: public.der"));
+                Files.readString(trust).replace("keys:\n    - public.der", "key: public.der"));
         CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
         assertThat(registries.findByIssuer("gateway")).contains(original);
         assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway"))
@@ -376,8 +415,8 @@ class CoreBootstrapTest {
                 trust,
                 Files.readString(trust)
                         .replace(
-                                "keys:\n      - public.der",
-                                "key: missing.der\n    keys:\n      - preferred.der"));
+                                "keys:\n    - public.der",
+                                "key: missing.der\n  keys:\n    - preferred.der"));
         var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
         var approved = registries.findByIssuer("gateway").orElseThrow();
         assertThat(approved.keys()).containsExactly(new VerificationKey(preferred.getPublic()));
@@ -398,8 +437,7 @@ class CoreBootstrapTest {
                 directory.resolve("rotated.der"), TestSupport.keyPair().getPublic().getEncoded());
         Files.writeString(
                 trust,
-                Files.readString(trust)
-                        .replace("- public.der", "- public.der\n      - rotated.der"));
+                Files.readString(trust).replace("- public.der", "- public.der\n    - rotated.der"));
         var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
         var approved = registries.findByIssuer("gateway").orElseThrow();
         assertThat(approved.keys()).hasSize(2);
@@ -407,8 +445,7 @@ class CoreBootstrapTest {
         assertThat(new StaticKeyRing(null, registries).findTrustedKeys("gateway"))
                 .containsExactlyElementsOf(approved.keys());
         Files.writeString(
-                trust,
-                Files.readString(trust).replace("    keys:", "    enabled: false\n    keys:"));
+                trust, Files.readString(trust).replace("  keys:", "  enabled: false\n  keys:"));
         CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
         var disabled = registries.findByIssuer("gateway").orElseThrow();
         assertThat(disabled.enabled()).isFalse();

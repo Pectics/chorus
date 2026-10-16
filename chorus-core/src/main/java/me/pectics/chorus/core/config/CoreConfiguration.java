@@ -13,27 +13,26 @@ import me.pectics.chorus.core.policy.IssuancePolicy;
 
 /**
  * Immutable settings with explicit operational parameters until architecture 7.2 is settled.
- * Lifetimes and skew use whole seconds; TTL is positive and no larger than maxTicketLifetime.
+ * Lifetimes and skew use whole seconds; sender TTL is positive and no larger than maxLifetime.
  * Ticket bytes are limited to 5120; property bytes cannot exceed that configured ticket limit.
- * GATEWAY and PEER require an issuance policy. Invalid settings throw IllegalArgumentException or
- * ArithmeticException for overflowing durations.
+ * GATEWAY and PEER require an issuance TTL and policy; BACKEND permits a null issuance TTL. Invalid
+ * settings throw IllegalArgumentException or ArithmeticException for overflowing durations.
  */
 public record CoreConfiguration(
         String nodeId,
         NodeRole role,
         String cookieKey,
-        Duration ticketTtl,
-        Duration maxTicketLifetime,
+        Duration issuanceTtl,
+        Duration maxLifetime,
         Duration clockSkew,
-        int maxTicketBytes,
+        int maxPayloadBytes,
         int maxPropertyBytes,
-        boolean requireTransferIntent,
+        boolean enforceTransferIntent,
         IdentityPolicy identityPolicy,
         IssuancePolicy issuancePolicy) {
     public CoreConfiguration {
         Objects.requireNonNull(role, "role");
-        Objects.requireNonNull(ticketTtl, "ticketTtl");
-        Objects.requireNonNull(maxTicketLifetime, "maxTicketLifetime");
+        Objects.requireNonNull(maxLifetime, "maxLifetime");
         Objects.requireNonNull(clockSkew, "clockSkew");
         Objects.requireNonNull(identityPolicy, "identityPolicy");
         if (nodeId == null
@@ -42,20 +41,24 @@ public record CoreConfiguration(
                 || !cookieKey.matches("[a-z0-9_.-]+:[a-z0-9/._-]+")) {
             throw new IllegalArgumentException("Invalid node ID or namespaced Cookie key");
         }
-        if (ticketTtl.isZero()
-                || ticketTtl.isNegative()
-                || ticketTtl.getNano() != 0
-                || maxTicketLifetime.compareTo(ticketTtl) < 0
-                || maxTicketLifetime.getNano() != 0
+        if (role.sender()
+                        && (issuanceTtl == null
+                                || issuanceTtl.isZero()
+                                || issuanceTtl.isNegative()
+                                || issuanceTtl.getNano() != 0
+                                || maxLifetime.compareTo(issuanceTtl) < 0)
+                || maxLifetime.isZero()
+                || maxLifetime.isNegative()
+                || maxLifetime.getNano() != 0
                 || clockSkew.isNegative()
                 || clockSkew.getNano() != 0
-                || maxTicketBytes < 1
-                || maxTicketBytes > 5120
+                || maxPayloadBytes < 1
+                || maxPayloadBytes > 5120
                 || maxPropertyBytes < 1
-                || maxPropertyBytes > maxTicketBytes) {
+                || maxPropertyBytes > maxPayloadBytes) {
             throw new IllegalArgumentException("Invalid ticket lifetime or size limits");
         }
-        maxTicketLifetime.plus(clockSkew).toMillis();
+        maxLifetime.plus(clockSkew).toMillis();
         if (role.sender() && issuancePolicy == null) {
             throw new IllegalArgumentException("Sender requires explicit issuance permissions");
         }

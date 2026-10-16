@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:chorus:configuration:chorus:v1",
-  "$comment": "The complete chorus.yml v1 format contract. See ARCHITECTURE.md section 3.9. Update this document and its contract tests when the file format changes.",
+  "$comment": "The complete chorus.yml v1 format contract. See ARCHITECTURE.md section 3.9. TODO: ZSTD/GZIP compression and REGISTRY/REDIS replay backends are reserved and rejected by runtime assembly until implemented.",
   "title": "Chorus configuration v1",
-  "description": "Static Core configuration. Operational limits are explicit; no defaults are supplied. Runtime assembly checks duration arithmetic, field relationships, key contents, and directory references.",
+  "description": "Static Core configuration with explicit operational limits. Assembly checks duration arithmetic, field relationships, implemented options, key contents, and directory references.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["node", "cookie-key", "crypto", "registry", "verification"],
+  "required": ["node", "ticket", "crypto", "registry", "verification"],
   "properties": {
     "node": {
       "type": "object",
@@ -21,151 +21,166 @@
         }
       }
     },
-    "cookie-key": {
-      "description": "The namespaced Minecraft Cookie key shared by sender and receiver.",
-      "type": "string",
-      "pattern": "^[a-z0-9_.-]+:[a-z0-9/._-]+$(?![\\s\\S])"
+    "ticket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cookie-key", "max-payload-bytes", "max-property-bytes", "compression"],
+      "properties": {
+        "cookie-key": {
+          "description": "The namespaced Minecraft Cookie key shared by sender and receiver.",
+          "type": "string",
+          "pattern": "^[a-z0-9_.-]+:[a-z0-9/._-]+$(?![\\s\\S])"
+        },
+        "max-payload-bytes": {
+          "type": "integer", "minimum": 1, "maximum": 5120,
+          "description": "Maximum complete encoded ticket payload, including JWS framing and signature."
+        },
+        "max-property-bytes": {
+          "type": "integer", "minimum": 1, "maximum": 5120,
+          "description": "UTF-8 profile property budget. Must not exceed max-payload-bytes."
+        },
+        "compression": {
+          "enum": ["NONE", "ZSTD", "GZIP"],
+          "$comment": "TODO: Implement ZSTD and GZIP with versioned framing and bounded decompression. Only NONE is operational; CoreBootstrap rejects the reserved choices."
+        }
+      }
     },
     "crypto": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["algorithm", "ticket-ttl", "max-ticket-lifetime", "clock-skew", "max-ticket-bytes", "max-property-bytes"],
+      "required": ["algorithm"],
       "properties": {
         "algorithm": {"const": "ED25519"},
-        "ticket-ttl": {
-          "$ref": "#/$defs/wholeSecondDuration",
-          "description": "A positive whole-second lifetime, no greater than max-ticket-lifetime."
-        },
-        "max-ticket-lifetime": {
-          "$ref": "#/$defs/wholeSecondDuration",
-          "description": "The maximum accepted whole-second lifetime. Must cover ticket-ttl."
-        },
-        "clock-skew": {
-          "$ref": "#/$defs/wholeSecondDuration",
-          "description": "A nonnegative whole-second clock allowance, bound to the replay database."
-        },
-        "max-ticket-bytes": {"type": "integer", "minimum": 1, "maximum": 5120},
-        "max-property-bytes": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 5120,
-          "description": "The UTF-8 profile property budget. Must not exceed max-ticket-bytes."
-        },
-        "compress-payload": {"const": false},
-        "private-key-file": {
+        "private-key": {
           "$ref": "#/$defs/nonBlankString",
-          "description": "PKCS#8 Ed25519 private key path, relative to chorus.yml. Required for sender."
+          "description": "PKCS#8 Ed25519 private key path relative to chorus.yml. Required for sender."
         },
-        "public-key-file": {
+        "public-key": {
           "$ref": "#/$defs/nonBlankString",
-          "description": "Matching X.509 SPKI public key path, relative to chorus.yml. Required for sender."
+          "description": "Matching X.509 SPKI public key path relative to chorus.yml. Required for sender."
         }
       }
     },
     "registry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "static"],
+      "required": ["provider", "static"],
       "properties": {
-        "mode": {"const": "STATIC"},
+        "provider": {"const": "STATIC"},
         "static": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["servers-file", "trust-file"],
+          "required": ["servers-path", "issuers-path"],
           "properties": {
-            "servers-file": {
+            "servers-path": {
               "$ref": "#/$defs/nonBlankString",
-              "description": "Server directory path, relative to chorus.yml. Validated with servers.schema.json."
+              "description": "Directory path relative to chorus.yml, validated with servers.schema.json."
             },
-            "trust-file": {
+            "issuers-path": {
               "$ref": "#/$defs/nonBlankString",
-              "description": "Trust directory path, relative to chorus.yml. Validated with trusted-issuers.schema.json."
+              "description": "Trust path relative to chorus.yml, validated with trusted-issuers.schema.json."
             }
           }
+        }
+      }
+    },
+    "issuance": {
+      "description": "Sender permissions and lifetime. Receivers independently enforce their trust policies.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ttl", "allowed-auth-schemes", "allowed-providers", "allowed-targets"],
+      "properties": {
+        "ttl": {
+          "$ref": "#/$defs/wholeSecondDuration",
+          "description": "Positive whole-second lifetime, no greater than verification.max-lifetime."
+        },
+        "allowed-auth-schemes": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"enum": ["MOJANG", "OFFLINE_AUTH", "OFFLINE_RAW", "YGGDRASIL", "FLOODGATE"]}
+        },
+        "allowed-providers": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$(?![\\s\\S])"}
+        },
+        "allowed-targets": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nodeId"}
         }
       }
     },
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["require-transfer-intent", "identity-strategy"],
+      "required": ["max-lifetime", "clock-skew", "enforce-transfer-intent", "identity-policy"],
       "properties": {
-        "require-transfer-intent": {"type": "boolean"},
-        "identity-strategy": {"enum": ["ADOPT_UPSTREAM", "FORCE_OFFLINE_UUID", "STRICT_ONLINE_MATCH"]},
-        "ip-binding-mode": {"const": "DISABLED"}
+        "max-lifetime": {
+          "$ref": "#/$defs/wholeSecondDuration",
+          "description": "Positive maximum accepted lifetime in whole seconds. Must cover issuance.ttl when sending."
+        },
+        "clock-skew": {
+          "$ref": "#/$defs/wholeSecondDuration",
+          "description": "Nonnegative whole-second allowance bound to the replay database."
+        },
+        "enforce-transfer-intent": {"type": "boolean"},
+        "identity-policy": {"enum": ["ADOPT_UPSTREAM", "FORCE_OFFLINE_UUID", "STRICT_ONLINE_MATCH"]},
+        "ip-binding": {"const": "DISABLED"}
       }
     },
-    "issuance": {
-      "description": "Explicit sender permissions. Receivers independently enforce their own trust policies.",
+    "replay-guard": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowed-auth-types", "allowed-providers", "allowed-targets"],
+      "required": ["backend"],
       "properties": {
-        "allowed-auth-types": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {"enum": ["MOJANG", "OFFLINE_AUTH", "OFFLINE_RAW", "YGGDRASIL", "FLOODGATE"]}
+        "backend": {
+          "enum": ["LOCAL", "REGISTRY", "REDIS"],
+          "$comment": "TODO: Implement REGISTRY using the registry database and implement REDIS. Only LOCAL is operational. REGISTRY is invalid with registry.provider STATIC."
         },
-        "allowed-providers": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$(?![\\s\\S])"}
+        "local": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "max-entries", "busy-timeout"],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/nonBlankString",
+              "description": "Persistent SQLite path relative to chorus.yml. Preserve the database and WAL."
+            },
+            "max-entries": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+            "busy-timeout": {
+              "$ref": "#/$defs/duration",
+              "description": "Positive lock wait whose whole milliseconds fit 1..2147483647."
+            }
+          }
         },
-        "allowed-targets": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {"$ref": "#/$defs/nodeId"}
+        "redis": {
+          "type": "object",
+          "additionalProperties": false,
+          "$comment": "TODO: Define Redis settings together with the Redis ReplayGuard implementation. This empty placeholder does not enable that backend."
         }
-      }
-    },
-    "replay": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode", "file", "capacity", "busy-timeout"],
-      "properties": {
-        "mode": {"const": "LOCAL_SQLITE"},
-        "file": {
-          "$ref": "#/$defs/nonBlankString",
-          "description": "Persistent SQLite path, relative to chorus.yml. Preserve the database and its WAL."
-        },
-        "capacity": {"type": "integer", "minimum": 1, "maximum": 2147483647},
-        "busy-timeout": {
-          "$ref": "#/$defs/duration",
-          "description": "A positive lock wait whose whole milliseconds are in the range 1..2147483647."
-        }
-      }
+      },
+      "allOf": [
+        {"if": {"properties": {"backend": {"const": "LOCAL"}}}, "then": {"required": ["local"]}}
+      ]
     }
   },
   "allOf": [
     {
-      "if": {
-        "properties": {
-          "node": {
-            "properties": {
-              "role": {"enum": ["GATEWAY", "PEER"]}
-            }
-          }
-        }
-      },
+      "if": {"properties": {"node": {"properties": {"role": {"enum": ["GATEWAY", "PEER"]}}}}},
       "then": {
         "required": ["issuance"],
-        "properties": {"crypto": {"required": ["private-key-file", "public-key-file"]}}
+        "properties": {"crypto": {"required": ["private-key", "public-key"]}}
       }
     },
     {
+      "if": {"properties": {"node": {"properties": {"role": {"enum": ["BACKEND", "PEER"]}}}}},
+      "then": {"required": ["replay-guard"]}
+    },
+    {
+      "$comment": "Registry replay cannot use a static file provider.",
       "if": {
-        "properties": {
-          "node": {
-            "properties": {
-              "role": {"enum": ["BACKEND", "PEER"]}
-            }
-          }
-        }
+        "required": ["replay-guard"],
+        "properties": {"replay-guard": {"properties": {"backend": {"const": "REGISTRY"}}}}
       },
-      "then": {"required": ["replay"]}
+      "then": {"properties": {"registry": {"properties": {"provider": {"not": {"const": "STATIC"}}}}}}
     }
   ],
   "$defs": {

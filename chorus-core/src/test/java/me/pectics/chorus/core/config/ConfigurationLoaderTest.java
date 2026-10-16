@@ -33,31 +33,31 @@ class ConfigurationLoaderTest {
         Path file =
                 Files.writeString(
                         directory.resolve("servers.yml"),
-                        "servers: {backend: {host: localhost, port: 25565.0}}");
+                        ConfigurationSchemaTest.CORE.replace("4096", "4096.0"));
         assertThat(
-                        ConfigurationLoader.read(file, Document.SERVERS)
-                                .at("/servers/backend/port")
+                        ConfigurationLoader.read(file, Document.CORE)
+                                .at("/ticket/max-payload-bytes")
                                 .asInt())
-                .isEqualTo(25565);
+                .isEqualTo(4096);
         Files.writeString(
-                file, "servers: {backend: {host: localhost, port: 25565.0000000000000000001}}");
-        assertThatThrownBy(() -> ConfigurationLoader.read(file, Document.SERVERS))
+                file, ConfigurationSchemaTest.CORE.replace("4096", "4096.0000000000000000001"));
+        assertThatThrownBy(() -> ConfigurationLoader.read(file, Document.CORE))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("/servers/backend/port (type)");
+                .hasMessageContaining("/ticket/max-payload-bytes (type)");
     }
 
     @ParameterizedTest
     @ValueSource(
             strings = {
-                "servers: {}\nservers: {}",
-                "servers: !!java.util.HashMap {}",
-                "servers: {a: &node {host: localhost, port: 25565}, b: *node}",
-                "servers: {1: {host: localhost, port: 25565}}",
-                "servers: {backend: {host: 2026-10-16, port: 25565}}",
-                "servers: {backend: {host: localhost, port: .nan}}",
-                "servers: {backend: {host: !!binary bG9jYWxob3N0, port: 25565}}",
-                "servers: !!set {backend: null}",
-                "servers: {}\n---\nservers: {}"
+                "backend: {}\nbackend: {}",
+                "!!java.util.HashMap {}",
+                "a: &node {address: localhost:25565}\nb: *node",
+                "1: {address: localhost:25565}",
+                "backend: {address: 2026-10-16}",
+                "backend: {address: .nan}",
+                "backend: {address: !!binary bG9jYWxob3N0}",
+                "!!set {backend: null}",
+                "{}\n---\n{}"
             })
     void rejectsUnsafeYamlAndNonJsonTypes(String yaml) throws Exception {
         Path file = Files.writeString(directory.resolve("servers.yml"), yaml);
