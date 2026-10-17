@@ -44,7 +44,8 @@ class CoreEngineTest {
     private final ReceiverLoginContext login = new ReceiverLoginContext("Notch", true, null);
 
     private DefaultChorusCoreEngine engine(String id, NodeRole role, IdentityPolicy policy) {
-        var registry = TestSupport.registries(pair);
+        var registry = TestSupport.servers();
+        var issuers = TestSupport.issuers(pair);
         return new DefaultChorusCoreEngine(
                 new NodeConfiguration(id, role),
                 new TicketConfiguration("chorus:ticket", 4096, 2048),
@@ -55,7 +56,7 @@ class CoreEngineTest {
                 new VerificationConfiguration(
                         Duration.ofSeconds(15), Duration.ofSeconds(2), true, policy),
                 registry,
-                registry,
+                issuers,
                 role.sender() ? TestSupport.signer(pair) : null,
                 role.receiver() ? replay : null,
                 Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
@@ -63,7 +64,8 @@ class CoreEngineTest {
 
     @Test
     void independentSectionsStillEnforceSenderRequirementsBeforeTakingReplayOwnership() {
-        var registry = TestSupport.registries(pair);
+        var registry = TestSupport.servers();
+        var issuers = TestSupport.issuers(pair);
         var node = new NodeConfiguration("gateway", NodeRole.PEER);
         var ticket = new TicketConfiguration("chorus:ticket", 4096, 2048);
         var verification =
@@ -80,7 +82,7 @@ class CoreEngineTest {
                                         null,
                                         verification,
                                         registry,
-                                        registry,
+                                        issuers,
                                         TestSupport.signer(pair),
                                         replay,
                                         Clock.systemUTC()))
@@ -95,7 +97,7 @@ class CoreEngineTest {
                                         issuance,
                                         verification,
                                         registry,
-                                        registry,
+                                        issuers,
                                         TestSupport.signer(pair),
                                         replay,
                                         Clock.systemUTC()))

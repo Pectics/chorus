@@ -30,7 +30,7 @@ import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ProfileProperty;
 import me.pectics.chorus.core.model.TicketClaims;
-import me.pectics.chorus.core.registry.TrustedIssuer;
+import me.pectics.chorus.core.trust.TrustedIssuer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -39,11 +39,11 @@ class TicketCompressionTest {
     private final java.security.KeyPair pair = TestSupport.keyPair();
     private final TicketSigner signer = TestSupport.signer(pair);
     private final TicketCodec plain = new TicketCodec(5120, 5120, TicketCompression.NONE);
-    private final me.pectics.chorus.core.registry.config.ConfigRegistries registries =
-            TestSupport.registries(pair);
+    private final me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore issuers =
+            TestSupport.issuers(pair);
 
     private void rejects(byte[] payload, TicketError error) {
-        assertThatThrownBy(() -> plain.decode(payload, registries))
+        assertThatThrownBy(() -> plain.decode(payload, issuers))
                 .isInstanceOfSatisfying(
                         TicketRejectedException.class,
                         failure -> assertThat(failure.code()).isEqualTo(error));
@@ -82,18 +82,14 @@ class TicketCompressionTest {
     @EnumSource(TicketCompression.class)
     void allReceiversAcceptEveryEncodingWithBothSigningAlgorithms(TicketCompression compression) {
         for (TicketSigner key : List.of(signer, new HmacSha256(new byte[32]))) {
-            registries.replace(
-                    registries.snapshot(),
+            issuers.replace(
                     List.of(
                             new TrustedIssuer(
                                     "gateway", List.of(key), true, TestSupport.policy())));
             byte[] payload =
                     new TicketCodec(5120, 2048, compression).encode(TestSupport.claims(), key);
             for (var receiver : TicketCompression.values()) {
-                assertThat(
-                                new TicketCodec(5120, 2048, receiver)
-                                        .decode(payload, registries)
-                                        .claims())
+                assertThat(new TicketCodec(5120, 2048, receiver).decode(payload, issuers).claims())
                         .isEqualTo(TestSupport.claims());
             }
         }
@@ -121,7 +117,7 @@ class TicketCompressionTest {
             }
         }
         assertThat(decompressed).isEqualTo(compact);
-        assertThat(plain.decode(frame(compact, compression), registries).claims())
+        assertThat(plain.decode(frame(compact, compression), issuers).claims())
                 .isEqualTo(TestSupport.claims());
     }
 
@@ -152,12 +148,11 @@ class TicketCompressionTest {
         byte[] payload = codec.encode(claims, signer);
         assertThat(payload.length).isLessThan(5120);
         assertThat(ByteBuffer.wrap(payload).getInt(6)).isGreaterThan(5120);
-        assertThat(codec.decode(payload, registries).claims()).isEqualTo(claims);
+        assertThat(codec.decode(payload, issuers).claims()).isEqualTo(claims);
         assertThatThrownBy(() -> plain.encode(claims, signer)).hasMessage("TICKET_TOO_LARGE");
         assertThatThrownBy(() -> new TicketCodec(5120, 2048, compression).encode(claims, signer))
                 .hasMessage("TICKET_TOO_LARGE");
-        assertThatThrownBy(
-                        () -> new TicketCodec(5120, 2048, compression).decode(payload, registries))
+        assertThatThrownBy(() -> new TicketCodec(5120, 2048, compression).decode(payload, issuers))
                 .hasMessage("TICKET_TOO_LARGE");
 
         byte[] small = codec.encode(TestSupport.claims(), signer);
@@ -173,7 +168,7 @@ class TicketCompressionTest {
         assertThatThrownBy(
                         () ->
                                 new TicketCodec(small.length - 1, 128, compression)
-                                        .decode(small, registries))
+                                        .decode(small, issuers))
                 .hasMessage("TICKET_TOO_LARGE");
     }
 

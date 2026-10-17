@@ -28,7 +28,7 @@ class SqlConfigurationTest {
 
     static final String REGISTRY =
             """
-            {"provider":"SQL","config":{"issuers-path":"trusted-issuers.yml"},
+            {"provider":"SQL",
              "sql":{"engine":"POSTGRESQL","host":"db.example.net","port":5432,
               "database":"chorus","username":"chorus_user","password-path":"password.txt",
               "tls":{"mode":"VERIFY_FULL","ca-cert":"ca.pem"},
@@ -43,8 +43,10 @@ class SqlConfigurationTest {
         var root = core(REGISTRY.replace("POSTGRESQL", engine.name()));
         var settings = ConfigurationReader.registry(read(root).get("registry"), directory);
         assertThat(settings.sql().engine()).isEqualTo(engine);
-        assertThat(settings.config().serversPath()).isNull();
-        assertThat(settings.config().issuersPath())
+        assertThat(settings.config()).isNull();
+        assertThat(
+                        ConfigurationReader.verification(root.get("verification"), directory)
+                                .trustedIssuersPath())
                 .isEqualTo(directory.resolve("trusted-issuers.yml"));
         assertThat(settings.sql().passwordPath()).isEqualTo(directory.resolve("password.txt"));
         assertThat(settings.sql().tls().caCert()).isEqualTo(directory.resolve("ca.pem"));
@@ -63,7 +65,9 @@ class SqlConfigurationTest {
                         REGISTRY.replace("\"database\":", "\"schema\":\"public\",\"database\":"),
                         REGISTRY.replace(
                                 "\"username\":", "\"admin-username\":\"admin\",\"username\":"),
-                        REGISTRY.replace("\"issuers-path\"", "\"trust-path\""),
+                        REGISTRY.replace(
+                                "\"provider\":",
+                                "\"config\":{\"issuers-path\":\"trusted-issuers.yml\"},\"provider\":"),
                         REGISTRY.replace("db.example.net", "db.example.net?sslmode=disable"),
                         REGISTRY.replace("\"port\":5432", "\"port\":65536"))) {
             assertThatThrownBy(() -> read(core(invalid)))

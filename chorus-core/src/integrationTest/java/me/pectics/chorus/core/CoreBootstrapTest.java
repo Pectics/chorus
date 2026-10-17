@@ -90,9 +90,9 @@ class CoreBootstrapTest {
                   provider: CONFIG
                   config:
                     servers-path: servers.yml
-                    issuers-path: trusted-issuers.yml
                 %s
                 verification:
+                  trusted-issuers-path: trusted-issuers.yml
                   max-lifetime: 15s
                   clock-skew: 2s
                   enforce-transfer-intent: true
@@ -226,27 +226,30 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void configReloadPublishesOnlyACompleteValidSnapshotAndDoesNotAgeOutConfigApproval()
-            throws Exception {
+    void directoryReloadDoesNotReadTrustAndDoesNotAgeOutConfigApproval() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
-        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var previous = registries.snapshot();
+        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var issuers = CoreBootstrap.loadTrustedIssuers(trust);
+        var previous = registry.snapshot();
+        var approval = issuers.findByIssuer("gateway").orElseThrow();
         Files.writeString(servers, Files.readString(servers).replace("25565", "25566"));
-        CoreBootstrap.reloadRegistries(
-                registries, servers, trust, Clock.offset(clock, java.time.Duration.ofDays(30)));
-        assertThat(registries.find("backend").orElseThrow().port()).isEqualTo(25566);
-        assertThat(previous.servers().get("backend").port()).isEqualTo(25565);
-        assertThat(registries.snapshot().stale()).isFalse();
-        var approved = registries.snapshot();
-        Files.writeString(trust, Files.readString(trust).replace("public.der", "private.der"));
-        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
-                .isInstanceOf(GeneralSecurityException.class);
-        assertThat(registries.snapshot()).isSameAs(approved);
         Files.writeString(trust, "gateway: {keys: []}");
-        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+        Files.delete(directory.resolve("public.der"));
+        CoreBootstrap.reloadServerRegistry(
+                registry, servers, Clock.offset(clock, java.time.Duration.ofDays(30)));
+        assertThat(registry.find("backend").orElseThrow().port()).isEqualTo(25566);
+        assertThat(previous.servers().get("backend").port()).isEqualTo(25565);
+        assertThat(registry.snapshot().stale()).isFalse();
+        assertThat(issuers.findByIssuer("gateway")).containsSame(approval);
+        assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trust))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThat(registries.snapshot()).isSameAs(approved);
+        assertThat(issuers.findByIssuer("gateway")).containsSame(approval);
+        var approved = registry.snapshot();
+        Files.writeString(servers, "backend: {address: localhost:70000}");
+        assertThatThrownBy(() -> CoreBootstrap.reloadServerRegistry(registry, servers, clock))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(registry.snapshot()).isSameAs(approved);
     }
 
     @Test
@@ -304,10 +307,8 @@ class CoreBootstrapTest {
                         .replace(
                                 "address: backend.example.net:25565",
                                 "address: \"[2001:db8::1]:25566\""));
-        var registries =
-                CoreBootstrap.loadRegistries(
-                        servers, directory.resolve("trusted-issuers.yml"), clock);
-        var backend = registries.find("backend").orElseThrow();
+        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var backend = registry.find("backend").orElseThrow();
         assertThat(backend.host()).isEqualTo("2001:db8::1");
         assertThat(backend.port()).isEqualTo(25566);
     }
@@ -382,28 +383,31 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void schemaFailureKeepsBothApprovedDirectoriesUnchanged() throws Exception {
+    void trustSchemaFailureRetainsApprovalsWithoutBlockingDirectoryReload() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
-        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var previous = registries.snapshot();
-        var keys = registries.findByIssuer("gateway");
+        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var issuers = CoreBootstrap.loadTrustedIssuers(trust);
+        var previous = registry.snapshot();
+        var approval = issuers.findByIssuer("gateway");
         Files.writeString(servers, Files.readString(servers).replace("25565", "25566"));
         Files.writeString(
                 trust, Files.readString(trust).replace("[mojang, local]", "[mojang, mojang]"));
-        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+        assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trust))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("allowed-providers (uniqueItems)");
-        assertThat(registries.snapshot()).isSameAs(previous);
-        assertThat(registries.findByIssuer("gateway")).isEqualTo(keys);
+        assertThat(registry.snapshot()).isSameAs(previous);
+        assertThat(issuers.findByIssuer("gateway")).isEqualTo(approval);
+        CoreBootstrap.reloadServerRegistry(registry, servers, clock);
+        assertThat(registry.find("backend").orElseThrow().port()).isEqualTo(25566);
+        assertThat(issuers.findByIssuer("gateway")).isEqualTo(approval);
     }
 
     @Test
     void rejectsYamlDuplicatesCustomTagsAndAliasesWithoutPublishing() throws Exception {
         Path servers = directory.resolve("servers.yml");
-        Path trust = directory.resolve("trusted-issuers.yml");
-        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var approved = registries.snapshot();
+        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var approved = registry.snapshot();
         for (String invalid :
                 java.util.List.of(
                         "backend: {}\nbackend: {}\n",
@@ -411,24 +415,22 @@ class CoreBootstrapTest {
                         "gateway: &node {address: localhost:25565}\nbackend: *node\n",
                         "gateway: {address: localhost:70000}\n")) {
             Files.writeString(servers, invalid);
-            assertThatThrownBy(
-                            () -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+            assertThatThrownBy(() -> CoreBootstrap.reloadServerRegistry(registry, servers, clock))
                     .isInstanceOf(IllegalArgumentException.class);
-            assertThat(registries.snapshot()).isSameAs(approved);
+            assertThat(registry.snapshot()).isSameAs(approved);
         }
     }
 
     @Test
     void singleKeyPathLoadsTheSameApprovalAsAOneElementList() throws Exception {
-        Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
-        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var original = registries.findByIssuer("gateway").orElseThrow();
+        var issuers = CoreBootstrap.loadTrustedIssuers(trust);
+        var original = issuers.findByIssuer("gateway").orElseThrow();
         Files.writeString(
                 trust,
                 Files.readString(trust).replace("keys:\n    - public.der", "key: public.der"));
-        CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
-        assertThat(registries.findByIssuer("gateway")).contains(original);
+        CoreBootstrap.reloadTrustedIssuers(issuers, trust);
+        assertThat(issuers.findByIssuer("gateway")).contains(original);
     }
 
     @Test
@@ -444,16 +446,16 @@ class CoreBootstrapTest {
                         .replace(
                                 "keys:\n    - public.der",
                                 "key: missing.der\n  keys:\n    - preferred.der"));
-        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var approved = registries.findByIssuer("gateway").orElseThrow();
+        var issuers = CoreBootstrap.loadTrustedIssuers(trust);
+        var approved = issuers.findByIssuer("gateway").orElseThrow();
         assertThat(approved.verifiers())
                 .containsExactly(new Ed25519.Verifier(preferred.getPublic()));
         Files.writeString(
                 trust, Files.readString(trust).replace("key: missing.der", "key: public.der"));
         Files.delete(preferredFile);
-        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+        assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trust))
                 .isInstanceOf(IOException.class);
-        assertThat(registries.findByIssuer("gateway").orElseThrow()).isSameAs(approved);
+        assertThat(issuers.findByIssuer("gateway").orElseThrow()).isSameAs(approved);
     }
 
     @Test
@@ -466,34 +468,33 @@ class CoreBootstrapTest {
         Files.writeString(
                 trust,
                 Files.readString(trust).replace("- public.der", "- public.der\n    - rotated.der"));
-        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var approved = registries.findByIssuer("gateway").orElseThrow();
+        var issuers = CoreBootstrap.loadTrustedIssuers(trust);
+        var approved = issuers.findByIssuer("gateway").orElseThrow();
         assertThat(approved.verifiers()).hasSize(2);
         assertThat(approved.enabled()).isTrue();
         Files.writeString(
                 trust, Files.readString(trust).replace("  keys:", "  enabled: false\n  keys:"));
-        CoreBootstrap.reloadRegistries(registries, servers, trust, clock);
-        var disabled = registries.findByIssuer("gateway").orElseThrow();
+        CoreBootstrap.reloadTrustedIssuers(issuers, trust);
+        var disabled = issuers.findByIssuer("gateway").orElseThrow();
         assertThat(disabled.enabled()).isFalse();
         assertThat(disabled.verifiers()).containsExactlyElementsOf(approved.verifiers());
         Files.write(
                 directory.resolve("rotated.der"),
                 Files.readAllBytes(directory.resolve("public.der")));
-        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+        assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trust))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("distinct approved keys");
-        assertThat(registries.findByIssuer("gateway").orElseThrow()).isSameAs(disabled);
+        assertThat(issuers.findByIssuer("gateway").orElseThrow()).isSameAs(disabled);
     }
 
     @Test
     void brokenApprovedKeyDoesNotReplaceTheCurrentTrustSnapshot() throws Exception {
-        Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
-        var registries = CoreBootstrap.loadRegistries(servers, trust, clock);
-        var approved = registries.findByIssuer("gateway");
+        var issuers = CoreBootstrap.loadTrustedIssuers(trust);
+        var approved = issuers.findByIssuer("gateway");
         Files.writeString(directory.resolve("public.der"), "broken key");
-        assertThatThrownBy(() -> CoreBootstrap.reloadRegistries(registries, servers, trust, clock))
+        assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trust))
                 .isInstanceOf(GeneralSecurityException.class);
-        assertThat(registries.findByIssuer("gateway")).isEqualTo(approved);
+        assertThat(issuers.findByIssuer("gateway")).isEqualTo(approved);
     }
 }

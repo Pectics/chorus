@@ -56,12 +56,13 @@ final class ConfigurationReader {
                 new IssuancePolicy(trustPolicy(value), strings(value.get("allowed-targets"))));
     }
 
-    static VerificationConfiguration verification(JsonNode value) {
+    static VerificationConfiguration verification(JsonNode value, Path base) {
         return new VerificationConfiguration(
                 duration(value.get("max-lifetime")),
                 duration(value.get("clock-skew")),
                 value.get("enforce-transfer-intent").asBoolean(),
-                IdentityPolicy.valueOf(value.get("identity-policy").asString()));
+                IdentityPolicy.valueOf(value.get("identity-policy").asString()),
+                base.resolve(value.get("trusted-issuers-path").asString()));
     }
 
     static CryptoConfiguration crypto(JsonNode value, Path base) {
@@ -79,9 +80,10 @@ final class ConfigurationReader {
         var config = value.get("config");
         return new RegistryConfiguration(
                 RegistryConfiguration.Provider.valueOf(value.get("provider").asString()),
-                new RegistryConfiguration.Config(
-                        optionalPath(config, "servers-path", base),
-                        base.resolve(config.get("issuers-path").asString())),
+                config == null
+                        ? null
+                        : new RegistryConfiguration.Config(
+                                base.resolve(config.get("servers-path").asString())),
                 value.has("sql") ? sql(value.get("sql"), base) : null,
                 value.has("cache")
                         ? new RegistryConfiguration.Cache(

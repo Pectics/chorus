@@ -25,14 +25,14 @@ import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.crypto.TicketVerifier;
-import me.pectics.chorus.core.registry.TrustedIssuer;
-import me.pectics.chorus.core.registry.config.ConfigRegistries;
+import me.pectics.chorus.core.trust.TrustedIssuer;
+import me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore;
 import org.junit.jupiter.api.Test;
 
 class HmacTicketTest {
     private final TicketCodec codec = new TicketCodec(5120, 2048, TicketCompression.NONE);
     private final HmacSha256 key = key((byte) 1);
-    private final ConfigRegistries registries = TestSupport.registries(TestSupport.keyPair());
+    private final ConfigTrustedIssuerStore issuers = TestSupport.issuers(TestSupport.keyPair());
 
     private static HmacSha256 key(byte value) {
         return new HmacSha256(secretBytes(value));
@@ -45,15 +45,14 @@ class HmacTicketTest {
     }
 
     private void approve(TicketVerifier... verifiers) {
-        registries.replace(
-                registries.snapshot(),
+        issuers.replace(
                 List.of(
                         new TrustedIssuer(
                                 "gateway", List.of(verifiers), true, TestSupport.policy())));
     }
 
     private void rejects(byte[] ticket, TicketError error) {
-        assertThatThrownBy(() -> codec.decode(ticket, registries))
+        assertThatThrownBy(() -> codec.decode(ticket, issuers))
                 .isInstanceOfSatisfying(
                         TicketRejectedException.class,
                         rejection -> assertThat(rejection.code()).isEqualTo(error));
@@ -90,13 +89,13 @@ class HmacTicketTest {
         assertThat(parsed.getHeader().getType().toString()).isEqualTo("chorus-ticket+jwt");
         assertThat(parsed.getHeader().getKeyID()).isNull();
         assertThat(parsed.verify(new MACVerifier(secretBytes((byte) 1)))).isTrue();
-        assertThat(codec.decode(ticket, registries).claims()).isEqualTo(TestSupport.claims());
+        assertThat(codec.decode(ticket, issuers).claims()).isEqualTo(TestSupport.claims());
         var signed = new JWSObject(parsed.getHeader(), parsed.getPayload());
         signed.sign(new com.nimbusds.jose.crypto.MACSigner(secretBytes((byte) 1)));
         assertThat(
                         codec.decode(
                                         signed.serialize().getBytes(StandardCharsets.US_ASCII),
-                                        registries)
+                                        issuers)
                                 .claims())
                 .isEqualTo(TestSupport.claims());
     }
@@ -118,8 +117,8 @@ class HmacTicketTest {
                 TicketError.INVALID_SIGNATURE);
         var rotated = key((byte) 3);
         approve(key, rotated);
-        assertThat(codec.decode(ticket, registries).claims()).isEqualTo(TestSupport.claims());
-        assertThat(codec.decode(codec.encode(TestSupport.claims(), rotated), registries).claims())
+        assertThat(codec.decode(ticket, issuers).claims()).isEqualTo(TestSupport.claims());
+        assertThat(codec.decode(codec.encode(TestSupport.claims(), rotated), issuers).claims())
                 .isEqualTo(TestSupport.claims());
         approve(rotated);
         rejects(ticket, TicketError.INVALID_SIGNATURE);

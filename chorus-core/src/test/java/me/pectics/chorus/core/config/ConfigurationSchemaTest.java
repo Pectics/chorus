@@ -37,9 +37,9 @@ class ConfigurationSchemaTest {
               "ticket": {"cookie-key": "chorus:ticket", "max-payload-bytes": 4096,
                 "max-property-bytes": 2048, "compression": "NONE"},
               "crypto": {"algorithm": "ED25519"},
-              "registry": {"provider": "CONFIG", "config": {"servers-path": "servers.yml", "issuers-path": "trusted-issuers.yml"}},
+              "registry": {"provider": "CONFIG", "config": {"servers-path": "servers.yml"}},
               "verification": {"max-lifetime": "15s", "clock-skew": "2s",
-                "enforce-transfer-intent": true, "identity-policy": "ADOPT_UPSTREAM"},
+                "enforce-transfer-intent": true, "identity-policy": "ADOPT_UPSTREAM", "trusted-issuers-path": "trusted-issuers.yml"},
               "replay-guard": {"backend": "LOCAL", "local": {"path": "state/replay.db", "max-entries": 100, "busy-timeout": "500ms"}}
             }
             """;

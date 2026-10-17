@@ -11,7 +11,7 @@ import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.crypto.TicketVerifier;
-import me.pectics.chorus.core.registry.TrustedIssuer;
+import me.pectics.chorus.core.trust.TrustedIssuer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;

@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.1 and 3.9
- * sync: Keep directory source settings separate from the loaded routing and trust snapshots.
+ * sync: Keep directory settings independent of local issuer approvals and signing material.
  * @endcontext
  */
 package me.pectics.chorus.core.config.model;
@@ -11,8 +11,8 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Server directory source and local trust settings. Paths are relative to the main configuration;
- * construction performs no I/O. SQL synchronizes routing only, never issuer approvals or keys.
+ * Server directory source settings. Paths are relative to the main configuration; construction
+ * performs no I/O. SQL synchronizes routing only, never issuer approvals or keys.
  */
 public record RegistryConfiguration(Provider provider, Config config, Sql sql, Cache cache) {
     public enum Provider {
@@ -31,26 +31,25 @@ public record RegistryConfiguration(Provider provider, Config config, Sql sql, C
         VERIFY_FULL
     }
 
-    /** Retains the existing CONFIG construction contract. */
+    /** Constructs a local directory source without SQL resources. */
     public RegistryConfiguration(Provider provider, Config config) {
         this(provider, config, null, null);
     }
 
     public RegistryConfiguration {
         Objects.requireNonNull(provider, "provider");
-        Objects.requireNonNull(config, "config");
         if (provider == Provider.CONFIG) {
-            Objects.requireNonNull(config.serversPath(), "CONFIG requires serversPath");
+            Objects.requireNonNull(config, "CONFIG requires file settings");
         } else {
             Objects.requireNonNull(sql, "SQL requires connection settings");
             Objects.requireNonNull(cache, "SQL requires cache settings");
         }
     }
 
-    /** Local trust is required for both providers; serversPath may be null for SQL. */
-    public record Config(Path serversPath, Path issuersPath) {
+    /** Local server directory; required only by the CONFIG provider. */
+    public record Config(Path serversPath) {
         public Config {
-            Objects.requireNonNull(issuersPath, "issuersPath");
+            Objects.requireNonNull(serversPath, "serversPath");
         }
     }
 

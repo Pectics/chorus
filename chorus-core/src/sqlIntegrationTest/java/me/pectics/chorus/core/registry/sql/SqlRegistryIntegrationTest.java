@@ -273,7 +273,6 @@ class SqlRegistryIntegrationTest {
                   %s
                 registry:
                   provider: SQL
-                  config: {issuers-path: trusted-issuers.yml}
                   sql:
                     engine: %s
                     host: localhost
@@ -290,7 +289,7 @@ class SqlRegistryIntegrationTest {
                   allowed-auth-schemes: [MOJANG]
                   allowed-providers: [mojang]
                   allowed-targets: [backend]
-                verification: {max-lifetime: 15s, clock-skew: 0s, enforce-transfer-intent: true, identity-policy: ADOPT_UPSTREAM}
+                verification: {trusted-issuers-path: trusted-issuers.yml, max-lifetime: 15s, clock-skew: 0s, enforce-transfer-intent: true, identity-policy: ADOPT_UPSTREAM}
                 replay-guard:
                   backend: LOCAL
                   local: {path: state/%s-%s.db, max-entries: 100, busy-timeout: 500ms}

@@ -29,8 +29,8 @@ import me.pectics.chorus.core.model.TicketClaims;
 import me.pectics.chorus.core.policy.IdentityPolicy;
 import me.pectics.chorus.core.policy.ResolvedPlayerProfile;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
-import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
 import me.pectics.chorus.core.replay.ReplayGuard;
+import me.pectics.chorus.core.trust.TrustedIssuerStore;
 
 /**
  * Phase-1 engine. Takes ownership of ReplayGuard; other injected collaborators remain caller-owned.
@@ -43,7 +43,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
     private final IssuanceConfiguration issuance;
     private final VerificationConfiguration verification;
     private final ServerNodeRegistry servers;
-    private final TrustedIssuerRegistry issuers;
+    private final TrustedIssuerStore issuers;
     private final TicketSigner signer;
     private final ReplayGuard replay;
     private final Clock clock;
@@ -63,7 +63,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             IssuanceConfiguration issuance,
             VerificationConfiguration verification,
             ServerNodeRegistry servers,
-            TrustedIssuerRegistry issuers,
+            TrustedIssuerStore issuers,
             TicketSigner signer,
             ReplayGuard replay,
             Clock clock) {

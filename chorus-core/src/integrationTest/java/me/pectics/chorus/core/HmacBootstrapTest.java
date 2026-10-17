@@ -63,13 +63,13 @@ class HmacBootstrapTest {
                   provider: CONFIG
                   config:
                     servers-path: servers.yml
-                    issuers-path: trust/issuers.yml
                 issuance:
                   ttl: 15s
                   allowed-auth-schemes: [MOJANG]
                   allowed-providers: [mojang]
                   allowed-targets: [backend]
                 verification:
+                  trusted-issuers-path: trust/issuers.yml
                   max-lifetime: 15s
                   clock-skew: 2s
                   enforce-transfer-intent: true
@@ -215,32 +215,25 @@ class HmacBootstrapTest {
                 trustFile,
                 single.replace(
                         "  key: missing.key", "  key: missing.key\n  keys: [old.key, new.key]"));
-        var registries =
-                CoreBootstrap.loadRegistries(base.resolve("servers.yml"), trustFile, clock);
-        var approved = registries.findByIssuer("gateway").orElseThrow();
+        var issuers = CoreBootstrap.loadTrustedIssuers(trustFile);
+        var approved = issuers.findByIssuer("gateway").orElseThrow();
         assertThat(approved.verifiers()).containsExactly(oldKey, newKey);
         assertThat(approved.verifiers().getFirst().algorithm())
                 .isEqualTo(SignatureAlgorithm.HMAC_SHA256);
         Files.write(rotated, Files.readAllBytes(original));
-        assertThatThrownBy(
-                        () ->
-                                CoreBootstrap.reloadRegistries(
-                                        registries, base.resolve("servers.yml"), trustFile, clock))
+        assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trustFile))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("distinct approved keys");
-        assertThat(registries.findByIssuer("gateway")).containsSame(approved);
+        assertThat(issuers.findByIssuer("gateway")).containsSame(approved);
         Files.delete(rotated);
-        assertThatThrownBy(
-                        () ->
-                                CoreBootstrap.reloadRegistries(
-                                        registries, base.resolve("servers.yml"), trustFile, clock))
+        assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trustFile))
                 .isInstanceOf(IOException.class);
-        assertThat(registries.findByIssuer("gateway")).containsSame(approved);
+        assertThat(issuers.findByIssuer("gateway")).containsSame(approved);
         Files.writeString(
                 trustFile, single.replace("key: missing.key", "key: old.key\n  enabled: false"));
-        CoreBootstrap.reloadRegistries(registries, base.resolve("servers.yml"), trustFile, clock);
-        assertThat(registries.findByIssuer("gateway").orElseThrow().enabled()).isFalse();
-        assertThat(registries.findByIssuer("gateway").orElseThrow().verifiers())
+        CoreBootstrap.reloadTrustedIssuers(issuers, trustFile);
+        assertThat(issuers.findByIssuer("gateway").orElseThrow().enabled()).isFalse();
+        assertThat(issuers.findByIssuer("gateway").orElseThrow().verifiers())
                 .isEqualTo(List.of(oldKey));
     }
 }

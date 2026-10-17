@@ -36,8 +36,8 @@ import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ProfileProperty;
 import me.pectics.chorus.core.model.TicketClaims;
-import me.pectics.chorus.core.registry.TrustedIssuer;
-import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
+import me.pectics.chorus.core.trust.TrustedIssuer;
+import me.pectics.chorus.core.trust.TrustedIssuerStore;
 
 /** Bounded version-1 JWS with optional compression. Only approved local keys are used. */
 public final class TicketCodec {
@@ -131,7 +131,7 @@ public final class TicketCodec {
     /** Captures one approved binding for both signature and subsequent policy checks. */
     public record DecodedTicket(TicketClaims claims, TrustedIssuer issuer) {}
 
-    public DecodedTicket decode(byte[] bytes, TrustedIssuerRegistry issuers) {
+    public DecodedTicket decode(byte[] bytes, TrustedIssuerStore issuers) {
         if (bytes == null || bytes.length == 0) {
             throw reject(TicketError.COOKIE_MISSING);
         }

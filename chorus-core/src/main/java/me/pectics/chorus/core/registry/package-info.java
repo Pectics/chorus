@@ -1,2 +1,2 @@
-/** Routing snapshots and issuer trust. */
+/** Server discovery and routing snapshots. */
 package me.pectics.chorus.core.registry;

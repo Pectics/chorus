@@ -2,7 +2,8 @@
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.7, 3.8, and 3.9
  * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationReader.java;
- *          chorus-core/src/main/java/me/pectics/chorus/core/config/RegistryLoader.java
+ *          chorus-core/src/main/java/me/pectics/chorus/core/config/RegistryLoader.java;
+ *          chorus-core/src/main/java/me/pectics/chorus/core/config/TrustLoader.java
  * sync: Assemble independent sections only after value conversion; load approved keys before opening replay state.
  * @endcontext
  */
@@ -29,10 +30,11 @@ import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.registry.RegistrySnapshot;
-import me.pectics.chorus.core.registry.config.ConfigRegistries;
+import me.pectics.chorus.core.registry.config.ConfigServerNodeRegistry;
 import me.pectics.chorus.core.registry.sql.JdbcServerStore;
 import me.pectics.chorus.core.registry.sql.SqlServerRegistry;
 import me.pectics.chorus.core.replay.local.LocalReplayGuard;
+import me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore;
 
 /** Blocking startup I/O and resource assembly. Invoke outside platform event loops. */
 public final class CoreBootstrap {
@@ -59,7 +61,7 @@ public final class CoreBootstrap {
         var ticket = ConfigurationReader.ticket(root.get("ticket"));
         var issuance =
                 node.role().sender() ? ConfigurationReader.issuance(root.get("issuance")) : null;
-        var verification = ConfigurationReader.verification(root.get("verification"));
+        var verification = ConfigurationReader.verification(root.get("verification"), base);
         var crypto = ConfigurationReader.crypto(root.get("crypto"), base);
         var registry = ConfigurationReader.registry(root.get("registry"), base);
         var replay =
@@ -82,22 +84,17 @@ public final class CoreBootstrap {
         if (node.role().sender() && issuance.ttl().compareTo(verification.maxLifetime()) > 0) {
             throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
         }
-        var files = registry.config();
         SqlServerRegistry sql = null;
         LocalReplayGuard guard = null;
         try {
+            var trust = TrustLoader.read(verification.trustedIssuersPath());
             RegistrySnapshot directory;
-            RegistryLoader.LocalTrust trust;
             var requiredNodes = new HashSet<String>();
             requiredNodes.add(node.id());
             if (node.role().sender()) requiredNodes.addAll(issuance.policy().allowedTargets());
             if (registry.provider() == RegistryConfiguration.Provider.CONFIG) {
-                var documents =
-                        RegistryLoader.read(files.serversPath(), files.issuersPath(), clock);
-                directory = documents.directory();
-                trust = documents.localTrust();
+                directory = RegistryLoader.read(registry.config().serversPath(), clock);
             } else {
-                trust = RegistryLoader.readTrust(files.issuersPath());
                 sql =
                         new SqlServerRegistry(
                                 JdbcServerStore.open(registry.sql()),
@@ -111,7 +108,7 @@ public final class CoreBootstrap {
                         "Node and issuance targets must exist in the directory");
             }
             TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
-            var registries = new ConfigRegistries(directory, trust.loadIssuers());
+            var issuers = new ConfigTrustedIssuerStore(trust.loadIssuers());
             if (node.role().receiver()) {
                 var local = replay.local();
                 guard =
@@ -129,8 +126,8 @@ public final class CoreBootstrap {
                             ticket,
                             issuance,
                             verification,
-                            sql == null ? registries : sql,
-                            registries,
+                            sql == null ? new ConfigServerNodeRegistry(directory) : sql,
+                            issuers,
                             signer,
                             guard,
                             clock);
@@ -165,18 +162,29 @@ public final class CoreBootstrap {
         };
     }
 
-    /** Key paths are relative to the trust file. Both files must satisfy their own schemas. */
-    public static ConfigRegistries loadRegistries(Path serversFile, Path trustFile, Clock clock)
-            throws IOException, GeneralSecurityException {
-        var documents = RegistryLoader.read(serversFile, trustFile, clock);
-        return new ConfigRegistries(documents.directory(), documents.loadIssuers());
+    /** Blocking directory load. Validates servers.yml only; no trust or key files are accessed. */
+    public static ConfigServerNodeRegistry loadServerRegistry(Path serversFile, Clock clock)
+            throws IOException {
+        return new ConfigServerNodeRegistry(RegistryLoader.read(serversFile, clock));
     }
 
-    /** Parsing, schema, key, or reference failures leave the previous approved snapshot intact. */
-    public static void reloadRegistries(
-            ConfigRegistries registries, Path serversFile, Path trustFile, Clock clock)
+    /** Blocking directory reload. Parsing or schema failures leave the old directory intact. */
+    public static void reloadServerRegistry(
+            ConfigServerNodeRegistry registry, Path serversFile, Clock clock) throws IOException {
+        registry.replace(RegistryLoader.read(serversFile, clock));
+    }
+
+    /** Blocking local trust load. Key paths resolve against the trust file; missing keys fail. */
+    public static ConfigTrustedIssuerStore loadTrustedIssuers(Path trustFile)
             throws IOException, GeneralSecurityException {
-        var documents = RegistryLoader.read(serversFile, trustFile, clock);
-        registries.replace(documents.directory(), documents.loadIssuers());
+        return new ConfigTrustedIssuerStore(TrustLoader.read(trustFile).loadIssuers());
+    }
+
+    /**
+     * Blocking trust reload. Invalid documents or keys retain all old approvals; no directory I/O.
+     */
+    public static void reloadTrustedIssuers(ConfigTrustedIssuerStore issuers, Path trustFile)
+            throws IOException, GeneralSecurityException {
+        issuers.replace(TrustLoader.read(trustFile).loadIssuers());
     }
 }

@@ -83,8 +83,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "provider",
-        "config"
+        "provider"
       ],
       "properties": {
         "provider": {
@@ -97,16 +96,12 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "issuers-path"
+            "servers-path"
           ],
           "properties": {
             "servers-path": {
               "$ref": "#/$defs/nonBlankString",
               "description": "Directory path relative to chorus.yml, validated with servers.schema.json."
-            },
-            "issuers-path": {
-              "$ref": "#/$defs/nonBlankString",
-              "description": "Local trust path relative to chorus.yml, used by both CONFIG and SQL; keys are never synchronized through SQL."
             }
           }
         },
@@ -263,13 +258,7 @@
             }
           },
           "then": {
-            "properties": {
-              "config": {
-                "required": [
-                  "servers-path"
-                ]
-              }
-            }
+            "required": ["config"]
           },
           "else": {
             "required": [
@@ -308,8 +297,12 @@
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max-lifetime", "clock-skew", "enforce-transfer-intent", "identity-policy"],
+      "required": ["max-lifetime", "clock-skew", "enforce-transfer-intent", "identity-policy", "trusted-issuers-path"],
       "properties": {
+        "trusted-issuers-path": {
+          "$ref": "#/$defs/nonBlankString",
+          "description": "Local issuer approval document relative to chorus.yml, independent of the registry provider. Key paths are relative to this document; trust and key files are never synchronized by Chorus."
+        },
         "max-lifetime": {
           "$ref": "#/$defs/wholeSecondDuration",
           "description": "Positive maximum accepted lifetime in whole seconds. Must cover issuance.ttl when sending."

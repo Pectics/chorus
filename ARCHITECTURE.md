@@ -1,6 +1,6 @@
 # Chorus：基于 Minecraft 1.20.5+ `/transfer` 与 Cookie 机制的分布式服务器互联架构设计方案
 
-> **修订版**：Draft v1.3（SQL 服务器目录与本地信任）\
+> **修订版**：Draft v1.4（服务器目录与本地信任独立）\
 > **文档用途**：可独立阅读的架构与接口设计稿；不是声称所有平台 API 均已验证的实现手册。  
 > **项目名称**：`Chorus`  
 > **Maven Group / 包名前缀**：`me.pectics.chorus`  
@@ -81,9 +81,11 @@ chorus/
 │       │   └── model/                  # 与主配置七个顶级段对应的独立值类型
 │       ├── model/                      # ServerNode、IdentityClaim、TicketClaims 等
 │       ├── crypto/                     # Ed25519/HMAC 签发与验签能力、JWS 编解码
-│       ├── registry/                   # ServerNodeRegistry、TrustedIssuerRegistry
-│       │   ├── config/                 # 配置文件提供的目录与信任快照
+│       ├── registry/                   # ServerNodeRegistry：仅服务器目录
+│       │   ├── config/                 # 配置文件提供的服务器目录快照
 │       │   └── sql/                    # PostgreSQL / MySQL / MariaDB 服务器目录
+│       ├── trust/                      # TrustedIssuer、TrustedIssuerStore：本地信任
+│       │   └── config/                 # 本机管理员批准的签发者与验签材料
 │       ├── policy/                     # UUID / Profile 身份解析策略
 │       └── replay/                     # ReplayGuard：仅负责 Ticket 防重放
 │           ├── local/                  # 本地持久化消费记录；当前使用 SQLite
@@ -151,24 +153,26 @@ chorus/
 
 提供两个互斥的**目录来源模式**：
 
-1. **`CONFIG`**：每台 Chorus 节点读取管理员提供的本地 `servers` 与 `trusted-issuers` 配置。不存在自动同步权威；管理员负责分发与更新一致的配置，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
+1. **`CONFIG`**：每台 Chorus 节点读取管理员提供的本地 `servers` 配置。不存在自动同步权威；管理员负责分发与更新目录，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
 2. **`SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。本轮只通过 JDBC 同步 `servers`，支持 PostgreSQL、MySQL、MariaDB。签发者批准、信任策略和所有密钥继续由本地文件维护，不读取或创建 SQL 信任表；Turso/libSQL 留待后续适配。
 
-两种模式使用相同的 Core 读取接口；目录选择由 `registry.provider` 表达，文件路径位于 `registry.config`；两种模式都要求 `issuers-path`，仅 `CONFIG` 要求 `servers-path`。SQL 连接参数位于 `registry.sql`，服务器快照策略位于 `registry.cache`。
+两种模式使用相同的服务器目录读取接口；目录选择由 `registry.provider` 表达，`CONFIG` 的文件路径为 `registry.config.servers-path`。SQL 连接参数位于 `registry.sql`，服务器快照策略位于 `registry.cache`，无需 `registry.config`。
+本地信任不属于 Registry，统一通过 `verification.trusted-issuers-path` 指定，与目录来源无关。Chorus 不自动分发签发者批准、信任策略、公钥、私钥或 HMAC 密钥，管理员负责在各节点部署所需文件。
 防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选目录数据库。
 
 跨服主联盟中不必要求所有服主共用一个具有写权限的数据库。可为每个管理域维护自己的目录，再在本地明确授权**外域签发者**。本地管理员选择信任哪些外域公钥和身份类型。
 
 #### 管理命令（**候选方案，尚未最终确认**）
 
-平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后交给 `registry` 的管理员写入接口。对于 `CONFIG`，仅更新**本机配置**；对于 `SQL`，服务器目录可写入管理域权威数据库；信任修改仍限本机文件，不同步到 SQL。没有共享存储时，命令不会神奇同步到其他节点。
+平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后分别交给服务器目录或本地信任的管理员接口。对于 `CONFIG`，仅更新**本机目录配置**；对于 `SQL`，服务器目录可写入管理域权威数据库；信任修改仍限本机文件，不同步到 SQL。没有共享存储时，命令不会神奇同步到其他节点。
 
 权限验证发生在平台管理界面；是否采用游戏内指令作为正式配置入口，仍待确定。无需首先开发网页后台。
 
 #### 注册与信任分离
 
 - **`ServerNodeRegistry`**：节点 ID、显示名和连接地址，解决“往哪里转”。
-- **`TrustedIssuerRegistry`**：由本机管理员批准的签发者、算法、验签密钥列表与身份来源范围，解决“本机信任谁”。
+- **`trust.TrustedIssuerStore`**：由本机管理员批准的签发者、算法、验签密钥列表与身份来源范围，解决“本机信任谁”，独立于 Registry。
+- 目录包含某节点不代表授予其签发者信任；目录刷新不添加、续期或撤销本地批准。
 - 心跳信息只用于 UI 与路由提示，不是授予身份签发权限的凭据。
 - 节点上报的候选公钥不能自动成为受信任公钥；密钥轮换需批准或受可信旧密钥授权的轮换流程。
 
@@ -182,7 +186,7 @@ chorus/
 - 节点冷启动且数据库不可用、又没有可验证的本地可信快照时不能凭空发现其他服务器；可使用管理员提供的静态备用快照。
 - **不能把 SQL 票据核销错误自动降级为本地核销**：两个后端不共享消费记录，会造成票据重复接受。控制面缓存策略与数据面 ReplayGuard 故障策略是两回事。
 
-### 3.2 `registry` API 设计
+### 3.2 `registry` 与 `trust` API 设计
 
 节点目录只保存节点 ID、显示名、主机名与端口；分组标签和通用元数据不纳入当前配置及模型。
 
@@ -212,20 +216,21 @@ public interface ServerNodeRegistry {
 }
 ```
 
-信任信息与路由信息分离：
+信任信息由独立的 `trust` 包管理：
 
 ```java
-package me.pectics.chorus.core.registry;
+package me.pectics.chorus.core.trust;
 
 import java.util.Optional;
 
-public interface TrustedIssuerRegistry {
+public interface TrustedIssuerStore {
     Optional<TrustedIssuer> findByIssuer(String issuerNodeId);
 }
 ```
 
 `TrustedIssuer` 内含不可变验签器列表（各自封装批准的密钥）、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
 本机批准某个签发者即表示允许其在这些身份权限内向本机提供 Ticket，不再配置接收端目标列表；验票仍须检查 `aud` 等于本机节点 ID。
+`registry.config.ConfigServerNodeRegistry` 与 `trust.config.ConfigTrustedIssuerStore` 分别持有不可变快照，各自原子替换；查询不执行 I/O，重载失败保留该模块原有快照。两者没有联合替换契约，也不自动监视或分发文件。
 同一签发者可在轮换期间保留多把同算法的可信密钥，所有密钥共用签发者的启用状态与策略；撤销单把密钥时将其从列表移除。
 静态信任条目的 `algorithm` 为 `ED25519` 或 `HMAC_SHA256`，省略时沿用 `ED25519`；HMAC 必须显式批准。同一签发者的全部密钥绑定同一算法，不根据文件内容或票据 Header 自动转换类型。
 静态配置的 `key: path` 等价于 `keys: [path]`，两者至少提供一个；同时提供时只加载 `keys`，不合并或回退到 `key`。
@@ -454,6 +459,10 @@ Phase 1 的运维参数保持显式配置（§7.2）；不提供运行中修改�
 
 密码学范围固定为 **Ed25519 与 HMAC-SHA256**。按两者的实际能力组织对象，不提供通用算法插件、可替换签名服务或为其他非对称算法预留层级。
 
+同一管理者且节点充分互信的部署以 HMAC-SHA256 作为推荐入门配置，示例显式声明算法。持有某签发者 HMAC 密钥的验票节点也具备生成其有效票据的能力，角色限制不提供密码学上的权限隔离。
+Ed25519 用于需要分离签发与验签权限的部署：签发端保管私钥，验票端只需公钥。公钥分发本身不授予签发能力，但其签发者绑定与本机批准必须可靠；当前产品同样不承担公钥自动分发。
+`crypto.algorithm` 仍为必填，信任条目省略算法时保留 `ED25519` 的现有语义，不因入门配置改用 HMAC 而重新解释旧文件。
+
 ```java
 public sealed interface TicketVerifier permits Ed25519.Verifier, TicketSigner {
     SignatureAlgorithm algorithm();
@@ -571,15 +580,13 @@ ticket:
   compression: ZSTD
 
 crypto:
-  algorithm: ED25519
-  private-key: keys/local_ed25519.key
-  public-key: keys/local_ed25519.pub
+  algorithm: HMAC_SHA256
+  key: keys/local.key
 
 registry:
   provider: CONFIG
   config:
     servers-path: servers.yml
-    issuers-path: trusted-issuers.yml
 
 issuance:
   ttl: 15s
@@ -588,6 +595,7 @@ issuance:
   allowed-targets: [operator-a/jp-backend-01]
 
 verification:
+  trusted-issuers-path: trusted-issuers.yml
   max-lifetime: 15s
   clock-skew: 2s
   enforce-transfer-intent: true
@@ -620,12 +628,14 @@ operator-a/jp-backend-01:
 
 ```yaml
 operator-a/us-gateway-01:
+  algorithm: HMAC_SHA256
   keys:
-    - keys/gateway.pub
+    - keys/gateway.key
   allowed-auth-schemes: [MOJANG, OFFLINE_AUTH, OFFLINE_RAW]
   allowed-providers: [mojang, local]
 
 operator-b/peer-01:
+  algorithm: ED25519
   key: keys/alliance-peer.pub
   allowed-auth-schemes: [OFFLINE_AUTH]
   allowed-providers: [operator-b/local]
@@ -640,7 +650,8 @@ operator-b/peer-01:
 | 信任条目 `algorithm: ED25519 / HMAC_SHA256` | 为该签发者的全部 `key / keys` 绑定验签算法；省略为 `ED25519` | 已实现；信任加载不生成密钥，不跨算法回退 |
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
 | `ticket.compression: ZSTD / GZIP` | 压缩完整签名 Ticket；省略配置时默认 `ZSTD` | 已实现；版本化帧与有界解压，接收端兼容所有三种编码 |
-| `registry.provider: SQL` | JDBC 同步服务器目录；信任仍读取 `registry.config.issuers-path` | 已实现 PostgreSQL / MySQL / MariaDB；初始化脚本与独立集成测试见 §3.3、§6 |
+| `registry.provider: SQL` | JDBC 仅同步服务器目录 | 已实现 PostgreSQL / MySQL / MariaDB；初始化脚本与独立集成测试见 §3.3、§6 |
+| `verification.trusted-issuers-path` | 独立的本地签发者批准文件，两种目录来源均使用 | 已实现；密钥路径相对该文件，信任与密钥不自动分发 |
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
 | `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | TODO：SQL 核销尚未实现；启动拒绝 |
 | `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
@@ -654,7 +665,8 @@ operator-b/peer-01:
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
-SQL 模式沿用 `registry.config.issuers-path`，不要求或读取 `servers-path`；`sql` 与 `cache` 必填。
+主配置必须把旧 `registry.config.issuers-path` 移到 `verification.trusted-issuers-path`；旧位置由 Schema 拒绝，不提供静默兼容或回退。`trusted-issuers.yml` 的文件内容与省略算法语义不变。
+SQL 模式无需 `registry.config`，不读取 `servers-path`；`sql` 与 `cache` 必填。若保留非活动的 `config`，仍须满足服务器目录配置的完整 Schema。
 `sql.engine` 为 `POSTGRESQL / MYSQL / MARIADB`，连接字段为 `host / port / database / username / password-path`。
 `tls.mode` 为 `DISABLED / VERIFY_FULL`；可选 `ca-cert` 是相对主配置的 PEM CA bundle 路径，省略时统一使用 JVM 默认信任库。
 `DISABLED` 不接受 `ca-cert`，`VERIFY_FULL` 必须验证证书链和连接主机名，不降级为明文或跳过验证。
@@ -671,8 +683,8 @@ MySQL 的自定义 CA 转换为连接专用临时 PKCS12；MariaDB 未指定 CA 
 `SqlServerRegistry` 通过 `Store` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
 启动首次读取可阻塞，热路径始终只读内存。关闭会停止定时器、等待已接收的工作并关闭存储；完成回调内关闭不会等待自身。
 `CoreBootstrap.open` 创建的 SQL 连接池与调度器随返回 Engine 关闭，装配失败也释放已创建资源。
-直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。SQL 模式不会自动重载本地信任，变更通过重新装配 Engine 生效；
-`CONFIG` 模式保留原显式重载入口与整组快照替换语义。
+直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。`CoreBootstrap.open` 不自动重载本地信任，文件变更通过重新装配 Engine 生效。
+直接装配者可用 `loadServerRegistry / reloadServerRegistry` 与 `loadTrustedIssuers / reloadTrustedIssuers` 分别加载和更新所注入的对象，均为阻塞文件 I/O，须在平台事件线程之外调用；旧联合入口移除。
 
 Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 `NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`、
@@ -680,10 +692,11 @@ Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 不再使用平铺的 `CoreConfiguration`，也不将四组或七组重新聚合成根配置对象。各消费者只接收所需的配置组。
 签发 TTL 与签发权限同属 `IssuanceConfiguration`；密码学配置用封闭的 Ed25519 / HMAC-SHA256 两种路径表示，
 接收专用角色可不提供本地签发路径。目录的 `config / sql / cache` 与防重放的 `local` 参数作为各自所属组的嵌套值类型。
+信任文件路径属于 `VerificationConfiguration`；直接注入信任对象时可使用不带路径的构造器，配置模型不会加载文件。
 配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、目录快照或防重放资源。
 
 `ConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，`ConfigurationReader` 负责主配置各段的类型转换，
-`RegistryLoader` 负责目录与信任文档及批准密钥的加载，`CoreBootstrap` 负责跨组引用检查和资源装配。
+`RegistryLoader` 只读取服务器目录，`TrustLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
 完整装配入口使用七组独立参数；Engine 分别接收 `node / ticket / issuance / verification`，并注入已创建的运行资源。
 `issuance.ttl <= verification.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
 本地防重放设置不另设时钟容差，装配时使用同一份 `verification.clock-skew`。
@@ -776,7 +789,7 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 
 | 情况 | 处理 |
 |---|---|
-| 共享目录不可用，缓存仍在可信允许窗口内 | 使用缓存中已批准的地址与密钥，继续本地验签转移 |
+| 共享目录不可用，缓存仍在可信允许窗口内 | 使用缓存中的地址继续转移；验签使用独立的本地批准与密钥 |
 | 共享目录不可用，缓存不存在或超过可用期限 | 拒绝依赖缺失/过期目录信息的新转移 |
 | 本地 ReplayGuard 达容量上限 | 拒绝新票据，不提前删除仍有效记录 |
 | SQL ReplayGuard 不可用 | 拒绝核销，不动态切到本地模式 |
@@ -817,7 +830,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 ### Phase 2：SQL 服务器目录实现（已实现）
 
 通过 PostgreSQL、MySQL、MariaDB 实现 `ServerNodeRegistry` 的后台快照同步与故障缓存。
-`TrustedIssuerRegistry` 与全部密钥保持本地文件加载；本轮不增加信任同步、心跳或 SQL 核销。
+`trust.TrustedIssuerStore` 与全部密钥保持本地文件加载；本轮不增加信任同步、心跳或 SQL 核销。
 管理写入的权限/凭据配置与 PostgreSQL 自定义 schema 保留 TODO；真实数据库与 TLS 验证使用独立 `sqlIntegrationTest` 任务，不纳入普通 `check/build`。
 已验证 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13：三库初始化、完整刷新、无效数据与版本拒绝、锁等待查询超时、缓存过期/恢复、TLS 证书/主机名校验，以及本地 Ed25519/HMAC 与 SQLite 防重放闭环。此列表是已测矩阵，不据此承诺所有历史版本或 SQL 核销兼容性。
 
@@ -844,6 +857,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 7. 同时面向私人互信集群和受控服主联盟，信任范围要可配置。
 8. 正版 Gateway → 离线 Backend Profile 透传为第一等场景；随后关注双正版、双离线、旧离线 UUID 兼容；Yggdrasil 再后，Floodgate 不作完工保证。
 9. 先完成可独立测试的 Core，再接平台。
+10. Registry 仅负责服务器目录，本地可信签发者属于独立的 `trust` 模块；Chorus 不自动分发批准关系或密钥。互信集群入门示例显式选择 HMAC，Ed25519 用于分离签发与验签权限。
 
 ### 7.2 未决定，不得擅自当作既定需求
 

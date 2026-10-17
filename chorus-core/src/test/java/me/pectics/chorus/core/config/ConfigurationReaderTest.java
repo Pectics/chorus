@@ -45,13 +45,15 @@ class ConfigurationReaderTest {
         var registry = ConfigurationReader.registry(root.get("registry"), directory);
         var replay = ConfigurationReader.replayGuard(root.get("replay-guard"), directory);
         var issuance = ConfigurationReader.issuance(root.get("issuance"));
-        var verification = ConfigurationReader.verification(root.get("verification"));
+        var verification = ConfigurationReader.verification(root.get("verification"), directory);
         assertThat(crypto.key()).isEqualTo(directory.resolve("keys/shared.key"));
         assertThat(registry.config().serversPath()).isEqualTo(directory.resolve("servers.yml"));
         assertThat(replay.local().path()).isEqualTo(directory.resolve("state/replay.db"));
         assertThat(replay.local().busyTimeout()).isEqualTo(Duration.ofMillis(500));
         assertThat(issuance.ttl()).isEqualTo(Duration.ofSeconds(12));
         assertThat(verification.maxLifetime()).isEqualTo(Duration.ofSeconds(20));
+        assertThat(verification.trustedIssuersPath())
+                .isEqualTo(directory.resolve("trusted-issuers.yml"));
         assertThat(ConfigurationReader.ticket(root.get("ticket")).compression())
                 .isEqualTo(TicketCompression.ZSTD);
         assertThat(crypto.key()).doesNotExist();

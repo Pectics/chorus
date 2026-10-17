@@ -5,7 +5,7 @@
  * sync: Keep all issuer keys under one enablement flag and identity policy.
  * @endcontext
  */
-package me.pectics.chorus.core.registry;
+package me.pectics.chorus.core.trust;
 
 import java.util.HashSet;
 import java.util.List;
