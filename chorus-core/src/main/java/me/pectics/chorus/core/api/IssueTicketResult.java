@@ -2,7 +2,7 @@ package me.pectics.chorus.core.api;
 
 import java.time.Instant;
 import java.util.Objects;
-import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.node.ServerNode;
 
 /** Immutable transfer output; payload bytes are copied both on construction and access. */
 public record IssueTicketResult(

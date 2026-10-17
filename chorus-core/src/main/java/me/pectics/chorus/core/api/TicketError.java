@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.1 and 3.8
- * related: chorus-core/src/main/java/me/pectics/chorus/core/api/DefaultChorusCoreEngine.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/engine/DefaultChorusCoreEngine.java
  * sync: Report Registry availability at the control-plane boundary, independently of local trust.
  * @endcontext
  */

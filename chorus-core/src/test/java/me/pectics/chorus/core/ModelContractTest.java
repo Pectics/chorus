@@ -9,12 +9,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
-import me.pectics.chorus.core.model.AuthType;
-import me.pectics.chorus.core.model.IdentityClaim;
-import me.pectics.chorus.core.model.ProfileProperty;
-import me.pectics.chorus.core.model.ReceiverLoginContext;
-import me.pectics.chorus.core.model.TicketClaims;
-import me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy;
+import me.pectics.chorus.core.identity.AuthenticationSourceType;
+import me.pectics.chorus.core.identity.BuiltinIdentityResolutionPolicy;
+import me.pectics.chorus.core.identity.IdentityClaim;
+import me.pectics.chorus.core.identity.ProfileProperty;
+import me.pectics.chorus.core.identity.ReceiverLoginContext;
+import me.pectics.chorus.core.ticket.TicketClaims;
 import org.junit.jupiter.api.Test;
 
 class ModelContractTest {
@@ -24,7 +24,7 @@ class ModelContractTest {
         var identity =
                 new IdentityClaim(
                         "Notch",
-                        AuthType.MOJANG,
+                        AuthenticationSourceType.MOJANG,
                         "mojang",
                         "account",
                         UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5"),
@@ -57,7 +57,7 @@ class ModelContractTest {
         var identity =
                 new IdentityClaim(
                         "Notch",
-                        AuthType.OFFLINE_RAW,
+                        AuthenticationSourceType.OFFLINE_RAW,
                         "local",
                         "Notch",
                         UUID.randomUUID(),

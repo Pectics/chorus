@@ -29,10 +29,10 @@ import java.util.Properties;
 import java.util.UUID;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.Engine;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.Sql;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.TlsMode;
-import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.node.ServerNode;
+import me.pectics.chorus.core.registry.RegistryConfiguration.Engine;
+import me.pectics.chorus.core.registry.RegistryConfiguration.Sql;
+import me.pectics.chorus.core.registry.RegistryConfiguration.TlsMode;
 
 /**
  * Pooled JDBC reads of versioned server node records. Opening loads credentials and may block; load

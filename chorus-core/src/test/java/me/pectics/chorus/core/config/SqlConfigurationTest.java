@@ -14,8 +14,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.Engine;
+import me.pectics.chorus.core.config.yaml.YamlConfigurationLoader;
+import me.pectics.chorus.core.config.yaml.YamlConfigurationLoader.ConfigurationDocumentType;
+import me.pectics.chorus.core.registry.RegistryConfiguration.Engine;
+import me.pectics.chorus.core.registry.config.RegistryConfigurationLoader;
+import me.pectics.chorus.core.ticket.config.TicketVerificationConfigurationLoader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -42,12 +45,12 @@ class SqlConfigurationTest {
     void allEnginesShareTheSameStructureAndKeepTrustLocal(Engine engine) throws Exception {
         var root = core(REGISTRY.replace("POSTGRESQL", engine.name()));
         var settings =
-                ConfigurationSectionConverter.registry(read(root).get("registry"), directory);
+                new RegistryConfigurationLoader().load(read(root).get("registry"), directory);
         assertThat(settings.sql().engine()).isEqualTo(engine);
         assertThat(settings.config()).isNull();
         assertThat(
-                        ConfigurationSectionConverter.verification(
-                                        root.get("verification"), directory)
+                        new TicketVerificationConfigurationLoader()
+                                .load(root.get("verification"), directory)
                                 .trustedIssuersPath())
                 .isEqualTo(directory.resolve("trusted-issuers.yml"));
         assertThat(settings.sql().passwordPath()).isEqualTo(directory.resolve("password.txt"));
@@ -93,8 +96,8 @@ class SqlConfigurationTest {
                         REGISTRY.replace("\"max-stale\":\"2m\"", "\"max-stale\":\"10s\""))) {
             assertThatThrownBy(
                             () ->
-                                    ConfigurationSectionConverter.registry(
-                                            read(core(invalid)).get("registry"), directory))
+                                    new RegistryConfigurationLoader()
+                                            .load(read(core(invalid)).get("registry"), directory))
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }
@@ -109,6 +112,6 @@ class SqlConfigurationTest {
     private tools.jackson.databind.JsonNode read(ObjectNode root) throws Exception {
         var file = directory.resolve("chorus.yml");
         Files.writeString(file, JsonMapper.shared().writeValueAsString(root));
-        return YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE);
+        return new YamlConfigurationLoader(ConfigurationDocumentType.CORE).load(file);
     }
 }

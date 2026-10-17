@@ -11,17 +11,17 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import me.pectics.chorus.core.crypto.Ed25519;
-import me.pectics.chorus.core.model.AuthType;
-import me.pectics.chorus.core.model.IdentityClaim;
-import me.pectics.chorus.core.model.ProfileProperty;
-import me.pectics.chorus.core.model.TicketClaims;
-import me.pectics.chorus.core.policy.IssuancePolicy;
-import me.pectics.chorus.core.policy.IssuerTrustPolicy;
-import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.identity.AuthenticationSourceType;
+import me.pectics.chorus.core.identity.IdentityClaim;
+import me.pectics.chorus.core.identity.ProfileProperty;
+import me.pectics.chorus.core.node.ServerNode;
 import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
-import me.pectics.chorus.core.registry.config.ConfigServerNodeRegistry;
+import me.pectics.chorus.core.registry.file.FileServerNodeRegistry;
+import me.pectics.chorus.core.ticket.TicketClaims;
+import me.pectics.chorus.core.ticket.TicketIssuancePolicy;
+import me.pectics.chorus.core.trust.IssuerTrustPolicy;
 import me.pectics.chorus.core.trust.TrustedIssuer;
-import me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore;
+import me.pectics.chorus.core.trust.file.FileTrustedIssuerStore;
 
 public final class TestSupport {
     public static final Instant NOW = Instant.parse("2026-10-16T00:00:00Z");
@@ -44,7 +44,7 @@ public final class TestSupport {
     public static IdentityClaim identity() {
         return new IdentityClaim(
                 "Notch",
-                AuthType.MOJANG,
+                AuthenticationSourceType.MOJANG,
                 "mojang",
                 UUID_MOJANG.toString(),
                 UUID_MOJANG,
@@ -66,20 +66,23 @@ public final class TestSupport {
 
     public static IssuerTrustPolicy policy() {
         return new IssuerTrustPolicy(
-                Set.of(AuthType.MOJANG, AuthType.OFFLINE_AUTH, AuthType.OFFLINE_RAW),
+                Set.of(
+                        AuthenticationSourceType.MOJANG,
+                        AuthenticationSourceType.OFFLINE_AUTH,
+                        AuthenticationSourceType.OFFLINE_RAW),
                 Set.of("mojang", "local"));
     }
 
-    public static IssuancePolicy issuancePolicy() {
-        return new IssuancePolicy(policy(), Set.of("backend", "next-backend"));
+    public static TicketIssuancePolicy issuancePolicy() {
+        return new TicketIssuancePolicy(policy(), Set.of("backend", "next-backend"));
     }
 
     public static ServerNode node(String id) {
         return new ServerNode(id, id, "localhost", 25565);
     }
 
-    public static ConfigServerNodeRegistry serverNodeRegistry() {
-        return new ConfigServerNodeRegistry(
+    public static FileServerNodeRegistry serverNodeRegistry() {
+        return new FileServerNodeRegistry(
                 new ServerNodeRegistrySnapshot(
                         Map.of(
                                 "gateway",
@@ -92,8 +95,8 @@ public final class TestSupport {
                         false));
     }
 
-    public static ConfigTrustedIssuerStore issuers(KeyPair pair) {
-        return new ConfigTrustedIssuerStore(
+    public static FileTrustedIssuerStore issuers(KeyPair pair) {
+        return new FileTrustedIssuerStore(
                 List.of(
                         new TrustedIssuer(
                                 "gateway",

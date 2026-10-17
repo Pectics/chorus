@@ -76,18 +76,27 @@ chorus/
 │
 ├── chorus-core/                         # 纯 Java 21；无 Minecraft 平台 API 依赖
 │   └── src/main/java/me/pectics/chorus/core/
-│       ├── api/                        # ChorusCoreEngine、输入输出与错误类型
-│       ├── config/                     # 配置读取、转换与启动装配
-│       │   └── model/                  # 与主配置七个顶级段对应的独立值类型
-│       ├── model/                      # ServerNode、IdentityClaim、TicketClaims 等
-│       ├── crypto/                     # Ed25519/HMAC 签发与验签能力、JWS 编解码
-│       ├── registry/                   # Registry 数据访问；当前实现 ServerNodeRegistry
-│       │   ├── config/                 # 配置文件提供的服务器节点注册表快照
-│       │   └── sql/                    # PostgreSQL / MySQL / MariaDB 服务器节点注册表
-│       ├── trust/                      # TrustedIssuer、TrustedIssuerStore：本地信任
-│       │   └── config/                 # 本机管理员批准的签发者与验签材料
-│       ├── policy/                     # UUID / Profile 身份解析策略
-│       └── replay/                     # ReplayGuard：仅负责 Ticket 防重放
+│       ├── api/                        # ChorusCoreEngine 与请求、结果、错误契约
+│       ├── bootstrap/                  # ChorusCoreBootstrap：跨业务启动装配与资源生命周期
+│       ├── engine/                     # DefaultChorusCoreEngine：签发和验证编排
+│       ├── config/                     # 加载接口与通用配置值解析
+│       │   └── yaml/                   # 有界 YAML 文档读取与 Schema 验证
+│       ├── node/                       # ServerNode、ServerNodeConfiguration、ServerNodeRole
+│       │   └── config/                 # 节点配置加载实现
+│       ├── identity/                   # 身份声明、认证来源与 Profile 解析策略
+│       ├── ticket/                     # Ticket 模型、编解码、签发和验证配置
+│       │   └── config/                 # Ticket 各配置段的加载实现
+│       ├── crypto/                     # 签发/验签能力、密钥与密码学配置
+│       │   └── config/                 # 密码学配置加载实现
+│       ├── registry/                   # Registry 契约与配置；当前实现 ServerNodeRegistry
+│       │   ├── config/                 # Registry 配置与节点文件的加载实现
+│       │   ├── file/                   # CONFIG 来源的服务器节点注册表
+│       │   └── sql/                    # PostgreSQL / MySQL / MariaDB 注册表适配
+│       ├── trust/                      # 本地信任契约、批准配置与信任策略
+│       │   ├── config/                 # 本地批准文件与信任策略的加载实现
+│       │   └── file/                   # 配置文件来源的可信签发者存储
+│       └── replay/                     # ReplayGuard 与防重放配置
+│           ├── config/                 # 防重放配置加载与已实现选项检查
 │           ├── local/                  # 本地持久化消费记录；当前使用 SQLite
 │           ├── registry/               # 复用 Registry 数据库的核销后端；尚未实现
 │           └── redis/                  # 仅预留未来扩展，不进入 MVP
@@ -104,6 +113,11 @@ chorus/
 ```
 
 **依赖方向**：平台模块 → `chorus-common` → `chorus-core`；平台模块也可直接依赖 `chorus-core`。核心不反向依赖平台 API。
+
+**业务包职责**：每个业务主包定义自己的顶层逻辑、契约和模型；该业务与配置、文件、SQL 等内容的交互及具体适配放在业务子包中。
+配置模型由消费它的业务定义，不集中存放在根 `config.model` 或 `model` 桶中；身份、Ticket、节点、信任的策略与值类型也随业务组织。
+根 `config` 提供 `ConfigurationLoader<T>`、`ConfigurationSectionLoader<T>` 和通用值解析，具体业务加载器实现这些接口并位于各自的 `config` 子包。
+`config` 子包统一表示配置解析职责；配置文件来源的运行时实现使用 `file` 子包与 `File` 类型前缀，避免把配置解析和 `CONFIG` 来源实现混为一层。
 
 `registry/sql` 和 `replay/registry` 表示逻辑适配器；如相关外部依赖较多，可在未来提取为独立发布的 adapter artifact，**不要求 MVP 先增加 Gradle 子模块**。
 
@@ -204,11 +218,7 @@ Core 对外使用 `TicketError.REGISTRY_UNAVAILABLE` 表示根 Registry 无法�
 `ServerNodeRegistrySnapshot` 明确表示服务器节点注册表的快照，不表示整个 Registry 的快照。
 
 ```java
-package me.pectics.chorus.core.registry;
-
-import java.time.Instant;
-import java.util.Map;
-import java.util.Optional;
+package me.pectics.chorus.core.node;
 
 public record ServerNode(
     String nodeId,             // 全域唯一；建议约定 namespace/nodeId
@@ -216,6 +226,15 @@ public record ServerNode(
     String host,
     int port
 ) {}
+```
+
+```java
+package me.pectics.chorus.core.registry;
+
+import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
+import me.pectics.chorus.core.node.ServerNode;
 
 public record ServerNodeRegistrySnapshot(
     Map<String, ServerNode> serverNodes,
@@ -242,9 +261,9 @@ public interface TrustedIssuerStore {
 }
 ```
 
-`TrustedIssuer` 内含不可变验签器列表（各自封装批准的密钥）、签发者整体启用状态，以及允许的 `AuthType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
+`TrustedIssuer` 内含不可变验签器列表（各自封装批准的密钥）、签发者整体启用状态，以及允许的 `AuthenticationSourceType` / `authProvider` 策略；未知签发者返回 `Optional.empty()`。
 本机批准某个签发者即表示允许其在这些身份权限内向本机提供 Ticket，不再配置接收端目标列表；验票仍须检查 `aud` 等于本机节点 ID。
-`registry.config.ConfigServerNodeRegistry` 与 `trust.config.ConfigTrustedIssuerStore` 分别持有不可变快照，各自原子替换；查询不执行 I/O，重载失败保留该模块原有快照。两者没有联合替换契约，也不自动监视或分发文件。
+`registry.file.FileServerNodeRegistry` 与 `trust.file.FileTrustedIssuerStore` 分别持有不可变快照，各自原子替换；查询不执行 I/O，重载失败保留该模块原有快照。两者没有联合替换契约，也不自动监视或分发文件。
 同一签发者可在轮换期间保留多把同算法的可信密钥，所有密钥共用签发者的启用状态与策略；撤销单把密钥时将其从列表移除。
 静态信任条目的 `algorithm` 为 `ED25519` 或 `HMAC_SHA256`，省略时沿用 `ED25519`；HMAC 必须显式批准。同一签发者的全部密钥绑定同一算法，不根据文件内容或票据 Header 自动转换类型。
 静态配置的 `key: path` 等价于 `keys: [path]`，两者至少提供一个；同时提供时只加载 `keys`，不合并或回退到 `key`。
@@ -273,14 +292,14 @@ SQL 读取在后台工作线程完成，完整服务器节点注册表快照通�
 心跳、共享信任表和 SQL 票据核销均不在本轮创建或实现。`REGISTRY` 防重放仍为 TODO 并由启动装配拒绝；
 未来实现核销时需独立定义原子消费及提交结果未知的语义，不把服务器节点注册表兼容性视为核销兼容性。
 
-### 3.4 `model`：玩家身份与 Ticket
+### 3.4 `identity` 与 `ticket`：玩家身份与 Ticket
 
 #### 认证来源及交付优先级
 
 ```java
-package me.pectics.chorus.core.model;
+package me.pectics.chorus.core.identity;
 
-public enum AuthType {
+public enum AuthenticationSourceType {
     MOJANG,
     OFFLINE_AUTH, // 由适配器确认上游密码插件实际完成了认证
     OFFLINE_RAW,  // 仅为未独立认证的离线名称声明
@@ -289,12 +308,12 @@ public enum AuthType {
 }
 ```
 
-删除 `AuthType(100/80/50/10)` 这类内置、容易被误用的绝对信任分值。身份来源的可信程度不是由枚举常量决定，而是由 Receiver 对具体签发者和提供者的策略决定。
+删除 `AuthenticationSourceType(100/80/50/10)` 这类内置、容易被误用的绝对信任分值。身份来源的可信程度不是由枚举常量决定，而是由 Receiver 对具体签发者和提供者的策略决定。
 
 #### 身份声明
 
 ```java
-package me.pectics.chorus.core.model;
+package me.pectics.chorus.core.identity;
 
 import java.util.List;
 import java.util.UUID;
@@ -307,7 +326,7 @@ public record ProfileProperty(
 
 public record IdentityClaim(
     String username,
-    AuthType authType,
+    AuthenticationSourceType authType,
     String authProvider,       // 规范化的提供者标识，如 "mojang"
     String providerSubject,    // 该来源内稳定的账户标识；与 GameProfile UUID 分离
     UUID sourceUuid,           // 首次可信入口确认的 Profile UUID
@@ -385,18 +404,18 @@ Cookie 或声明的解压长度超过上限拒绝为 `TICKET_TOO_LARGE`，不回
 
 **密钥选择**：按 `iss` 查找本地批准的签发者，拒绝禁用的签发者，校验 `alg` 与该签发者批准的算法完全一致，并依次尝试其批准密钥；不得将 Ed25519 公钥转换成 HMAC 密钥，不得尝试其他签发者的密钥或使用 JWT 中的任意 URL 下载密钥。新节点上传公钥不会自动扩大信任集合。
 
-### 3.5 `policy`：身份解析与联盟信任
+### 3.5 身份解析与联盟信任策略
 
 将两类逻辑严格分开：
 
-1. **`IssuerTrustPolicy`**：决定本机是否接受某签发节点断言的 `authType + authProvider` 身份；由 Receiver 配置裁定。Sender 使用独立的 `IssuancePolicy`，在身份权限之外增加允许签发的目标列表。
-2. **`IdentityResolutionPolicy`**：已授权后，决定本地 GameProfile UUID 与皮肤属性。
+1. **`trust.IssuerTrustPolicy`**：决定本机是否接受某签发节点断言的 `authType + authProvider` 身份；由 Receiver 配置裁定。Sender 使用独立的 `ticket.TicketIssuancePolicy`，在身份权限之外增加允许签发的目标列表。
+2. **`identity.IdentityResolutionPolicy`**：已授权后，决定本地 GameProfile UUID 与皮肤属性。
 
 ```java
-package me.pectics.chorus.core.policy;
+package me.pectics.chorus.core.identity;
 
-import me.pectics.chorus.core.model.IdentityClaim;
-import me.pectics.chorus.core.model.ProfileProperty;
+import me.pectics.chorus.core.identity.IdentityClaim;
+import me.pectics.chorus.core.identity.ProfileProperty;
 import java.util.List;
 import java.util.UUID;
 
@@ -413,8 +432,8 @@ public interface IdentityResolutionPolicy {
 ```
 
 内置枚举 `BuiltinIdentityResolutionPolicy` 实现 `IdentityResolutionPolicy`；
-`VerificationConfiguration.identityResolutionPolicy()` 提供身份解析策略，
-`IssuancePolicy.identityAssertionPolicy()` 提供身份声明授权策略，两者不混用。
+`TicketVerificationConfiguration.identityResolutionPolicy()` 提供身份解析策略，
+`TicketIssuancePolicy.identityAssertionPolicy()` 提供身份声明授权策略，两者不混用。
 
 | 策略 | 用途 | 关键语义 |
 |---|---|---|
@@ -515,11 +534,11 @@ Ed25519 继续加载管理员提供的 PKCS#8 私钥与 X.509 SPKI 公钥（DER 
 ```java
 package me.pectics.chorus.core.api;
 
-import me.pectics.chorus.core.model.AuthenticatedIdentity;
-import me.pectics.chorus.core.model.ReceiverLoginContext;
-import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.identity.AuthenticatedIdentity;
+import me.pectics.chorus.core.identity.ReceiverLoginContext;
+import me.pectics.chorus.core.node.ServerNode;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
-import me.pectics.chorus.core.policy.ResolvedPlayerProfile;
+import me.pectics.chorus.core.identity.ResolvedPlayerProfile;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
@@ -644,7 +663,7 @@ operator-a/jp-backend-01:
   display-name: Japan Backend
 ```
 
-`trusted-issuers.yml` 直接以签发者 ID 为根键，表示本机批准的算法、验签密钥与身份来源权限；`allowed-auth-schemes` 使用现有 `AuthType` 的认证来源名称，不改变 Ticket 身份字段。
+`trusted-issuers.yml` 直接以签发者 ID 为根键，表示本机批准的算法、验签密钥与身份来源权限；`allowed-auth-schemes` 使用现有 `AuthenticationSourceType` 的认证来源名称，不改变 Ticket 身份字段。
 
 ```yaml
 operator-a/us-gateway-01:
@@ -681,7 +700,7 @@ operator-b/peer-01:
 `ticket.compression` 可省略，默认 `ZSTD`；Schema 的 `default` 为契约说明，启动装配与无压缩参数的 Java 构造器落实相同默认值。
 旧版接收端仅支持 `NONE`；滚动升级时先升级接收端，发送端在接收端升级前显式保留 `NONE`。
 `ticket.max-payload-bytes` 限制包含 JWS 编码、签名及压缩帧的最终 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
-`issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `BuiltinIdentityResolutionPolicy` / `IdentityResolutionPolicy` 表达。
+`issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `identity` 包的 `BuiltinIdentityResolutionPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时服务器节点注册表使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空服务器节点注册表或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
@@ -702,23 +721,38 @@ MySQL 的自定义 CA 转换为连接专用临时 PKCS12；MariaDB 未指定 CA 
 
 `SqlServerNodeRegistry` 通过 `ServerNodeStore` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
 启动首次读取可阻塞，热路径始终只读内存。关闭会停止定时器、等待已接收的工作并关闭存储；完成回调内关闭不会等待自身。
-`CoreBootstrap.open` 的 SQL 装配通过内部 `ResourceOwningChorusCoreEngine` 管理已创建的 Engine 与 SQL 服务器节点注册表资源，
+`ChorusCoreBootstrap.open` 的 SQL 装配通过内部 `BootstrapManagedChorusCoreEngine` 管理已创建的 Engine 与 SQL 服务器节点注册表资源，
 连接池与调度器随返回 Engine 关闭，装配失败也释放已创建资源。
-直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。`CoreBootstrap.open` 不自动重载本地信任，文件变更通过重新装配 Engine 生效。
-直接装配者可用 `loadServerNodeRegistry / reloadServerNodeRegistry` 与 `loadTrustedIssuers / reloadTrustedIssuers` 分别加载和更新所注入的对象，均为阻塞文件 I/O，须在平台事件线程之外调用；旧联合入口移除。
+直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。`ChorusCoreBootstrap.open` 不自动重载本地信任，文件变更通过重新装配 Engine 生效。
+直接装配者通过 `registry.config.ConfigServerNodeRegistryLoader.loadRegistry / reloadRegistry` 独立管理节点注册表，
+通过 `trust.config.ConfigTrustedIssuerLoader.loadStore / reloadStore` 独立管理本地信任。
+这些入口执行阻塞文件 I/O，须在平台事件线程之外调用；加载或重载完整校验后才发布，失败保留原有快照。
+`bootstrap.ChorusCoreBootstrap` 只负责跨业务启动装配；默认业务编排实现位于 `engine.DefaultChorusCoreEngine`，`api` 只保留调用契约。
 
-Java 配置按主文件的七个顶级段独立组织在 `config.model`：
-`NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`、
-`CryptoConfiguration`、`RegistryConfiguration` 与 `ReplayGuardConfiguration`；`NodeRole` 随节点配置放在同一包。
-不再使用平铺的 `CoreConfiguration`，也不将四组或七组重新聚合成根配置对象。各消费者只接收所需的配置组。
-签发 TTL 与签发权限同属 `IssuanceConfiguration`；密码学配置用封闭的 Ed25519 / HMAC-SHA256 两种路径表示，
-接收专用角色可不提供本地签发路径。Registry 的 `config / sql / cache` 与防重放的 `local` 参数作为各自所属组的嵌套值类型。
-信任文件路径属于 `VerificationConfiguration`；直接注入信任对象时可使用不带路径的构造器，配置模型不会加载文件。
-配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、服务器节点注册表快照或防重放资源。
+主配置仍有七个独立顶级段；模型与加载实现由各业务定义：
 
-`YamlConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，使用 `ConfigurationDocumentType` 选择文档格式；
-`ConfigurationSectionConverter` 负责配置段的类型转换，
-`ServerNodeRegistryLoader` 从服务器节点列表配置文件构造注册表快照，`TrustedIssuerLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
+| 配置段 | 业务模型 | 配置加载实现 |
+|---|---|---|
+| `node` | `node.ServerNodeConfiguration`，角色为 `node.ServerNodeRole` | `node.config.ServerNodeConfigurationLoader` |
+| `ticket` | `ticket.TicketConfiguration` | `ticket.config.TicketConfigurationLoader` |
+| `issuance` | `ticket.TicketIssuanceConfiguration` | `ticket.config.TicketIssuanceConfigurationLoader` |
+| `verification` | `ticket.TicketVerificationConfiguration` | `ticket.config.TicketVerificationConfigurationLoader` |
+| `crypto` | `crypto.TicketCryptoConfiguration` | `crypto.config.TicketCryptoConfigurationLoader` |
+| `registry` | `registry.RegistryConfiguration` | `registry.config.RegistryConfigurationLoader` |
+| `replay-guard` | `replay.ReplayGuardConfiguration` | `replay.config.ReplayGuardConfigurationLoader` |
+
+不重新聚合成根配置对象。各消费者只接收所需的配置组；值类型不可变，不执行文件或数据库 I/O，也不持有运行资源。
+签发 TTL 与签发权限同属 `TicketIssuanceConfiguration`；密码学配置使用封闭的 Ed25519 / HMAC-SHA256 两种路径表示。
+Registry 的 `config / sql / cache` 与防重放的 `local` 参数是各自所属模型的嵌套值类型。
+信任文件路径属于 `TicketVerificationConfiguration`；直接注入信任对象时可使用不带路径的构造器。
+
+`config.ConfigurationLoader<T>` 约定完整文件的阻塞加载，`config.ConfigurationSectionLoader<T>` 约定已通过 Schema 验证的配置段到业务模型的无 I/O 转换。
+通用 YAML 实现为 `config.yaml.YamlConfigurationLoader`，由 `ConfigurationDocumentType` 选择完整文件 Schema；通用值转换由 `config.ConfigurationValueParser` 提供。
+各业务的 `config` 实现只负责本业务的值转换，不重复维护 Schema 字段规则。
+`registry.config.ConfigServerNodeRegistryLoader` 实现文件加载接口，从 `servers.yml` 构造不可变注册表快照。
+`trust.config.ConfigTrustedIssuerLoader` 实现文件加载接口，先返回不可变的 `trust.TrustedIssuerConfiguration` 列表，
+本地签发材料装配完成后才加载其批准密钥；`trust.config.IssuerTrustPolicyConfigurationLoader` 统一转换签发权限与可信签发者共用的身份权限。
+`ChorusCoreBootstrap` 组合独立加载器，负责跨组引用检查、密钥装配与持久资源打开顺序。
 完整装配入口使用七组独立参数；Engine 分别接收 `node / ticket / issuance / verification`，并注入已创建的运行资源。
 `issuance.ttl <= verification.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
 本地防重放设置不另设时钟容差，装配时使用同一份 `verification.clock-skew`。

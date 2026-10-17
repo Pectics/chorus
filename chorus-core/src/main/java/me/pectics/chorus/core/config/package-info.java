@@ -1,2 +1,2 @@
-/** Bounded document loading, typed conversion, and startup resource assembly. */
+/** Shared configuration loading contracts and schema-approved value parsing. */
 package me.pectics.chorus.core.config;

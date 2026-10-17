@@ -11,11 +11,11 @@ import java.util.Map;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.crypto.Ed25519;
-import me.pectics.chorus.core.crypto.TicketCodec;
-import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.crypto.TicketSigner;
+import me.pectics.chorus.core.ticket.TicketCodec;
+import me.pectics.chorus.core.ticket.TicketCompression;
 import me.pectics.chorus.core.trust.TrustedIssuer;
-import me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore;
+import me.pectics.chorus.core.trust.file.FileTrustedIssuerStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -24,7 +24,7 @@ class TicketCodecTest {
     private final KeyPair pair = TestSupport.keyPair();
     private final TicketSigner key = TestSupport.signer(pair);
     private final TicketCodec codec = new TicketCodec(5120, 2048, TicketCompression.NONE);
-    private final ConfigTrustedIssuerStore issuers = TestSupport.issuers(pair);
+    private final FileTrustedIssuerStore issuers = TestSupport.issuers(pair);
 
     private String part(int index) {
         byte[] bytes = codec.encode(TestSupport.claims(), key);
@@ -75,17 +75,17 @@ class TicketCodecTest {
     @Test
     void propertyLimitCountsUtf8BytesAndEmptySignaturesAreInvalid() {
         var identity =
-                new me.pectics.chorus.core.model.IdentityClaim(
+                new me.pectics.chorus.core.identity.IdentityClaim(
                         "Notch",
-                        me.pectics.chorus.core.model.AuthType.MOJANG,
+                        me.pectics.chorus.core.identity.AuthenticationSourceType.MOJANG,
                         "mojang",
                         "account",
                         TestSupport.UUID_MOJANG,
                         List.of(
-                                new me.pectics.chorus.core.model.ProfileProperty(
+                                new me.pectics.chorus.core.identity.ProfileProperty(
                                         "textures", "皮肤", null)));
         var claims =
-                new me.pectics.chorus.core.model.TicketClaims(
+                new me.pectics.chorus.core.ticket.TicketClaims(
                         1,
                         "bytes",
                         "gateway",
@@ -101,7 +101,7 @@ class TicketCodecTest {
                 .isInstanceOf(TicketRejectedException.class);
         assertThatThrownBy(
                         () ->
-                                new me.pectics.chorus.core.model.ProfileProperty(
+                                new me.pectics.chorus.core.identity.ProfileProperty(
                                         "textures", "skin", ""))
                 .isInstanceOf(IllegalArgumentException.class);
     }

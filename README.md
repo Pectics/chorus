@@ -70,7 +70,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 
 ## Core 独立使用
 
-入口为 `CoreBootstrap.open(Path)`（默认 UTC 时钟）或可注入 `Clock` 的重载，返回 `ChorusCoreEngine`。
+入口为 `bootstrap.ChorusCoreBootstrap.open(Path)`（默认 UTC 时钟）或可注入 `Clock` 的重载，返回 `ChorusCoreEngine`。
 初始化会读取 YAML、加载本地密钥，并按配置连接 SQL、打开本地 SQLite，必须在启动线程上执行；签发和验证返回 `CompletionStage`。
 预期拒绝通过 `TicketRejectedException.code()` 区分，平台 I/O 线程不能 `.join()`。
 关闭装配返回的 Engine 会释放其 SQL 连接池、刷新调度器和 ReplayGuard，并等待已接收工作；若在本地工作线程的完成回调内关闭，则发起停止后返回，并在已有任务结束后释放存储。
@@ -78,16 +78,18 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 防重放 API 位于 `me.pectics.chorus.core.replay`；本地实现为 `replay.local.LocalReplayGuard`，当前使用 SQLite。
 `local / registry / redis` 子包按核销后端职责命名，分别对应配置枚举 `LOCAL / REGISTRY / REDIS`。
 
-Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置的 `node`、`ticket`、`issuance`、
-`verification`、`crypto`、`registry`、`replay-guard` 七组分别组织，没有统一的根配置对象。
-`CoreBootstrap.open` 的文件入口保持不变；直接构造 `DefaultChorusCoreEngine` 时，分别传入
-`NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`，
-随后传入服务器节点注册表、独立的本地签发者信任对象、签发器、防重放对象与时钟。仅接收角色的签发配置和签发器可为 `null`；
-签发角色的 TTL 仍不得超过验票最大寿命。
-原有平铺的 `CoreConfiguration` 已移除，`NodeRole` 迁入 `config.model`，Java 调用方需更新构造方式与 imports。
-配置模型不执行 I/O；密钥、Registry 与防重放配置由启动装配层消费。
-内置身份解析枚举为 `policy.BuiltinIdentityResolutionPolicy`，通过 `VerificationConfiguration.identityResolutionPolicy()` 获取；
-签发权限中的 `IssuancePolicy.identityAssertionPolicy()` 表示允许声明的身份来源，与本地 Profile 解析分工独立。
+配置模型由各业务自己定义：节点位于 `node`，Ticket 编码、签发与验证位于 `ticket`，
+密码学位于 `crypto`，Registry 位于 `registry`，防重放位于 `replay`，本地批准配置位于 `trust`。
+每个业务的 `config` 子包实现主 `config` 中的文件/配置段加载接口；通用 YAML 读取实现位于 `config.yaml`。
+配置文件来源的运行时实现位于 `registry.file` 和 `trust.file`，与配置解析职责分开。
+
+直接构造 `engine.DefaultChorusCoreEngine` 时，分别传入
+`node.ServerNodeConfiguration`、`ticket.TicketConfiguration`、`ticket.TicketIssuanceConfiguration`、`ticket.TicketVerificationConfiguration`，
+随后传入服务器节点注册表、独立的本地信任对象、签发器、防重放对象与时钟。仅接收角色的签发配置和签发器可为 `null`；
+签发角色的 TTL 不得超过验票最大寿命。配置模型不执行 I/O，运行资源由启动装配层创建。
+Java 调用方需更新上述包路径与完整类型名；节点角色为 `node.ServerNodeRole`，身份来源为 `identity.AuthenticationSourceType`。
+内置身份解析枚举为 `identity.BuiltinIdentityResolutionPolicy`，通过 `TicketVerificationConfiguration.identityResolutionPolicy()` 获取；
+签发权限中的 `TicketIssuancePolicy.identityAssertionPolicy()` 表示允许声明的身份来源，与本地 Profile 解析分工独立。
 
 Registry 是可扩展的根注册表，当前仅实现服务器节点注册表 `ServerNodeRegistry`。
 Server List 是玩家展示或配置数据的表述；运行时通过同一注册表接口访问服务器节点列表配置文件或共享数据库。
@@ -190,13 +192,11 @@ issuance:
 `LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
 
 主配置内的路径相对 `chorus.yml`；服务器节点列表配置文件位于 `registry.config.servers-path`，信任文件为 `verification.trusted-issuers-path`，批准的密钥路径相对信任文件。
-`CoreBootstrap.loadServerNodeRegistry` / `reloadServerNodeRegistry` 加载和替换 `registry.config.ConfigServerNodeRegistry` 的服务器节点注册表快照；
-`loadTrustedIssuers` / `reloadTrustedIssuers` 独立加载和替换 `trust.config.ConfigTrustedIssuerStore` 的本地批准记录。
+`registry.config.ConfigServerNodeRegistryLoader.loadRegistry` / `reloadRegistry` 加载和替换 `registry.file.FileServerNodeRegistry` 的服务器节点注册表快照；
+`trust.config.ConfigTrustedIssuerLoader.loadStore` / `reloadStore` 独立加载和替换 `trust.file.FileTrustedIssuerStore` 的本地批准记录。
 重载各自完整校验后原子替换，失败保留该对象原快照；这些文件 I/O 入口须在平台事件线程之外调用，不自动监视文件。
-直接装配 Engine 时可重载所注入的对象；`CoreBootstrap.open` 创建的本地信任变更通过重新打开 Engine 生效。
+直接装配 Engine 时可重载所注入的对象；`ChorusCoreBootstrap.open` 创建的本地信任变更通过重新打开 Engine 生效。
 迁移旧主配置时，把 `registry.config.issuers-path` 移到 `verification.trusted-issuers-path`；旧位置由 Schema 拒绝，SQL 模式可删除整个 `registry.config`。
-Java 调用方把 `registry.TrustedIssuer / TrustedIssuerRegistry` 改为 `trust.TrustedIssuer / TrustedIssuerStore`；
-原 `ConfigRegistries` 和 `loadRegistries / reloadRegistries` 联合入口已移除，改为分别管理服务器节点注册表与信任。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
 主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时服务器显示名来自所选服务器节点注册表；`CONFIG` 未配置时使用节点 ID，SQL 表要求显式显示名。
@@ -325,7 +325,7 @@ SQL 与缓存时长须为整毫秒且不超过 2147483647ms；驱动只支持秒
 
 Java 的 `SqlServerNodeRegistry.refresh()` 可显式异步刷新，返回 `CompletionStage`；并发调用共用当前刷新尝试。
 失败异常不携带驱动原始诊断，防止输出凭据；`snapshot().stale()` 在刷新失败或超过刷新间隔时为真，超过 `max-stale` 则抛出不可用异常。
-直接构造 `DefaultChorusCoreEngine` 时，SQL 协作者仍由调用方关闭；通过 `CoreBootstrap.open` 创建时自动随 Engine 关闭。
+直接构造 `DefaultChorusCoreEngine` 时，SQL 协作者仍由调用方关闭；通过 `ChorusCoreBootstrap.open` 创建时自动随 Engine 关闭。
 
 独立验证命令是 `./gradlew :chorus-core:sqlIntegrationTest`，使用测试专用 CA 与仅含 `localhost` 名称的证书，要求本地 Docker。
 测试覆盖三库初始化、大小写 ID、增删改刷新、错误结构版本、查询锁超时、TLS 成功/不可信 CA/主机名不匹配，

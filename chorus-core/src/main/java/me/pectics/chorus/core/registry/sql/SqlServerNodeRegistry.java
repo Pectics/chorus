@@ -21,8 +21,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.Cache;
-import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.node.ServerNode;
+import me.pectics.chorus.core.registry.RegistryConfiguration.Cache;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
 import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 

@@ -21,8 +21,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.Cache;
-import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.node.ServerNode;
+import me.pectics.chorus.core.registry.RegistryConfiguration.Cache;
 import org.junit.jupiter.api.Test;
 
 class SqlServerNodeRegistryTest {

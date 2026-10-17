@@ -1,2 +1,2 @@
-/** Server node registry backed by an administrator-managed node list configuration file. */
+/** Configuration loading for Registry settings and server node snapshots. */
 package me.pectics.chorus.core.registry.config;

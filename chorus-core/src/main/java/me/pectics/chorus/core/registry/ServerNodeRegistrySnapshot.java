@@ -10,6 +10,7 @@ package me.pectics.chorus.core.registry;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import me.pectics.chorus.core.node.ServerNode;
 
 /**
  * Immutable approved server node registry snapshot. Stale is informational; the provider enforces

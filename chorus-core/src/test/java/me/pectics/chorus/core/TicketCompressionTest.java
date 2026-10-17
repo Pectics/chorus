@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.4 and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/crypto/TicketCompression.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/ticket/TicketCompression.java
  * sync: Exercise framing compatibility, bounded decoding, and signature checks for every encoding.
  * @endcontext
  */
@@ -22,14 +22,14 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
-import me.pectics.chorus.core.config.model.TicketConfiguration;
 import me.pectics.chorus.core.crypto.HmacSha256;
-import me.pectics.chorus.core.crypto.TicketCodec;
-import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.crypto.TicketSigner;
-import me.pectics.chorus.core.model.IdentityClaim;
-import me.pectics.chorus.core.model.ProfileProperty;
-import me.pectics.chorus.core.model.TicketClaims;
+import me.pectics.chorus.core.identity.IdentityClaim;
+import me.pectics.chorus.core.identity.ProfileProperty;
+import me.pectics.chorus.core.ticket.TicketClaims;
+import me.pectics.chorus.core.ticket.TicketCodec;
+import me.pectics.chorus.core.ticket.TicketCompression;
+import me.pectics.chorus.core.ticket.TicketConfiguration;
 import me.pectics.chorus.core.trust.TrustedIssuer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -39,7 +39,7 @@ class TicketCompressionTest {
     private final java.security.KeyPair pair = TestSupport.keyPair();
     private final TicketSigner signer = TestSupport.signer(pair);
     private final TicketCodec plain = new TicketCodec(5120, 5120, TicketCompression.NONE);
-    private final me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore issuers =
+    private final me.pectics.chorus.core.trust.file.FileTrustedIssuerStore issuers =
             TestSupport.issuers(pair);
 
     private void rejects(byte[] payload, TicketError error) {

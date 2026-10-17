@@ -1,0 +1,50 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, sections 3.6, 3.8, and 3.9
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/local/LocalReplayGuard.java
+ * sync: Use this clock skew for both ticket verification and durable replay retention.
+ * @endcontext
+ */
+package me.pectics.chorus.core.ticket;
+
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Objects;
+import me.pectics.chorus.core.identity.BuiltinIdentityResolutionPolicy;
+
+/**
+ * Receiver rules and local trust document path, resolved relative to the main configuration. The
+ * path may be null when callers inject an existing trust store directly. Maximum lifetime is
+ * positive and skew is nonnegative, both in whole seconds. Invalid values throw
+ * IllegalArgumentException, null required rules throw NullPointerException, and a lifetime plus
+ * skew that cannot be represented in milliseconds throws ArithmeticException.
+ */
+public record TicketVerificationConfiguration(
+        Duration maxLifetime,
+        Duration clockSkew,
+        boolean enforceTransferIntent,
+        BuiltinIdentityResolutionPolicy identityResolutionPolicy,
+        Path trustedIssuersPath) {
+    /** Direct Engine assembly injects approvals instead of loading a trust document. */
+    public TicketVerificationConfiguration(
+            Duration maxLifetime,
+            Duration clockSkew,
+            boolean enforceTransferIntent,
+            BuiltinIdentityResolutionPolicy identityResolutionPolicy) {
+        this(maxLifetime, clockSkew, enforceTransferIntent, identityResolutionPolicy, null);
+    }
+
+    public TicketVerificationConfiguration {
+        Objects.requireNonNull(maxLifetime, "maxLifetime");
+        Objects.requireNonNull(clockSkew, "clockSkew");
+        Objects.requireNonNull(identityResolutionPolicy, "identityResolutionPolicy");
+        if (maxLifetime.isZero()
+                || maxLifetime.isNegative()
+                || maxLifetime.getNano() != 0
+                || clockSkew.isNegative()
+                || clockSkew.getNano() != 0) {
+            throw new IllegalArgumentException("Invalid verification time limits");
+        }
+        maxLifetime.plus(clockSkew).toMillis();
+    }
+}

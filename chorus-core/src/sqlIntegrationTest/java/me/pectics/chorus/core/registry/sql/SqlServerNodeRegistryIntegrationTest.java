@@ -29,10 +29,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import me.pectics.chorus.core.TestSupport;
 import me.pectics.chorus.core.api.IssueTicketRequest;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
-import me.pectics.chorus.core.config.CoreBootstrap;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.*;
-import me.pectics.chorus.core.model.AuthenticatedIdentity;
-import me.pectics.chorus.core.model.ReceiverLoginContext;
+import me.pectics.chorus.core.bootstrap.ChorusCoreBootstrap;
+import me.pectics.chorus.core.identity.AuthenticatedIdentity;
+import me.pectics.chorus.core.identity.ReceiverLoginContext;
+import me.pectics.chorus.core.registry.RegistryConfiguration.*;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -192,8 +192,8 @@ class SqlServerNodeRegistryIntegrationTest {
                             .formatted(algorithm, key));
             Path senderFile = write("gateway.yml", configuration(engine, port, algorithm, true));
             Path receiverFile = write("backend.yml", configuration(engine, port, algorithm, false));
-            try (var sender = CoreBootstrap.open(senderFile);
-                    var receiver = CoreBootstrap.open(receiverFile)) {
+            try (var sender = ChorusCoreBootstrap.open(senderFile);
+                    var receiver = ChorusCoreBootstrap.open(receiverFile)) {
                 var ticket =
                         sender.issueTicket(
                                         new IssueTicketRequest(

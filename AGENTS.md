@@ -109,6 +109,10 @@ feat(core): Add the verification pipeline
   文件系统目录继续使用 `directory`；具体注册表、根 Registry 与展示视图的职责边界不得混用。
 - 类型名与公开成员名优先完整表达领域对象、作用范围和职责，不因词数或长度省略必要语义；例如服务器节点注册表快照使用 `ServerNodeRegistrySnapshot`。
   当前先保证语义准确，不为缩短名称牺牲职责边界；重命名时同步文件名、调用处、测试、文档、文件头引用及静态分析配置。
+- 分包遵循架构 §2.1、§3.9：业务主包定义自己的顶层逻辑、契约和模型；配置解析、文件来源、SQL 等交互与适配实现放在该业务的子包。
+  根 `config` 提供通用加载接口和值解析，各业务的 `config` 子包实现接口；配置模型随业务主包，不建立集中的 `config.model` 或 `model` 桶。
+  `config` 统一表示配置解析，配置文件来源实现使用 `file`，类型名也对应使用 `File` 前缀；发现现有包名与新职责冲突时先指出具体语义冲突，与用户讨论后再确定名称。
+  跨业务启动装配位于 `bootstrap.ChorusCoreBootstrap`，默认引擎实现位于 `engine`，`api` 仅保留调用契约。
 - Java 21，优先 `record` / `sealed interface` / `switch`，禁止 Lombok。
 - 密码学范围固定为 Ed25519 与 HMAC-SHA256；按架构 §3.7 的实际能力组织实现，不为其他算法增加扩展层。
 - 依赖方向为平台 → common → core；Core 不持有 `Player`、`GameProfile`、Netty `Channel` 等平台对象。

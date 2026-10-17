@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.7 and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/config/CoreBootstrap.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/bootstrap/ChorusCoreBootstrap.java
  * sync: Generate only local signing secrets; trust loading must never create missing keys.
  * @endcontext
  */

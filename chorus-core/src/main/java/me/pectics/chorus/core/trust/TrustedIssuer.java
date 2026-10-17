@@ -13,7 +13,6 @@ import java.util.Objects;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.crypto.TicketVerifier;
-import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 
 /**
  * Local receiver approval of an issuer under one policy. Copies the verifier list and rejects

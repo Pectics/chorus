@@ -17,11 +17,11 @@ import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SpecificationVersion;
 import java.math.BigDecimal;
 import java.util.List;
-import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
-import me.pectics.chorus.core.config.model.NodeRole;
-import me.pectics.chorus.core.config.model.RegistryConfiguration.Provider;
+import me.pectics.chorus.core.config.yaml.YamlConfigurationLoader.ConfigurationDocumentType;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
-import me.pectics.chorus.core.crypto.TicketCompression;
+import me.pectics.chorus.core.node.ServerNodeRole;
+import me.pectics.chorus.core.registry.RegistryConfiguration.Provider;
+import me.pectics.chorus.core.ticket.TicketCompression;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -86,12 +86,12 @@ class ConfigurationSchemaTest {
     }
 
     @ParameterizedTest
-    @EnumSource(NodeRole.class)
-    void rolesControlRequiredSectionsWithinTheMainSchema(NodeRole role) {
+    @EnumSource(ServerNodeRole.class)
+    void rolesControlRequiredSectionsWithinTheMainSchema(ServerNodeRole role) {
         var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("node")).put("role", role.name());
         assertThat(contract(ConfigurationDocumentType.CORE).validate(core).isEmpty())
-                .isEqualTo(role == NodeRole.BACKEND);
+                .isEqualTo(role == ServerNodeRole.BACKEND);
         ((ObjectNode) core.get("crypto"))
                 .put("private-key", "private.der")
                 .put("public-key", "public.der");
@@ -105,22 +105,22 @@ class ConfigurationSchemaTest {
         var withoutReplay = core.deepCopy();
         withoutReplay.remove("replay-guard");
         assertThat(contract(ConfigurationDocumentType.CORE).validate(withoutReplay).isEmpty())
-                .isEqualTo(role == NodeRole.GATEWAY);
+                .isEqualTo(role == ServerNodeRole.GATEWAY);
         var withoutIssuance = core.deepCopy();
         withoutIssuance.remove("issuance");
         assertThat(contract(ConfigurationDocumentType.CORE).validate(withoutIssuance).isEmpty())
-                .isEqualTo(role == NodeRole.BACKEND);
+                .isEqualTo(role == ServerNodeRole.BACKEND);
         for (String field : List.of("private-key", "public-key")) {
             var withoutKey = core.deepCopy();
             ((ObjectNode) withoutKey.get("crypto")).remove(field);
             assertThat(contract(ConfigurationDocumentType.CORE).validate(withoutKey).isEmpty())
-                    .isEqualTo(role == NodeRole.BACKEND);
+                    .isEqualTo(role == ServerNodeRole.BACKEND);
         }
     }
 
     @ParameterizedTest
-    @EnumSource(NodeRole.class)
-    void hmacSendersRequireOneSharedKeyWithoutPublicOrPrivateKeyFields(NodeRole role) {
+    @EnumSource(ServerNodeRole.class)
+    void hmacSendersRequireOneSharedKeyWithoutPublicOrPrivateKeyFields(ServerNodeRole role) {
         var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("node")).put("role", role.name());
         var crypto = (ObjectNode) core.get("crypto");
@@ -134,7 +134,7 @@ class ConfigurationSchemaTest {
         assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
         crypto.remove("key");
         assertThat(contract(ConfigurationDocumentType.CORE).validate(core).isEmpty())
-                .isEqualTo(role == NodeRole.BACKEND);
+                .isEqualTo(role == ServerNodeRole.BACKEND);
         crypto.put("key", "keys/shared.key");
         for (String field : List.of("private-key", "public-key")) {
             crypto.put(field, "legacy.der");

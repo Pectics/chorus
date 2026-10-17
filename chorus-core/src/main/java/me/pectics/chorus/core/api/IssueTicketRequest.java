@@ -2,7 +2,7 @@ package me.pectics.chorus.core.api;
 
 import java.util.Map;
 import java.util.Objects;
-import me.pectics.chorus.core.model.AuthenticatedIdentity;
+import me.pectics.chorus.core.identity.AuthenticatedIdentity;
 
 /** Caller must supply an authenticated session; Phase 1 requires empty extensions. */
 public record IssueTicketRequest(

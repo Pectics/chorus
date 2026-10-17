@@ -8,6 +8,7 @@
 package me.pectics.chorus.core.registry;
 
 import java.util.Optional;
+import me.pectics.chorus.core.node.ServerNode;
 
 /** Thread-safe server node registry. Reads must not block or perform I/O. */
 public interface ServerNodeRegistry {

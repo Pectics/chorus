@@ -6,7 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
+import me.pectics.chorus.core.config.yaml.YamlConfigurationLoader;
+import me.pectics.chorus.core.config.yaml.YamlConfigurationLoader.ConfigurationDocumentType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -21,7 +22,10 @@ class YamlConfigurationLoaderTest {
                 Files.writeString(
                         directory.resolve("chorus.yml"),
                         ConfigurationSchemaTest.CORE.replace("ED25519", "secret-value"));
-        assertThatThrownBy(() -> YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE))
+        assertThatThrownBy(
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                        .load(file))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(file.toString())
                 .hasMessageContaining("/crypto/algorithm (enum)")
@@ -35,13 +39,17 @@ class YamlConfigurationLoaderTest {
                         directory.resolve("servers.yml"),
                         ConfigurationSchemaTest.CORE.replace("4096", "4096.0"));
         assertThat(
-                        YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE)
+                        new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                .load(file)
                                 .at("/ticket/max-payload-bytes")
                                 .asInt())
                 .isEqualTo(4096);
         Files.writeString(
                 file, ConfigurationSchemaTest.CORE.replace("4096", "4096.0000000000000000001"));
-        assertThatThrownBy(() -> YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE))
+        assertThatThrownBy(
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                        .load(file))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("/ticket/max-payload-bytes (type)");
     }
@@ -62,7 +70,9 @@ class YamlConfigurationLoaderTest {
     void rejectsUnsafeYamlAndNonJsonTypes(String yaml) throws Exception {
         Path file = Files.writeString(directory.resolve("servers.yml"), yaml);
         assertThatThrownBy(
-                        () -> YamlConfigurationLoader.read(file, ConfigurationDocumentType.SERVERS))
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.SERVERS)
+                                        .load(file))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -70,15 +80,24 @@ class YamlConfigurationLoaderTest {
     void preservesByteDepthAndUtf8Limits() throws Exception {
         Path file = directory.resolve("chorus.yml");
         Files.writeString(file, "#" + "x".repeat(1_048_576));
-        assertThatThrownBy(() -> YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE))
+        assertThatThrownBy(
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                        .load(file))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("size limit");
         Files.writeString(file, "[".repeat(15) + "]".repeat(15));
-        assertThatThrownBy(() -> YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE))
+        assertThatThrownBy(
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                        .load(file))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid YAML");
         Files.write(file, new byte[] {(byte) 0xc3, 0x28});
-        assertThatThrownBy(() -> YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE))
+        assertThatThrownBy(
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                        .load(file))
                 .isInstanceOf(CharacterCodingException.class);
     }
 }

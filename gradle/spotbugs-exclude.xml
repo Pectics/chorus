@@ -9,9 +9,9 @@ sync: Keep exclusions limited to a specific bug pattern and reviewed member; rem
 <FindBugsFilter>
     <!-- The conversion intentionally throws if lifetime plus skew overflows milliseconds. -->
     <Match>
-        <Class name="me.pectics.chorus.core.config.model.VerificationConfiguration"/>
+        <Class name="me.pectics.chorus.core.ticket.TicketVerificationConfiguration"/>
         <Method name="&lt;init&gt;"
-                params="java.time.Duration,java.time.Duration,boolean,me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy,java.nio.file.Path"
+                params="java.time.Duration,java.time.Duration,boolean,me.pectics.chorus.core.identity.BuiltinIdentityResolutionPolicy,java.nio.file.Path"
                 returns="void"/>
         <Bug pattern="RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT"/>
     </Match>
@@ -23,12 +23,12 @@ sync: Keep exclusions limited to a specific bug pattern and reviewed member; rem
     </Match>
     <!-- These YAML fixtures deliberately use portable LF, including interpolated YAML fragments. -->
     <Match>
-        <Class name="me.pectics.chorus.core.CoreBootstrapTest"/>
+        <Class name="me.pectics.chorus.core.bootstrap.ChorusCoreBootstrapTest"/>
         <Method name="configuration"/>
         <Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/>
     </Match>
     <Match>
-        <Class name="me.pectics.chorus.core.HmacBootstrapTest"/>
+        <Class name="me.pectics.chorus.core.bootstrap.HmacChorusCoreBootstrapTest"/>
         <Or>
             <Method name="deployment"/>
             <Method name="trust"/>
