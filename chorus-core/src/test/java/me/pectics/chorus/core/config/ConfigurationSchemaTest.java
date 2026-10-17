@@ -35,7 +35,7 @@ class ConfigurationSchemaTest {
               "ticket": {"cookie-key": "chorus:ticket", "max-payload-bytes": 4096,
                 "max-property-bytes": 2048, "compression": "NONE"},
               "crypto": {"algorithm": "ED25519"},
-              "registry": {"provider": "STATIC", "static": {"servers-path": "servers.yml", "issuers-path": "trusted-issuers.yml"}},
+              "registry": {"provider": "CONFIG", "config": {"servers-path": "servers.yml", "issuers-path": "trusted-issuers.yml"}},
               "verification": {"max-lifetime": "15s", "clock-skew": "2s",
                 "enforce-transfer-intent": true, "identity-policy": "ADOPT_UPSTREAM"},
               "replay-guard": {"backend": "LOCAL", "local": {"path": "state/replay.db", "max-entries": 100, "busy-timeout": "500ms"}}
@@ -168,7 +168,9 @@ class ConfigurationSchemaTest {
                         CORE.replace("4096", "5121"),
                         CORE.replace("2048", "0"),
                         CORE.replace("\"max-entries\": 100", "\"max-entries\": 2147483648"),
-                        CORE.replace("STATIC", "SHARED_SQL"),
+                        CORE.replace("CONFIG", "SHARED_SQL"),
+                        CORE.replace("CONFIG", "STATIC"),
+                        CORE.replace("\"config\":", "\"static\":"),
                         CORE.replace("LOCAL", "UNKNOWN"),
                         CORE.replace("NONE", "UNKNOWN"),
                         CORE.replace("ADOPT_UPSTREAM", "UNKNOWN"),
@@ -350,7 +352,7 @@ class ConfigurationSchemaTest {
     }
 
     @Test
-    void schemaRecordsReservedOptionsAndRejectsRegistryReplayWithStaticFiles() {
+    void schemaRecordsReservedOptionsAndRejectsRegistryReplayWithConfigFiles() {
         for (String compression : List.of("NONE", "ZSTD", "GZIP")) {
             var core = fixture(Document.CORE);
             ((ObjectNode) core.get("ticket")).put("compression", compression);

@@ -85,8 +85,8 @@ class CoreBootstrapTest {
                   private-key: private.der
                   public-key: public.der
                 registry:
-                  provider: STATIC
-                  static:
+                  provider: CONFIG
+                  config:
                     servers-path: servers.yml
                     issuers-path: trusted-issuers.yml
                 %s
@@ -192,7 +192,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void staticReloadPublishesOnlyACompleteValidSnapshotAndDoesNotAgeOutStaticApproval()
+    void configReloadPublishesOnlyACompleteValidSnapshotAndDoesNotAgeOutConfigApproval()
             throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
@@ -230,7 +230,9 @@ class CoreBootstrapTest {
                         base.replace("ttl: 15s", "ttl: 999999999999999999999h"),
                         base.replace("busy-timeout: 500ms", "busy-timeout: 0ms"),
                         base.replace("busy-timeout: 500ms", "busy-timeout: 2147483648ms"),
-                        base.replace("provider: STATIC", "provider: SHARED_SQL"),
+                        base.replace("provider: CONFIG", "provider: SHARED_SQL"),
+                        base.replace("provider: CONFIG", "provider: STATIC"),
+                        base.replace("config:", "static:"),
                         base.replace("backend: LOCAL", "backend: UNKNOWN"),
                         base.replace(
                                 "identity-policy: ADOPT_UPSTREAM",

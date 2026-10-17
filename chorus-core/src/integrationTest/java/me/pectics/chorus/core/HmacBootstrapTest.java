@@ -61,8 +61,8 @@ class HmacBootstrapTest {
                   algorithm: HMAC_SHA256
                   key: keys/shared.key
                 registry:
-                  provider: STATIC
-                  static:
+                  provider: CONFIG
+                  config:
                     servers-path: servers.yml
                     issuers-path: trust/issuers.yml
                 issuance:

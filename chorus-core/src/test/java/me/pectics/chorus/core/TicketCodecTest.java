@@ -14,7 +14,7 @@ import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.registry.TrustedIssuer;
-import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
+import me.pectics.chorus.core.registry.config.ConfigRegistries;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -23,7 +23,7 @@ class TicketCodecTest {
     private final KeyPair pair = TestSupport.keyPair();
     private final TicketSigner key = TestSupport.signer(pair);
     private final TicketCodec codec = new TicketCodec(5120, 2048);
-    private final StaticRegistries registries = TestSupport.registries(pair);
+    private final ConfigRegistries registries = TestSupport.registries(pair);
 
     private String part(int index) {
         byte[] bytes = codec.encode(TestSupport.claims(), key);

@@ -81,7 +81,7 @@ chorus/
 │       ├── model/                      # ServerNode、IdentityClaim、TicketClaims 等
 │       ├── crypto/                     # Ed25519/HMAC 签发与验签能力、JWS 编解码
 │       ├── registry/                   # ServerNodeRegistry、TrustedIssuerRegistry
-│       │   ├── staticconfig/           # 静态 YAML 快照实现
+│       │   ├── config/                 # 配置文件提供的目录与信任快照
 │       │   └── sql/                    # 可选的 Turso/libSQL 与 JDBC 实现
 │       ├── policy/                     # UUID / Profile 身份解析策略
 │       └── state/                      # ReplayGuard：仅负责 Ticket 防重放
@@ -147,16 +147,17 @@ chorus/
 
 提供两个互斥的**目录来源模式**：
 
-1. **`STATIC`**：每台 Chorus 节点读取管理员提供的本地 `servers` 与 `trusted-issuers` 配置。不存在自动同步权威；管理员负责分发与更新一致的配置，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
+1. **`CONFIG`**：每台 Chorus 节点读取管理员提供的本地 `servers` 与 `trusted-issuers` 配置。不存在自动同步权威；管理员负责分发与更新一致的配置，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
 2. **`SHARED_SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。服务器运行时获取可信快照，使用本地缓存解析目标地址并获取已批准的验签密钥绑定。Turso/libSQL 是推荐适配实现之一，标准 JDBC 是可选后端。
 
-两种模式使用相同的 Core 读取接口；目录选择由 `registry.provider` 表达，防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选目录数据库。
+两种模式使用相同的 Core 读取接口；目录选择由 `registry.provider` 表达，`CONFIG` 模式的文件路径位于 `registry.config`。
+防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选目录数据库。
 
 跨服主联盟中不必要求所有服主共用一个具有写权限的数据库。可为每个管理域维护自己的目录，再在本地明确授权**外域签发者**。本地管理员选择信任哪些外域公钥和身份类型。
 
 #### 管理命令（**候选方案，尚未最终确认**）
 
-平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后交给 `registry` 的管理员写入接口。对于 `STATIC`，仅更新**本机配置**；对于 `SHARED_SQL`，写入管理域权威数据库。没有共享存储时，命令不会神奇同步到其他节点。
+平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后交给 `registry` 的管理员写入接口。对于 `CONFIG`，仅更新**本机配置**；对于 `SHARED_SQL`，写入管理域权威数据库。没有共享存储时，命令不会神奇同步到其他节点。
 
 权限验证发生在平台管理界面；是否采用游戏内指令作为正式配置入口，仍待确定。无需首先开发网页后台。
 
@@ -460,7 +461,7 @@ public interface ReplayGuard {
 
 **本地后端 `LOCAL`（SQLite）**：`aud` 指向一个接收节点及其持久数据库。Receiver 完成其他校验后，以唯一约束原子插入已消费记录；Sender 无须预登记。采用 WAL 与 `synchronous=FULL`，确认事务持久化提交后才成功完成 `CompletionStage`，无需逐票等待 checkpoint。记录至少保留到 `exp + clockSkew`，容量不足不能驱逐仍可能有效的记录。数据库 I/O 在专用执行器上执行。本地状态绑定节点 ID 与清理使用的时钟容差，发现不匹配则拒绝启用。正常进程重启复用原数据库，不需要启动隔离窗口；数据库及 WAL 必须保存在持久本地存储，删除、回滚旧备份或换空路径不属于普通重启保证。已有数据库损坏、提交失败或结果未知时拒绝，不自动重建或降级内存。
 
-**`REGISTRY` 后端（TODO，未实现，最终默认未定）**：该后端复用 `registry` 配置的数据库，不能用于 `STATIC` 目录；预登记方案中 Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
+**`REGISTRY` 后端（TODO，未实现，最终默认未定）**：该后端复用 `registry` 配置的数据库，不能用于 `CONFIG` 目录；预登记方案中 Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
 
 **待确认选型**：共享 SQL 对节点目录是否有用，与 Ticket 是否应注册/核销于 SQL 是两个独立决策。MVP 可以先实现本地 SQLite ReplayGuard 以测试核心协议；这不代表最终产品默认一定选本地核销。
 
@@ -574,7 +575,7 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 ### 3.9 统一配置 `chorus.yml`
 
-下例展示使用 `STATIC` 节点目录与 `LOCAL` SQLite 防重放的 Peer。UNDECIDED（§7.2）：所有运维参数均为显式示例值，须根据部署实测调整。
+下例展示使用 `CONFIG` 节点目录与 `LOCAL` SQLite 防重放的 Peer。UNDECIDED（§7.2）：所有运维参数均为显式示例值，须根据部署实测调整。
 
 ```yaml
 node:
@@ -594,8 +595,8 @@ crypto:
   public-key: keys/local_ed25519.pub
 
 registry:
-  provider: STATIC
-  static:
+  provider: CONFIG
+  config:
     servers-path: servers.yml
     issuers-path: trusted-issuers.yml
 
@@ -659,11 +660,11 @@ operator-b/peer-01:
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
 | `ticket.compression: ZSTD / GZIP` | 指定压缩方式 | TODO：编码帧、版本兼容、解压限额与编解码尚未实现；启动拒绝 |
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
-| `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`STATIC` 时无效 | TODO：共享目录数据库适配与核销尚未实现；启动拒绝 |
+| `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | TODO：共享目录数据库适配与核销尚未实现；启动拒绝 |
 | `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
 | `allowed-auth-schemes: YGGDRASIL / FLOODGATE` | 预留的身份来源名称 | TODO：身份流程尚未实现；即使策略允许，Engine 仍拒绝对应身份的签发与接收 |
 
-这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在目录读取与状态库打开前明确拒绝，`REGISTRY + STATIC` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
+这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在目录读取与状态库打开前明确拒绝，`REGISTRY + CONFIG` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
 `ticket.max-payload-bytes` 限制包含 JWS 编码与签名的完整 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
 `issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。

@@ -2,7 +2,7 @@
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.8, and 3.9
  * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationLoader.java;
- *          chorus-core/src/main/java/me/pectics/chorus/core/registry/staticconfig/StaticRegistries.java
+ *          chorus-core/src/main/java/me/pectics/chorus/core/registry/config/ConfigRegistries.java
  * sync: Consume schema-approved values and validate runtime references before publishing state.
  * @endcontext
  */
@@ -35,7 +35,7 @@ import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.TrustedIssuer;
-import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
+import me.pectics.chorus.core.registry.config.ConfigRegistries;
 import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
 import tools.jackson.databind.JsonNode;
 
@@ -82,7 +82,7 @@ public final class CoreBootstrap {
                                         policy(root.get("issuance")),
                                         strings(root.at("/issuance/allowed-targets")))
                                 : null);
-        var files = root.at("/registry/static");
+        var files = root.at("/registry/config");
         Path serversFile = base.resolve(files.get("servers-path").asString());
         Path trustFile = base.resolve(files.get("issuers-path").asString());
         var directory =
@@ -98,7 +98,7 @@ public final class CoreBootstrap {
                     "Node and issuance targets must exist in the directory");
         }
         TicketSigner signer = role.sender() ? loadSigner(crypto, base) : null;
-        var registries = new StaticRegistries(directory, readIssuers(trust, trustFile));
+        var registries = new ConfigRegistries(directory, readIssuers(trust, trustFile));
         SqliteReplayGuard guard = null;
         if (role.receiver()) {
             var replay = root.at("/replay-guard/local");
@@ -165,15 +165,15 @@ public final class CoreBootstrap {
     }
 
     /** Key paths are relative to the trust file. Both files must satisfy their own schemas. */
-    public static StaticRegistries loadRegistries(Path serversFile, Path trustFile, Clock clock)
+    public static ConfigRegistries loadRegistries(Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
         var approved = readRegistries(serversFile, trustFile, clock);
-        return new StaticRegistries(approved.directory(), approved.issuers());
+        return new ConfigRegistries(approved.directory(), approved.issuers());
     }
 
     /** Parsing, schema, key, or reference failures leave the previous approved snapshot intact. */
     public static void reloadRegistries(
-            StaticRegistries registries, Path serversFile, Path trustFile, Clock clock)
+            ConfigRegistries registries, Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
         var approved = readRegistries(serversFile, trustFile, clock);
         registries.replace(approved.directory(), approved.issuers());

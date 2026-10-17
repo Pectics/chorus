@@ -3,7 +3,7 @@
   "$id": "urn:chorus:configuration:chorus:v1",
   "$comment": "The complete chorus.yml v1 format contract. See ARCHITECTURE.md section 3.9. TODO: ZSTD/GZIP compression and REGISTRY/REDIS replay backends are reserved and rejected by runtime assembly until implemented.",
   "title": "Chorus configuration v1",
-  "description": "Static Core configuration with explicit operational limits. Assembly checks duration arithmetic, field relationships, implemented options, key contents, and directory references.",
+  "description": "File-based Core configuration with explicit operational limits. Assembly checks duration arithmetic, field relationships, implemented options, key contents, and directory references.",
   "type": "object",
   "additionalProperties": false,
   "required": ["node", "ticket", "crypto", "registry", "verification"],
@@ -81,10 +81,10 @@
     "registry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "static"],
+      "required": ["provider", "config"],
       "properties": {
-        "provider": {"const": "STATIC"},
-        "static": {
+        "provider": {"const": "CONFIG"},
+        "config": {
           "type": "object",
           "additionalProperties": false,
           "required": ["servers-path", "issuers-path"],
@@ -151,7 +151,7 @@
       "properties": {
         "backend": {
           "enum": ["LOCAL", "REGISTRY", "REDIS"],
-          "$comment": "TODO: Implement REGISTRY using the registry database and implement REDIS. Only LOCAL is operational. REGISTRY is invalid with registry.provider STATIC."
+          "$comment": "TODO: Implement REGISTRY using the registry database and implement REDIS. Only LOCAL is operational. REGISTRY is invalid with registry.provider CONFIG."
         },
         "local": {
           "type": "object",
@@ -199,12 +199,12 @@
       "then": {"required": ["replay-guard"]}
     },
     {
-      "$comment": "Registry replay cannot use a static file provider.",
+      "$comment": "Registry replay cannot use the CONFIG file provider.",
       "if": {
         "required": ["replay-guard"],
         "properties": {"replay-guard": {"properties": {"backend": {"const": "REGISTRY"}}}}
       },
-      "then": {"properties": {"registry": {"properties": {"provider": {"not": {"const": "STATIC"}}}}}}
+      "then": {"properties": {"registry": {"properties": {"provider": {"not": {"const": "CONFIG"}}}}}}
     }
   ],
   "$defs": {

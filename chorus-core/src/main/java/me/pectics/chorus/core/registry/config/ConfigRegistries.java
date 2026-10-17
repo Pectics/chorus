@@ -4,7 +4,7 @@
  * sync: Replace complete approved snapshots only after routing and trust validation succeeds.
  * @endcontext
  */
-package me.pectics.chorus.core.registry.staticconfig;
+package me.pectics.chorus.core.registry.config;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -16,15 +16,13 @@ import me.pectics.chorus.core.registry.ServerNodeRegistry;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
 
-/**
- * In-memory reads of administrator-loaded static configuration, with atomic snapshot replacement.
- */
-public final class StaticRegistries implements ServerNodeRegistry, TrustedIssuerRegistry {
+/** In-memory reads of administrator-loaded configuration, with atomic snapshot replacement. */
+public final class ConfigRegistries implements ServerNodeRegistry, TrustedIssuerRegistry {
     private record State(RegistrySnapshot directory, Map<String, TrustedIssuer> issuers) {}
 
     private final AtomicReference<State> state = new AtomicReference<>();
 
-    public StaticRegistries(RegistrySnapshot snapshot, Collection<TrustedIssuer> issuers) {
+    public ConfigRegistries(RegistrySnapshot snapshot, Collection<TrustedIssuer> issuers) {
         replace(snapshot, issuers);
     }
 

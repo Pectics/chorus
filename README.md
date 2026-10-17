@@ -86,7 +86,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 Java 消费验证后的值，负责转换、字段间数值关系、密钥内容和跨文件引用。校验失败不打开状态库、不替换已批准快照。
 错误包含文件、JSON Pointer 字段路径及校验关键字；YAML 解析保留 1 MiB 大小、深度、重复键、别名和类型限制。
 
-Phase 1 支持 `STATIC` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
+Phase 1 支持 `CONFIG` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
 共享 SQL、压缩、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519 与 HMAC-SHA256。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
 
@@ -105,8 +105,8 @@ ticket:
 crypto:
   algorithm: ED25519
 registry:
-  provider: STATIC
-  static:
+  provider: CONFIG
+  config:
     servers-path: servers.yml
     issuers-path: trusted-issuers.yml
 verification:
@@ -155,12 +155,12 @@ issuance:
 
 配置契约列出 `ticket.compression: NONE | ZSTD | GZIP` 与 `replay-guard.backend: LOCAL | REGISTRY | REDIS`。
 **TODO（未实现）**：`ZSTD` / `GZIP` 压缩及 `REGISTRY` / `REDIS` 防重放后端均尚未实现，当前启动会在读取目录或打开状态库前拒绝这些选项；运行时代码和 Schema 均保留 TODO 定位。
-`REGISTRY` 的设计语义为复用 `registry` 数据库，不能与 `registry.provider: STATIC` 组合，该约束由 Schema 校验。
+`REGISTRY` 的设计语义为复用 `registry` 数据库，不能与 `registry.provider: CONFIG` 组合，该约束由 Schema 校验。
 `LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
 
 Ed25519 密钥由管理员提供：私钥使用 PKCS#8，公钥使用 X.509 SPKI，均支持 DER 或 PEM；加载失败不启用无签名模式。
-主配置内的路径相对 `chorus.yml`，信任密钥路径相对 `trusted-issuers.yml`。
-`CoreBootstrap.loadRegistries` / `reloadRegistries` 提供显式静态快照加载与替换；加载失败保留旧快照，不自动监视文件。
+主配置内的路径相对 `chorus.yml`；目录文件路径在 `registry.config` 中配置，信任密钥路径相对 `trusted-issuers.yml`。
+`CoreBootstrap.loadRegistries` / `reloadRegistries` 提供 `registry.config.ConfigRegistries` 的显式加载与快照替换；加载失败保留旧快照，不自动监视文件。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
 主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时目录显示名来自 `servers.yml`，未配置时使用节点 ID。

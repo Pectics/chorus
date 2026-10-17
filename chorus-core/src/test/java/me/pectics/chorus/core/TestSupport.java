@@ -20,7 +20,7 @@ import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.TrustedIssuer;
-import me.pectics.chorus.core.registry.staticconfig.StaticRegistries;
+import me.pectics.chorus.core.registry.config.ConfigRegistries;
 
 public final class TestSupport {
     public static final Instant NOW = Instant.parse("2026-10-16T00:00:00Z");
@@ -77,8 +77,8 @@ public final class TestSupport {
         return new ServerNode(id, id, "localhost", 25565);
     }
 
-    public static StaticRegistries registries(KeyPair pair) {
-        return new StaticRegistries(
+    public static ConfigRegistries registries(KeyPair pair) {
+        return new ConfigRegistries(
                 new RegistrySnapshot(
                         Map.of(
                                 "gateway",
