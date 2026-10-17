@@ -1,10 +1,14 @@
 package me.pectics.chorus.core.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
+import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.identity.AuthenticationSourceType;
 import me.pectics.chorus.core.identity.BuiltinIdentityResolutionPolicy;
 import me.pectics.chorus.core.replay.ReplayGuardConfiguration;
@@ -13,9 +17,27 @@ import me.pectics.chorus.core.ticket.TicketIssuanceConfiguration;
 import me.pectics.chorus.core.ticket.TicketIssuancePolicy;
 import me.pectics.chorus.core.ticket.TicketVerificationConfiguration;
 import me.pectics.chorus.core.trust.IssuerTrustPolicy;
+import me.pectics.chorus.core.trust.TrustedIssuerConfiguration;
 import org.junit.jupiter.api.Test;
 
 class BusinessConfigurationContractTest {
+    @Test
+    void issuerApprovalSettingsSnapshotCallerOwnedKeyPaths() {
+        Path approvedKey = Path.of("keys/approved.key");
+        var keyPaths = new ArrayList<>(List.of(approvedKey));
+        var approval =
+                new TrustedIssuerConfiguration(
+                        "gateway",
+                        SignatureAlgorithm.HMAC_SHA256,
+                        keyPaths,
+                        true,
+                        new IssuerTrustPolicy(
+                                Set.of(AuthenticationSourceType.MOJANG), Set.of("mojang")));
+        keyPaths.clear();
+        keyPaths.add(Path.of("keys/unapproved.key"));
+        assertThat(approval.keyPaths()).containsExactly(approvedKey);
+    }
+
     @Test
     void localReplayLimitsAreValidatedBeforeOpeningTheDatabase() {
         for (var timeout :
