@@ -8,6 +8,7 @@ package me.pectics.chorus.core.config;
 
 import java.time.Duration;
 import java.util.Objects;
+import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.policy.IdentityPolicy;
 import me.pectics.chorus.core.policy.IssuancePolicy;
 
@@ -15,6 +16,7 @@ import me.pectics.chorus.core.policy.IssuancePolicy;
  * Immutable settings with explicit operational parameters until architecture 7.2 is settled.
  * Lifetimes and skew use whole seconds; sender TTL is positive and no larger than maxLifetime.
  * Ticket bytes are limited to 5120; property bytes cannot exceed that configured ticket limit.
+ * Compression selects outgoing encoding only; all supported encodings are accepted on receipt.
  * GATEWAY and PEER require an issuance TTL and policy; BACKEND permits a null issuance TTL. Invalid
  * settings throw IllegalArgumentException or ArithmeticException for overflowing durations.
  */
@@ -27,14 +29,44 @@ public record CoreConfiguration(
         Duration clockSkew,
         int maxPayloadBytes,
         int maxPropertyBytes,
+        TicketCompression compression,
         boolean enforceTransferIntent,
         IdentityPolicy identityPolicy,
         IssuancePolicy issuancePolicy) {
+    /** Uses ZSTD for outgoing tickets when no encoding is explicitly selected. */
+    public CoreConfiguration(
+            String nodeId,
+            NodeRole role,
+            String cookieKey,
+            Duration issuanceTtl,
+            Duration maxLifetime,
+            Duration clockSkew,
+            int maxPayloadBytes,
+            int maxPropertyBytes,
+            boolean enforceTransferIntent,
+            IdentityPolicy identityPolicy,
+            IssuancePolicy issuancePolicy) {
+        this(
+                nodeId,
+                role,
+                cookieKey,
+                issuanceTtl,
+                maxLifetime,
+                clockSkew,
+                maxPayloadBytes,
+                maxPropertyBytes,
+                TicketCompression.ZSTD,
+                enforceTransferIntent,
+                identityPolicy,
+                issuancePolicy);
+    }
+
     public CoreConfiguration {
         Objects.requireNonNull(role, "role");
         Objects.requireNonNull(maxLifetime, "maxLifetime");
         Objects.requireNonNull(clockSkew, "clockSkew");
         Objects.requireNonNull(identityPolicy, "identityPolicy");
+        Objects.requireNonNull(compression, "compression");
         if (nodeId == null
                 || !nodeId.matches("[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
                 || cookieKey == null

@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
+import me.pectics.chorus.core.crypto.TicketCompression;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -351,13 +352,35 @@ class ConfigurationSchemaTest {
                 .anySatisfy(error -> assertThat(error.getKeyword()).isEqualTo("minItems"));
     }
 
+    @ParameterizedTest
+    @EnumSource(TicketCompression.class)
+    void schemaAcceptsEveryImplementedCompression(TicketCompression compression) {
+        var core = fixture(Document.CORE);
+        ((ObjectNode) core.get("ticket")).put("compression", compression.name());
+        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+    }
+
     @Test
-    void schemaRecordsReservedOptionsAndRejectsRegistryReplayWithConfigFiles() {
-        for (String compression : List.of("NONE", "ZSTD", "GZIP")) {
-            var core = fixture(Document.CORE);
-            ((ObjectNode) core.get("ticket")).put("compression", compression);
-            assertThat(contract(Document.CORE).validate(core)).isEmpty();
+    void schemaMakesCompressionOptionalAndDocumentsZstdAsTheDefault() throws Exception {
+        var core = fixture(Document.CORE);
+        ((ObjectNode) core.get("ticket")).remove("compression");
+        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        try (var input = getClass().getResourceAsStream(Document.CORE.schemaResource())) {
+            assertThat(
+                            JSON.readTree(input)
+                                    .at("/properties/ticket/properties/compression/default")
+                                    .asString())
+                    .isEqualTo(TicketCompression.ZSTD.name());
         }
+        for (String invalid :
+                List.of("null", "false", "42", "[]", "{}", "\"zstd\"", "\"BROTLI\"", "\"\"")) {
+            ((ObjectNode) core.get("ticket")).set("compression", JSON.readTree(invalid));
+            assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        }
+    }
+
+    @Test
+    void schemaRecordsReservedReplayBackendsAndRejectsRegistryReplayWithConfigFiles() {
         var core = fixture(Document.CORE);
         var replay = (ObjectNode) core.get("replay-guard");
         replay.put("backend", "REDIS");

@@ -56,7 +56,6 @@ class HmacBootstrapTest {
                   cookie-key: chorus:ticket
                   max-payload-bytes: 4096
                   max-property-bytes: 2048
-                  compression: NONE
                 crypto:
                   algorithm: HMAC_SHA256
                   key: keys/shared.key
@@ -115,6 +114,8 @@ class HmacBootstrapTest {
                             .toCompletableFuture()
                             .get(5, TimeUnit.SECONDS)
                             .cookiePayload();
+            assertThat(payload)
+                    .startsWith((byte) 'C', (byte) 'H', (byte) 'R', (byte) 'S', (byte) 1, (byte) 1);
         }
         byte[] original = Files.readAllBytes(senderSecret);
         try (var sender = CoreBootstrap.open(senderFile, clock)) {

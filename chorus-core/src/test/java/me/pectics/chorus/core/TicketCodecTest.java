@@ -12,6 +12,7 @@ import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.TicketCodec;
+import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.config.ConfigRegistries;
@@ -22,7 +23,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class TicketCodecTest {
     private final KeyPair pair = TestSupport.keyPair();
     private final TicketSigner key = TestSupport.signer(pair);
-    private final TicketCodec codec = new TicketCodec(5120, 2048);
+    private final TicketCodec codec = new TicketCodec(5120, 2048, TicketCompression.NONE);
     private final ConfigRegistries registries = TestSupport.registries(pair);
 
     private String part(int index) {
@@ -48,11 +49,13 @@ class TicketCodecTest {
                 .contains("\"alg\":\"Ed25519\"", "\"typ\":\"chorus-ticket+jwt\"")
                 .doesNotContain("\"kid\"");
         assertThat(part(1)).contains("\"iat\":" + TestSupport.NOW.getEpochSecond());
-        assertThat(new TicketCodec(bytes.length, 128).encode(TestSupport.claims(), key))
+        assertThat(
+                        new TicketCodec(bytes.length, 128, TicketCompression.NONE)
+                                .encode(TestSupport.claims(), key))
                 .hasSize(bytes.length);
         assertThatThrownBy(
                         () ->
-                                new TicketCodec(bytes.length - 1, 128)
+                                new TicketCodec(bytes.length - 1, 128, TicketCompression.NONE)
                                         .encode(TestSupport.claims(), key))
                 .isInstanceOf(TicketRejectedException.class);
         rejects(new byte[5121], TicketError.TICKET_TOO_LARGE);

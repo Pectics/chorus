@@ -382,7 +382,7 @@ public record TicketClaims(
 - 默认不包含 IP Hash 和 `sessionEpoch`；没有共享数据协调方时，Ticket 携带 `sessionEpoch` 不能自动防止跨服存档并发写入。
 - Phase 1 保留 `extensions` 接口但拒绝非空扩展；后续扩展必须经过授权、限定长度与命名空间，不能覆盖标准 Claim 或绕过接收端策略。
 - Cookie 最大 5120 字节；`core` 应检查**最终编码后的字节长度**。示例项目限额可取 4096 字节，但不是协议强制值。
-- 默认不压缩 Ticket；如果将来添加压缩，必须有版本标记、大小/解压上限与明确的编解码兼容测试。
+- 默认使用 `ZSTD` 压缩 Ticket，可显式选择 `GZIP` 或 `NONE`；压缩帧必须带版本标记，并限制最终字节数与解压大小。
 
 压缩编解码保持完整的 version-1 Compact JWS 签名格式，先签名，再压缩完整 JWS。
 `NONE` 继续使用原有 ASCII JWS，不增加帧；`ZSTD` / `GZIP` 使用二进制帧：
@@ -597,7 +597,7 @@ ticket:
   cookie-key: chorus:ticket
   max-payload-bytes: 4096
   max-property-bytes: 2048
-  compression: NONE
+  compression: ZSTD
 
 crypto:
   algorithm: ED25519
@@ -668,14 +668,16 @@ operator-b/peer-01:
 | `crypto.algorithm: HMAC_SHA256` | 本节点签发使用 `key`，JWS 为 `HS256` | 已实现；签发角色在密钥文件缺失时生成 `.key`，管理员分发同一文件 |
 | 信任条目 `algorithm: ED25519 / HMAC_SHA256` | 为该签发者的全部 `key / keys` 绑定验签算法；省略为 `ED25519` | 已实现；信任加载不生成密钥，不跨算法回退 |
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
-| `ticket.compression: ZSTD / GZIP` | 指定压缩方式 | TODO：编码帧、版本兼容、解压限额与编解码尚未实现；启动拒绝 |
+| `ticket.compression: ZSTD / GZIP` | 压缩完整签名 Ticket；省略配置时默认 `ZSTD` | 已实现；版本化帧与有界解压，接收端兼容所有三种编码 |
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
 | `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | TODO：共享目录数据库适配与核销尚未实现；启动拒绝 |
 | `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
 | `allowed-auth-schemes: YGGDRASIL / FLOODGATE` | 预留的身份来源名称 | TODO：身份流程尚未实现；即使策略允许，Engine 仍拒绝对应身份的签发与接收 |
 
 这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在目录读取与状态库打开前明确拒绝，`REGISTRY + CONFIG` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
-`ticket.max-payload-bytes` 限制包含 JWS 编码与签名的完整 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
+`ticket.compression` 可省略，默认 `ZSTD`；Schema 的 `default` 为契约说明，启动装配与无压缩参数的 Java 构造器落实相同默认值。
+旧版接收端仅支持 `NONE`；滚动升级时先升级接收端，发送端在接收端升级前显式保留 `NONE`。
+`ticket.max-payload-bytes` 限制包含 JWS 编码、签名及压缩帧的最终 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
 `issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。

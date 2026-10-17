@@ -26,6 +26,7 @@ import me.pectics.chorus.core.config.ConfigurationLoader.Document;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
+import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.crypto.TicketVerifier;
 import me.pectics.chorus.core.model.AuthType;
@@ -75,6 +76,9 @@ public final class CoreBootstrap {
                         duration(verification.get("clock-skew")),
                         ticket.get("max-payload-bytes").asInt(),
                         ticket.get("max-property-bytes").asInt(),
+                        ticket.has("compression")
+                                ? TicketCompression.valueOf(ticket.get("compression").asString())
+                                : TicketCompression.ZSTD,
                         verification.get("enforce-transfer-intent").asBoolean(),
                         IdentityPolicy.valueOf(verification.get("identity-policy").asString()),
                         role.sender()
@@ -136,14 +140,6 @@ public final class CoreBootstrap {
     }
 
     private static void requireImplementedOptions(JsonNode root) {
-        switch (root.at("/ticket/compression").asString()) {
-            case "NONE" -> {}
-            case "ZSTD", "GZIP" -> {
-                // TODO: Add versioned compression framing and bounded decompression to TicketCodec.
-                throw new IllegalArgumentException("ticket.compression is not implemented");
-            }
-            default -> throw new IllegalStateException("Unknown schema-approved compression");
-        }
         var replay = root.get("replay-guard");
         if (replay != null) {
             switch (replay.get("backend").asString()) {

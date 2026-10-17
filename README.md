@@ -89,7 +89,7 @@ Java 消费验证后的值，负责转换、字段间数值关系、密钥内容
 
 Phase 1 支持 `CONFIG` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
-共享 SQL、压缩、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519 与 HMAC-SHA256。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
+共享 SQL、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519、HMAC-SHA256 及 ZSTD / GZIP 压缩。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
 
 下面是 Receiver 的 `chorus.yml`。**UNDECIDED（架构 §7.2）：寿命、时钟容差、字节限额、容量和锁等待时间均为示例，
 没有隐式运维默认值。** 发送端的 `issuance.ttl`、`verification.max-lifetime` 与 `verification.clock-skew` 要求整秒；TTL 为正且不超过最大寿命，Cookie 限额不能超过 5120。
@@ -102,7 +102,7 @@ ticket:
   cookie-key: chorus:ticket
   max-payload-bytes: 4096
   max-property-bytes: 2048
-  compression: NONE
+  compression: ZSTD
 crypto:
   algorithm: ED25519
 registry:
@@ -154,8 +154,12 @@ issuance:
   allowed-targets: [backend]
 ```
 
-配置契约列出 `ticket.compression: NONE | ZSTD | GZIP` 与 `replay-guard.backend: LOCAL | REGISTRY | REDIS`。
-**TODO（未实现）**：`ZSTD` / `GZIP` 压缩及 `REGISTRY` / `REDIS` 防重放后端均尚未实现，当前启动会在读取目录或打开状态库前拒绝这些选项；运行时代码和 Schema 均保留 TODO 定位。
+`ticket.compression` 支持 `ZSTD`（默认）、`GZIP` 和 `NONE`，省略该字段时使用 ZSTD；这是已确认的编码默认值，其他运维限额仍须显式配置。
+先签名，再压缩完整 JWS；Cookie 字节限额包含压缩帧，解压后 JWS 限制为 64 KiB，属性 UTF-8 预算仍独立生效。
+接收端自动识别所有三种编码，本节点的压缩选择只影响签发。`NONE` 保持原有裸 JWS；旧版接收端只支持此格式，滚动升级时先升级接收端，发送端在此之前显式保留 `NONE`。
+
+`replay-guard.backend` 的配置契约列出 `LOCAL | REGISTRY | REDIS`。
+**TODO（未实现）**：`REGISTRY` / `REDIS` 防重放后端仍未实现，当前启动会在读取目录或打开状态库前拒绝这些选项；运行时代码和 Schema 均保留 TODO 定位。
 `REGISTRY` 的设计语义为复用 `registry` 数据库，不能与 `registry.provider: CONFIG` 组合，该约束由 Schema 校验。
 `LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
 

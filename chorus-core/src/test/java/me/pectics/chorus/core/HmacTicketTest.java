@@ -23,13 +23,14 @@ import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketCodec;
+import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.crypto.TicketVerifier;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.config.ConfigRegistries;
 import org.junit.jupiter.api.Test;
 
 class HmacTicketTest {
-    private final TicketCodec codec = new TicketCodec(5120, 2048);
+    private final TicketCodec codec = new TicketCodec(5120, 2048, TicketCompression.NONE);
     private final HmacSha256 key = key((byte) 1);
     private final ConfigRegistries registries = TestSupport.registries(TestSupport.keyPair());
 

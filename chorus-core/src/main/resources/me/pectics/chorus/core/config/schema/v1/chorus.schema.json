@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:chorus:configuration:chorus:v1",
-  "$comment": "The complete chorus.yml v1 format contract. See ARCHITECTURE.md section 3.9. TODO: ZSTD/GZIP compression and REGISTRY/REDIS replay backends are reserved and rejected by runtime assembly until implemented.",
+  "$comment": "The complete chorus.yml v1 format contract. See ARCHITECTURE.md section 3.9. TODO: REGISTRY/REDIS replay backends are reserved and rejected by runtime assembly until implemented.",
   "title": "Chorus configuration v1",
   "description": "File-based Core configuration with explicit operational limits. Assembly checks duration arithmetic, field relationships, implemented options, key contents, and directory references.",
   "type": "object",
@@ -27,7 +27,7 @@
     "ticket": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cookie-key", "max-payload-bytes", "max-property-bytes", "compression"],
+      "required": ["cookie-key", "max-payload-bytes", "max-property-bytes"],
       "properties": {
         "cookie-key": {
           "description": "The namespaced Minecraft Cookie key shared by sender and receiver.",
@@ -36,7 +36,7 @@
         },
         "max-payload-bytes": {
           "type": "integer", "minimum": 1, "maximum": 5120,
-          "description": "Maximum complete encoded ticket payload, including JWS framing and signature."
+          "description": "Maximum complete Cookie payload, including the signed JWS and any compression frame."
         },
         "max-property-bytes": {
           "type": "integer", "minimum": 1, "maximum": 5120,
@@ -44,7 +44,8 @@
         },
         "compression": {
           "enum": ["NONE", "ZSTD", "GZIP"],
-          "$comment": "TODO: Implement ZSTD and GZIP with versioned framing and bounded decompression. Only NONE is operational; CoreBootstrap rejects the reserved choices."
+          "default": "ZSTD",
+          "description": "Outgoing encoding; omitted means ZSTD. Receivers accept NONE, ZSTD, and GZIP. Compression wraps the complete signed JWS in a versioned frame; decompressed JWS is bounded to 64 KiB."
         }
       }
     },

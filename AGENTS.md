@@ -22,7 +22,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - 当前主要开发并纳入 Git 白名单 / Gradle 的模块只有 `chorus-core` 和 `chorus-common`。
 - `chorus-paper`、`chorus-velocity`、`chorus-fabric` 仍是架构规划的一部分；本地可能存在暂存骨架，
   **有意被 Git 忽略且不纳入构建**。不得因为目录存在就自动启用、放行或补全平台实现。
-- Core 已实现 Phase 1：`CONFIG`（YAML 配置文件）目录与信任、Ed25519 / HMAC-SHA256 Ticket、身份策略、SQLite 持久化防重放与异步 Engine；
+- Core 已实现 Phase 1：`CONFIG`（YAML 配置文件）目录与信任、Ed25519 / HMAC-SHA256 Ticket、ZSTD（默认）/ GZIP / NONE 编码与有界解压、身份策略、SQLite 持久化防重放与异步 Engine；
   单测与本地集成测试覆盖核心闭环。Common 仍只有包职责说明；共享 SQL 与平台接入尚未实现。
 - 实施顺序遵循架构 §6：先完成并测试 Core，再推进共享 SQL 目录，随后只验证一条
   **正版 Gateway → 离线 Paper Backend** 路线；其他平台与扩展场景按后续阶段推进。

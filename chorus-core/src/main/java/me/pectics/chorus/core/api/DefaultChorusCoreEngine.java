@@ -58,7 +58,10 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         this.replay = replay;
         this.clock = Objects.requireNonNull(clock, "clock");
         this.codec =
-                new TicketCodec(configuration.maxPayloadBytes(), configuration.maxPropertyBytes());
+                new TicketCodec(
+                        configuration.maxPayloadBytes(),
+                        configuration.maxPropertyBytes(),
+                        configuration.compression());
         if (configuration.role().sender()) {
             Objects.requireNonNull(signer, "Sender requires a ticket signer");
         }

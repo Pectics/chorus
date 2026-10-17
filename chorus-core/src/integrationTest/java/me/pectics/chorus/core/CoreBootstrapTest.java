@@ -29,6 +29,8 @@ import me.pectics.chorus.core.model.ReceiverLoginContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class CoreBootstrapTest {
     @TempDir Path directory;
@@ -110,11 +112,25 @@ class CoreBootstrapTest {
         return Files.writeString(directory.resolve(name), config);
     }
 
-    @Test
-    void configuredSenderToReceiverInheritsMojangIdentityAndRejectsReplayAfterRestart()
-            throws Exception {
-        Path senderFile = write("gateway.yml", configuration("gateway", NodeRole.GATEWAY));
-        Path receiverFile = write("backend.yml", configuration("backend", NodeRole.BACKEND));
+    @ParameterizedTest
+    @CsvSource({
+        "NONE, NONE", "NONE, ZSTD", "NONE, GZIP",
+        "ZSTD, NONE", "ZSTD, ZSTD", "ZSTD, GZIP",
+        "GZIP, NONE", "GZIP, ZSTD", "GZIP, GZIP",
+        "DEFAULT, DEFAULT"
+    })
+    void configuredSenderToReceiverInheritsMojangIdentityAndRejectsReplayAfterRestart(
+            String senderCompression, String receiverCompression) throws Exception {
+        Path senderFile =
+                write(
+                        "gateway.yml",
+                        withCompression(
+                                configuration("gateway", NodeRole.GATEWAY), senderCompression));
+        Path receiverFile =
+                write(
+                        "backend.yml",
+                        withCompression(
+                                configuration("backend", NodeRole.BACKEND), receiverCompression));
         byte[] payload;
         try (var sender = CoreBootstrap.open(senderFile, clock)) {
             var ticket =
@@ -127,6 +143,18 @@ class CoreBootstrapTest {
                             .toCompletableFuture()
                             .get(5, TimeUnit.SECONDS);
             payload = ticket.cookiePayload();
+            if (senderCompression.equals("NONE")) {
+                assertThat(payload).startsWith((byte) 'e', (byte) 'y');
+            } else {
+                assertThat(payload)
+                        .startsWith(
+                                (byte) 'C',
+                                (byte) 'H',
+                                (byte) 'R',
+                                (byte) 'S',
+                                (byte) 1,
+                                (byte) (senderCompression.equals("GZIP") ? 2 : 1));
+            }
             assertThat(ticket.targetServer().host()).isEqualTo("backend.example.net");
             assertThat(ticket.expiresAt()).isEqualTo(TestSupport.NOW.plusSeconds(15));
         }
@@ -150,6 +178,12 @@ class CoreBootstrapTest {
                     .hasRootCauseMessage("REPLAYED");
         }
         assertThat(directory.resolve("state/gateway.db")).doesNotExist();
+    }
+
+    private String withCompression(String configuration, String compression) {
+        return configuration.replace(
+                "  compression: NONE\n",
+                compression.equals("DEFAULT") ? "" : "  compression: " + compression + "\n");
     }
 
     @Test
@@ -283,16 +317,10 @@ class CoreBootstrapTest {
         Files.delete(directory.resolve("servers.yml"));
         Files.delete(directory.resolve("trusted-issuers.yml"));
         String base = configuration("backend", NodeRole.BACKEND);
-        for (String unsupported :
-                java.util.List.of(
-                        base.replace("compression: NONE", "compression: ZSTD"),
-                        base.replace("compression: NONE", "compression: GZIP"),
-                        base.replace("backend: LOCAL", "backend: REDIS"))) {
-            Path file = write("unsupported.yml", unsupported);
-            assertThatThrownBy(() -> CoreBootstrap.open(file, clock))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not implemented");
-        }
+        Path file = write("unsupported.yml", base.replace("backend: LOCAL", "backend: REDIS"));
+        assertThatThrownBy(() -> CoreBootstrap.open(file, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not implemented");
         Path registryReplay =
                 write("registry-replay.yml", base.replace("backend: LOCAL", "backend: REGISTRY"));
         assertThatThrownBy(() -> CoreBootstrap.open(registryReplay, clock))

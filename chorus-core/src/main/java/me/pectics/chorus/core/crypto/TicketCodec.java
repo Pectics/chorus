@@ -48,11 +48,9 @@ public final class TicketCodec {
     private final int maxPropertyBytes;
     private final TicketCompression compression;
 
-    /**
-     * Limits are explicit configuration, not product defaults. Property size counts UTF-8 bytes.
-     */
+    /** Uses ZSTD for outgoing tickets. Limits remain explicit; property size counts UTF-8 bytes. */
     public TicketCodec(int maxPayloadBytes, int maxPropertyBytes) {
-        this(maxPayloadBytes, maxPropertyBytes, TicketCompression.NONE);
+        this(maxPayloadBytes, maxPropertyBytes, TicketCompression.ZSTD);
     }
 
     /**
