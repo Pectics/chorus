@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.util.HashSet;
 import java.util.Objects;
 import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
@@ -27,7 +28,10 @@ import me.pectics.chorus.core.config.model.VerificationConfiguration;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketSigner;
+import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.config.ConfigRegistries;
+import me.pectics.chorus.core.registry.sql.JdbcServerStore;
+import me.pectics.chorus.core.registry.sql.SqlServerRegistry;
 import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 
 /** Blocking startup I/O and resource assembly. Invoke outside platform event loops. */
@@ -79,47 +83,76 @@ public final class CoreBootstrap {
             throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
         }
         var files = registry.config();
-        var documents = RegistryLoader.read(files.serversPath(), files.issuersPath(), clock);
-        var directory = documents.directory();
-        if (!directory.servers().containsKey(node.id())
-                || node.role().sender()
-                        && !directory
-                                .servers()
-                                .keySet()
-                                .containsAll(issuance.policy().allowedTargets())) {
-            throw new IllegalArgumentException(
-                    "Node and issuance targets must exist in the directory");
-        }
-        TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
-        var registries = new ConfigRegistries(directory, documents.loadIssuers());
+        SqlServerRegistry sql = null;
         LocalReplayGuard guard = null;
-        if (node.role().receiver()) {
-            var local = replay.local();
-            guard =
-                    new LocalReplayGuard(
-                            local.path(),
-                            node.id(),
-                            verification.clockSkew(),
-                            local.maxEntries(),
-                            local.busyTimeout(),
-                            clock);
-        }
         try {
-            return new DefaultChorusCoreEngine(
-                    node,
-                    ticket,
-                    issuance,
-                    verification,
-                    registries,
-                    registries,
-                    signer,
-                    guard,
-                    clock);
-        } catch (RuntimeException failure) {
-            if (guard != null) {
-                guard.close();
+            RegistrySnapshot directory;
+            RegistryLoader.LocalTrust trust;
+            var requiredNodes = new HashSet<String>();
+            requiredNodes.add(node.id());
+            if (node.role().sender()) requiredNodes.addAll(issuance.policy().allowedTargets());
+            if (registry.provider() == RegistryConfiguration.Provider.CONFIG) {
+                var documents =
+                        RegistryLoader.read(files.serversPath(), files.issuersPath(), clock);
+                directory = documents.directory();
+                trust = documents.localTrust();
+            } else {
+                trust = RegistryLoader.readTrust(files.issuersPath());
+                sql =
+                        new SqlServerRegistry(
+                                JdbcServerStore.open(registry.sql()),
+                                registry.cache(),
+                                requiredNodes,
+                                clock);
+                directory = sql.snapshot();
             }
+            if (!directory.servers().keySet().containsAll(requiredNodes)) {
+                throw new IllegalArgumentException(
+                        "Node and issuance targets must exist in the directory");
+            }
+            TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
+            var registries = new ConfigRegistries(directory, trust.loadIssuers());
+            if (node.role().receiver()) {
+                var local = replay.local();
+                guard =
+                        new LocalReplayGuard(
+                                local.path(),
+                                node.id(),
+                                verification.clockSkew(),
+                                local.maxEntries(),
+                                local.busyTimeout(),
+                                clock);
+            }
+            var engine =
+                    new DefaultChorusCoreEngine(
+                            node,
+                            ticket,
+                            issuance,
+                            verification,
+                            sql == null ? registries : sql,
+                            registries,
+                            signer,
+                            guard,
+                            clock);
+            return sql == null ? engine : new ManagedCoreEngine(engine, sql);
+        } catch (IOException
+                | GeneralSecurityException
+                | SQLException
+                | RuntimeException
+                | Error failure) {
+            closeAfterFailure(guard, failure);
+            closeAfterFailure(sql, failure);
             throw failure;
+        }
+    }
+
+    private static void closeAfterFailure(AutoCloseable resource, Throwable failure) {
+        if (resource != null) {
+            try {
+                resource.close();
+            } catch (Exception close) {
+                failure.addSuppressed(close);
+            }
         }
     }
 

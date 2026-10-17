@@ -111,7 +111,7 @@
           }
         },
         "sql": {
-          "$comment": "TODO: SQL routing implementation is pending. TODO: PostgreSQL sql.schema and future write-account separation remain undecided (ARCHITECTURE.md section 7.2).",
+          "$comment": "TODO: PostgreSQL sql.schema and future write-account separation remain undecided (ARCHITECTURE.md section 7.2).",
           "type": "object",
           "additionalProperties": false,
           "required": [

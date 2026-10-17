@@ -123,10 +123,6 @@ final class ConfigurationReader {
     }
 
     static void requireImplementedOptions(JsonNode root) {
-        if (root.at("/registry/provider").asString().equals("SQL")) {
-            // TODO: Enable SQL after JDBC routing and resource assembly are implemented.
-            throw new IllegalArgumentException("registry.provider SQL is not implemented");
-        }
         var replay = root.get("replay-guard");
         if (replay != null) {
             requireImplementedBackend(

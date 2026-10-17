@@ -66,6 +66,10 @@ dependencies {
     implementation(libs.nimbus.jose.jwt)
     implementation(libs.zstd.jni)
     runtimeOnly(libs.sqlite.jdbc)
+    implementation(libs.hikari)
+    runtimeOnly(libs.postgresql)
+    runtimeOnly(libs.mysql.connector)
+    runtimeOnly(libs.mariadb.connector)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)

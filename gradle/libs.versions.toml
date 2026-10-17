@@ -15,6 +15,11 @@ jackson = "3.2.3"
 nimbus-jose-jwt = "10.10"
 zstd-jni = "1.5.7-23"
 sqlite-jdbc = "3.53.4.0"
+hikari = "7.1.0"
+postgresql = "42.7.14"
+mysql-connector = "26.7.0"
+mariadb-connector = "3.5.10"
+testcontainers = "2.0.5"
 spotless = "8.10.4"
 # Matches Spotless's adapter; 1.37.0 breaks its style API.
 google-java-format = "1.36.1"
@@ -32,6 +37,11 @@ jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref
 nimbus-jose-jwt = { module = "com.nimbusds:nimbus-jose-jwt", version.ref = "nimbus-jose-jwt" }
 zstd-jni = { module = "com.github.luben:zstd-jni", version.ref = "zstd-jni" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
+hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+mysql-connector = { module = "com.mysql:mysql-connector-j", version.ref = "mysql-connector" }
+mariadb-connector = { module = "org.mariadb.jdbc:mariadb-java-client", version.ref = "mariadb-connector" }
+testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
