@@ -1,3 +1,10 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, sections 3.1 and 3.8
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/api/DefaultChorusCoreEngine.java
+ * sync: Report Registry availability at the control-plane boundary, independently of local trust.
+ * @endcontext
+ */
 package me.pectics.chorus.core.api;
 
 /** Stable rejection categories; infrastructure initialization errors are reported separately. */
@@ -23,8 +30,9 @@ public enum TicketError {
     REPLAY_CAPACITY_EXCEEDED,
     TICKET_TOO_LARGE,
     CAPABILITY_DISABLED,
+    /** The Registry is available, but the requested server node is absent. */
     UNKNOWN_TARGET,
-    /** The server list cannot supply an approved, usable snapshot. */
-    SERVER_LIST_UNAVAILABLE,
+    /** The root Registry cannot serve the operation; local issuer trust is independent. */
+    REGISTRY_UNAVAILABLE,
     ENGINE_CLOSED
 }

@@ -16,7 +16,7 @@
         "id": {"$ref": "#/$defs/nodeId"},
         "display-name": {
           "$ref": "#/$defs/nonBlankString",
-          "description": "Descriptive local label only. Core does not consume it; runtime server display names come from the configured server list."
+          "description": "Descriptive local label only. Core does not consume it; runtime server display names come from the server node registry."
         },
         "role": {
           "description": "GATEWAY sends tickets, BACKEND receives tickets, and PEER supports both operations.",
@@ -101,7 +101,7 @@
           "properties": {
             "servers-path": {
               "$ref": "#/$defs/nonBlankString",
-              "description": "Server list file path relative to chorus.yml, validated with servers.schema.json."
+              "description": "Server node list configuration file path relative to chorus.yml, validated with servers.schema.json."
             }
           }
         },

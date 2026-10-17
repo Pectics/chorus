@@ -1,2 +1,2 @@
-/** JDBC server snapshots; issuer approvals and all keys stay in local configuration. */
+/** Server node registry backed by shared SQL storage; issuer approvals and keys remain local. */
 package me.pectics.chorus.core.registry.sql;

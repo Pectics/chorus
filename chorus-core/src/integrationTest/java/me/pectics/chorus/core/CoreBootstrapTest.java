@@ -228,7 +228,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void serverListReloadDoesNotReadTrustAndDoesNotAgeOutConfigApproval() throws Exception {
+    void serverNodeRegistryReloadDoesNotReadTrustAndDoesNotAgeOutConfigApproval() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         var registry = CoreBootstrap.loadServerNodeRegistry(servers, clock);
@@ -241,7 +241,7 @@ class CoreBootstrapTest {
         CoreBootstrap.reloadServerNodeRegistry(
                 registry, servers, Clock.offset(clock, java.time.Duration.ofDays(30)));
         assertThat(registry.find("backend").orElseThrow().port()).isEqualTo(25566);
-        assertThat(previous.servers().get("backend").port()).isEqualTo(25565);
+        assertThat(previous.serverNodes().get("backend").port()).isEqualTo(25565);
         assertThat(registry.snapshot().stale()).isFalse();
         assertThat(issuers.findByIssuer("gateway")).containsSame(approval);
         assertThatThrownBy(() -> CoreBootstrap.reloadTrustedIssuers(issuers, trust))
@@ -255,7 +255,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void trustCanBeLoadedAndReloadedWithoutAnyServerListOrSigningKey() throws Exception {
+    void trustCanBeLoadedAndReloadedWithoutAnyServerNodeRegistryOrSigningKey() throws Exception {
         Path trust = directory.resolve("trusted-issuers.yml");
         Files.delete(directory.resolve("servers.yml"));
         Files.delete(directory.resolve("private.der"));
@@ -272,7 +272,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void serverListMembershipDoesNotApproveAnIssuerOrConsumeItsTicket() throws Exception {
+    void serverNodeRegistryMembershipDoesNotApproveAnIssuerOrConsumeItsTicket() throws Exception {
         Path senderFile = write("gateway.yml", configuration("gateway", NodeRole.GATEWAY));
         Path receiverFile = write("backend.yml", configuration("backend", NodeRole.BACKEND));
         byte[] payload;
@@ -471,7 +471,8 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void trustSchemaFailureRetainsApprovalsWithoutBlockingServerListReload() throws Exception {
+    void trustSchemaFailureRetainsApprovalsWithoutBlockingServerNodeRegistryReload()
+            throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         var registry = CoreBootstrap.loadServerNodeRegistry(servers, clock);

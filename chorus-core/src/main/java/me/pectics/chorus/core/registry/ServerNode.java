@@ -2,7 +2,7 @@
  * @context
  * refs: ARCHITECTURE.md, section 3.2
  * related: chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/servers.schema.json
- * sync: Keep routing fields aligned with the server list schema and bootstrap assembly.
+ * sync: Keep routing fields aligned with the server node registry schema and bootstrap assembly.
  * @endcontext
  */
 package me.pectics.chorus.core.registry;

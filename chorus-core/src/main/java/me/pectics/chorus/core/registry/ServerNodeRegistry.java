@@ -9,12 +9,12 @@ package me.pectics.chorus.core.registry;
 
 import java.util.Optional;
 
-/** Thread-safe access to the registry's server list. Reads must not block or perform I/O. */
+/** Thread-safe server node registry. Reads must not block or perform I/O. */
 public interface ServerNodeRegistry {
     /** Throws IllegalStateException when no approved, still-usable snapshot exists. */
     ServerNodeRegistrySnapshot snapshot();
 
     default Optional<ServerNode> find(String nodeId) {
-        return Optional.ofNullable(snapshot().servers().get(nodeId));
+        return Optional.ofNullable(snapshot().serverNodes().get(nodeId));
     }
 }

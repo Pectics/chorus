@@ -38,7 +38,7 @@ class SqlServerNodeRegistryTest {
             var original = registry.snapshot();
             for (int i = 0; i < 20; i++) assertThat(registry.find("backend")).isPresent();
             assertThat(store.loads.get()).isEqualTo(1);
-            assertThatThrownBy(() -> original.servers().clear())
+            assertThatThrownBy(() -> original.serverNodes().clear())
                     .isInstanceOf(UnsupportedOperationException.class);
             ticker.set(Duration.ofMinutes(1).toNanos());
             assertThat(registry.snapshot().stale()).isTrue();
@@ -60,21 +60,21 @@ class SqlServerNodeRegistryTest {
             store.fail = true;
             assertThatThrownBy(
                             () -> registry.refresh().toCompletableFuture().get(2, TimeUnit.SECONDS))
-                    .hasRootCauseMessage("SQL server list refresh failed")
+                    .hasRootCauseMessage("SQL server node registry refresh failed")
                     .satisfies(
                             failure -> {
                                 var trace = new java.io.StringWriter();
                                 failure.printStackTrace(new java.io.PrintWriter(trace));
                                 assertThat(trace.toString()).doesNotContain("secret-password");
                             });
-            assertThat(registry.snapshot().servers()).isEqualTo(original.servers());
+            assertThat(registry.snapshot().serverNodes()).isEqualTo(original.serverNodes());
             assertThat(registry.snapshot().refreshedAt()).isEqualTo(original.refreshedAt());
             assertThat(registry.snapshot().stale()).isTrue();
             store.fail = false;
             store.nodes = Map.of();
             assertThatThrownBy(
                             () -> registry.refresh().toCompletableFuture().get(2, TimeUnit.SECONDS))
-                    .hasRootCauseMessage("SQL server list refresh failed");
+                    .hasRootCauseMessage("SQL server node registry refresh failed");
             ticker.set(Duration.ofMinutes(2).toNanos());
             assertThatThrownBy(registry::snapshot).isInstanceOf(IllegalStateException.class);
             store.nodes =
@@ -84,7 +84,7 @@ class SqlServerNodeRegistryTest {
             registry.refresh().toCompletableFuture().get(2, TimeUnit.SECONDS);
             assertThat(registry.snapshot().stale()).isFalse();
             assertThat(registry.find("backend").orElseThrow().port()).isEqualTo(25566);
-            assertThat(original.servers().get("backend").port()).isEqualTo(25565);
+            assertThat(original.serverNodes().get("backend").port()).isEqualTo(25565);
         }
     }
 
@@ -109,7 +109,7 @@ class SqlServerNodeRegistryTest {
             assertThatThrownBy(registry::snapshot).isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(
                             () -> registry.refresh().toCompletableFuture().get(2, TimeUnit.SECONDS))
-                    .hasRootCauseMessage("SQL server list is closed");
+                    .hasRootCauseMessage("SQL server node registry is closed");
         } finally {
             store.release.countDown();
             registry.close();

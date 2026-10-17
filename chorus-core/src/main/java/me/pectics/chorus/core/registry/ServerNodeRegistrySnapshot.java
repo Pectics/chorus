@@ -12,18 +12,19 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Immutable approved server node snapshot. Stale is informational; the provider enforces usability
- * limits.
+ * Immutable approved server node registry snapshot. Stale is informational; the provider enforces
+ * usability limits.
  */
 public record ServerNodeRegistrySnapshot(
-        Map<String, ServerNode> servers, Instant refreshedAt, boolean stale) {
+        Map<String, ServerNode> serverNodes, Instant refreshedAt, boolean stale) {
     public ServerNodeRegistrySnapshot {
-        servers = Map.copyOf(servers);
+        serverNodes = Map.copyOf(serverNodes);
         Objects.requireNonNull(refreshedAt, "refreshedAt");
-        servers.forEach(
+        serverNodes.forEach(
                 (id, node) -> {
                     if (!id.equals(node.nodeId())) {
-                        throw new IllegalArgumentException("Server map key differs from node ID");
+                        throw new IllegalArgumentException(
+                                "Server node map key differs from node ID");
                     }
                 });
     }

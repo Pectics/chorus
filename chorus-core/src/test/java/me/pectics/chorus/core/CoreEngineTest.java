@@ -1,3 +1,11 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, sections 3.1 and 3.8
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/api/DefaultChorusCoreEngine.java;
+ *          chorus-core/src/main/java/me/pectics/chorus/core/api/TicketError.java
+ * sync: Keep Registry failures distinct from missing nodes and independent local issuer trust.
+ * @endcontext
+ */
 package me.pectics.chorus.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,6 +40,8 @@ import me.pectics.chorus.core.model.ReceiverLoginContext;
 import me.pectics.chorus.core.model.TicketClaims;
 import me.pectics.chorus.core.model.VerifiedExternalIdentity;
 import me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy;
+import me.pectics.chorus.core.registry.ServerNodeRegistry;
+import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 import me.pectics.chorus.core.replay.ReplayDecision;
 import me.pectics.chorus.core.replay.ReplayGuard;
 import org.junit.jupiter.api.Test;
@@ -45,7 +55,14 @@ class CoreEngineTest {
 
     private DefaultChorusCoreEngine engine(
             String id, NodeRole role, BuiltinIdentityResolutionPolicy policy) {
-        var registry = TestSupport.servers();
+        return engine(id, role, policy, TestSupport.serverNodeRegistry());
+    }
+
+    private DefaultChorusCoreEngine engine(
+            String id,
+            NodeRole role,
+            BuiltinIdentityResolutionPolicy policy,
+            ServerNodeRegistry serverNodeRegistry) {
         var issuers = TestSupport.issuers(pair);
         return new DefaultChorusCoreEngine(
                 new NodeConfiguration(id, role),
@@ -56,7 +73,7 @@ class CoreEngineTest {
                         : null,
                 new VerificationConfiguration(
                         Duration.ofSeconds(15), Duration.ofSeconds(2), true, policy),
-                registry,
+                serverNodeRegistry,
                 issuers,
                 role.sender() ? TestSupport.signer(pair) : null,
                 role.receiver() ? replay : null,
@@ -65,7 +82,7 @@ class CoreEngineTest {
 
     @Test
     void independentSectionsStillEnforceSenderRequirementsBeforeTakingReplayOwnership() {
-        var registry = TestSupport.servers();
+        var registry = TestSupport.serverNodeRegistry();
         var issuers = TestSupport.issuers(pair);
         var node = new NodeConfiguration("gateway", NodeRole.PEER);
         var ticket = new TicketConfiguration("chorus:ticket", 4096, 2048);
@@ -118,6 +135,66 @@ class CoreEngineTest {
                         e ->
                                 assertThat(((TicketRejectedException) e.getCause()).code())
                                         .isEqualTo(error));
+    }
+
+    @Test
+    void unavailableRegistryRejectsIssuanceAtTheRegistryBoundary() {
+        try (var sender =
+                engine(
+                        "gateway",
+                        NodeRole.GATEWAY,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM,
+                        unavailableRegistry())) {
+            rejects(
+                    sender.issueTicket(
+                            new IssueTicketRequest(
+                                    "backend",
+                                    new AuthenticatedIdentity(TestSupport.identity(), "gateway"),
+                                    Map.of())),
+                    TicketError.REGISTRY_UNAVAILABLE);
+        }
+    }
+
+    @Test
+    void availableRegistryWithoutTheTargetRejectsAsUnknownTarget() {
+        var snapshot = new ServerNodeRegistrySnapshot(Map.of(), TestSupport.NOW, false);
+        try (var sender =
+                engine(
+                        "gateway",
+                        NodeRole.GATEWAY,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM,
+                        () -> snapshot)) {
+            rejects(
+                    sender.issueTicket(
+                            new IssueTicketRequest(
+                                    "backend",
+                                    new AuthenticatedIdentity(TestSupport.identity(), "gateway"),
+                                    Map.of())),
+                    TicketError.UNKNOWN_TARGET);
+        }
+    }
+
+    @Test
+    void unavailableRegistryDoesNotPreventVerificationUsingLocalIssuerTrust() {
+        try (var receiver =
+                engine(
+                        "backend",
+                        NodeRole.BACKEND,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM,
+                        unavailableRegistry())) {
+            var accepted =
+                    receiver.verifyAndResolve(request(TestSupport.claims(), login))
+                            .toCompletableFuture()
+                            .join();
+            assertThat(accepted.resolvedProfile().finalUuid()).isEqualTo(TestSupport.UUID_MOJANG);
+            assertThat(replay.calls).isEqualTo(1);
+        }
+    }
+
+    private static ServerNodeRegistry unavailableRegistry() {
+        return () -> {
+            throw new IllegalStateException("Registry access failed");
+        };
     }
 
     @Test

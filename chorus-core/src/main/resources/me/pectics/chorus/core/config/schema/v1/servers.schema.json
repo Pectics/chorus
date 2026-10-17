@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:chorus:configuration:servers:v1",
-  "$comment": "The complete servers.yml v1 format contract. See ARCHITECTURE.md section 3.9. Runtime server entries do not grant issuer trust.",
-  "title": "Chorus server list v1",
+  "$comment": "The complete servers.yml v1 format contract. See ARCHITECTURE.md section 3.9. Configured server nodes do not grant issuer trust.",
+  "title": "Chorus server node list configuration v1",
   "type": "object",
   "propertyNames": {
     "$ref": "#/$defs/nodeId"

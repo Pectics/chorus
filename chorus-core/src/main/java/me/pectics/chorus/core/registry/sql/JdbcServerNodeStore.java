@@ -35,9 +35,9 @@ import me.pectics.chorus.core.config.model.RegistryConfiguration.TlsMode;
 import me.pectics.chorus.core.registry.ServerNode;
 
 /**
- * Pooled JDBC reads of the versioned server list. Opening loads credentials and may block; load and
- * close must run off event loops. Never creates tables or loads issuer keys. Owns its pool and any
- * connection-specific truststore; no JVM-wide TLS properties are changed.
+ * Pooled JDBC reads of versioned server node records. Opening loads credentials and may block; load
+ * and close must run off event loops. Never creates tables or loads issuer keys. Owns its pool and
+ * any connection-specific truststore; no JVM-wide TLS properties are changed.
  */
 public final class JdbcServerNodeStore implements SqlServerNodeRegistry.ServerNodeStore {
     private final HikariDataSource pool;
@@ -227,7 +227,7 @@ public final class JdbcServerNodeStore implements SqlServerNodeRegistry.ServerNo
             }
         } catch (SQLException failure) {
             throw new SQLException(
-                    "Unable to read SQL server list; check connection, schema version, and rows",
+                    "Unable to read SQL server node registry; check connection, schema version, and rows",
                     failure.getSQLState(),
                     failure.getErrorCode());
         }

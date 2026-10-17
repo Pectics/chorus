@@ -91,9 +91,9 @@ class SqlServerNodeRegistryIntegrationTest {
         try (var valid =
                 JdbcServerNodeStore.open(
                         settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"))) {
-            var servers = valid.load();
-            assertThat(servers).containsKeys("backend", "Backend");
-            assertThat(servers.get("backend").displayName()).isEqualTo("生存服");
+            var serverNodes = valid.load();
+            assertThat(serverNodes).containsKeys("backend", "Backend");
+            assertThat(serverNodes.get("backend").displayName()).isEqualTo("生存服");
         }
         try (var wrongHost =
                 JdbcServerNodeStore.open(
@@ -134,7 +134,7 @@ class SqlServerNodeRegistryIntegrationTest {
             refresh(registry);
             assertThat(registry.find("backend").orElseThrow().port()).isEqualTo(25567);
             assertThat(registry.find("Backend")).isEmpty();
-            assertThat(original.servers().get("backend").port()).isEqualTo(25565);
+            assertThat(original.serverNodes().get("backend").port()).isEqualTo(25565);
 
             execute(admin, "UPDATE chorus_servers SET host=' ' WHERE node_id='backend'");
             assertRefreshFailure(registry);
@@ -234,7 +234,7 @@ class SqlServerNodeRegistryIntegrationTest {
                                                                     Map.of()))
                                                     .toCompletableFuture()
                                                     .get(5, TimeUnit.SECONDS))
-                            .hasRootCauseMessage("SERVER_LIST_UNAVAILABLE");
+                            .hasRootCauseMessage("REGISTRY_UNAVAILABLE");
                 }
                 var request =
                         new VerifyTicketRequest(
@@ -424,7 +424,7 @@ class SqlServerNodeRegistryIntegrationTest {
 
     private static void assertRefreshFailure(SqlServerNodeRegistry registry) {
         assertThatThrownBy(() -> refresh(registry))
-                .hasRootCauseMessage("SQL server list refresh failed");
+                .hasRootCauseMessage("SQL server node registry refresh failed");
     }
 
     private byte[] resource(String name) throws IOException {

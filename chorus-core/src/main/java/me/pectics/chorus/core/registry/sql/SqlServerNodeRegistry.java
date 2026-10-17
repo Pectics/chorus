@@ -27,10 +27,10 @@ import me.pectics.chorus.core.registry.ServerNodeRegistry;
 import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 
 /**
- * SQL routing with bounded, serial background I/O and a hard monotonic cache age. Construction
- * loads the first snapshot and may block. Lookup never performs I/O. Ownership transfers after
- * argument validation; a failed initial load also closes the store. Close outside event loops.
- * Local issuer trust is a separate resource.
+ * SQL server node registry with bounded, serial background I/O and a hard monotonic cache age.
+ * Construction loads the first snapshot and may block. Lookup never performs I/O. Ownership
+ * transfers after argument validation; a failed initial load also closes the store. Close outside
+ * event loops. Local issuer trust is a separate resource.
  */
 public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoCloseable {
     /** Blocking database boundary, called only during startup or on the registry worker. */
@@ -137,11 +137,12 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
         var current = state;
         long age = ticker.getAsLong() - current.loadedAt();
         if (closed || age >= cache.maxStale().toNanos()) {
-            throw new IllegalStateException("SQL server list is unavailable");
+            throw new IllegalStateException("SQL server node registry is unavailable");
         }
         var snapshot = current.snapshot();
         if (current.failed() || age >= cache.refreshInterval().toNanos()) {
-            return new ServerNodeRegistrySnapshot(snapshot.servers(), snapshot.refreshedAt(), true);
+            return new ServerNodeRegistrySnapshot(
+                    snapshot.serverNodes(), snapshot.refreshedAt(), true);
         }
         return snapshot;
     }
@@ -155,7 +156,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
         synchronized (lifecycle) {
             if (closed)
                 return CompletableFuture.failedFuture(
-                        new IllegalStateException("SQL server list is closed"));
+                        new IllegalStateException("SQL server node registry is closed"));
             if (pending != null) return pending.minimalCompletionStage();
             var result = new CompletableFuture<Void>();
             pending = result;
@@ -172,7 +173,9 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
                             state =
                                     new ServerNodeRegistryCacheState(
                                             previous.snapshot(), previous.loadedAt(), true);
-                            failure = new IllegalStateException("SQL server list refresh failed");
+                            failure =
+                                    new IllegalStateException(
+                                            "SQL server node registry refresh failed");
                         }
                         synchronized (lifecycle) {
                             pending = null;
@@ -185,11 +188,11 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
     }
 
     private ServerNodeRegistryCacheState load() throws SQLException {
-        var servers = store.load();
-        var snapshot = new ServerNodeRegistrySnapshot(servers, clock.instant(), false);
-        if (!snapshot.servers().keySet().containsAll(requiredNodes)) {
+        var serverNodes = store.load();
+        var snapshot = new ServerNodeRegistrySnapshot(serverNodes, clock.instant(), false);
+        if (!snapshot.serverNodes().keySet().containsAll(requiredNodes)) {
             throw new IllegalArgumentException(
-                    "Node and issuance targets must exist in the SQL server list");
+                    "Node and issuance targets must exist in the SQL server node registry");
         }
         return new ServerNodeRegistryCacheState(snapshot, ticker.getAsLong(), false);
     }
@@ -212,7 +215,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
             }
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted closing SQL server list");
+            throw new IllegalStateException("Interrupted closing SQL server node registry");
         }
         if (closeFailure != null) throw closeFailure;
     }

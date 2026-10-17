@@ -109,9 +109,9 @@ public final class CoreBootstrap {
                                 clock);
                 snapshot = sql.snapshot();
             }
-            if (!snapshot.servers().keySet().containsAll(requiredNodes)) {
+            if (!snapshot.serverNodes().keySet().containsAll(requiredNodes)) {
                 throw new IllegalArgumentException(
-                        "Node and issuance targets must exist in the server list");
+                        "Node and issuance targets must exist in the server node registry");
             }
             TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
             var issuers = new ConfigTrustedIssuerStore(trust.loadIssuers());
@@ -169,14 +169,18 @@ public final class CoreBootstrap {
     }
 
     /**
-     * Blocking server list load. Validates servers.yml only; no trust or key files are accessed.
+     * Blocking server node registry load. Validates servers.yml only; no trust or key files are
+     * accessed.
      */
     public static ConfigServerNodeRegistry loadServerNodeRegistry(Path serversFile, Clock clock)
             throws IOException {
         return new ConfigServerNodeRegistry(ServerNodeRegistryLoader.read(serversFile, clock));
     }
 
-    /** Blocking server list reload. Parsing or schema failures leave the old snapshot intact. */
+    /**
+     * Blocking server node registry reload. Parsing or schema failures leave the old snapshot
+     * intact.
+     */
     public static void reloadServerNodeRegistry(
             ConfigServerNodeRegistry registry, Path serversFile, Clock clock) throws IOException {
         registry.replace(ServerNodeRegistryLoader.read(serversFile, clock));
@@ -189,8 +193,8 @@ public final class CoreBootstrap {
     }
 
     /**
-     * Blocking trust reload. Invalid documents or keys retain all old approvals; no server list
-     * I/O.
+     * Blocking trust reload. Invalid documents or keys retain all old approvals; no server node
+     * registry I/O.
      */
     public static void reloadTrustedIssuers(ConfigTrustedIssuerStore issuers, Path trustFile)
             throws IOException, GeneralSecurityException {

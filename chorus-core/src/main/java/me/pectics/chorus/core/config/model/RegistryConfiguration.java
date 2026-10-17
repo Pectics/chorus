@@ -12,7 +12,7 @@ import java.util.Objects;
 
 /**
  * Registry source settings. Paths are relative to the main configuration; construction performs no
- * I/O. SQL currently synchronizes server records, never issuer approvals or keys.
+ * I/O. SQL currently synchronizes server node records, never issuer approvals or keys.
  */
 public record RegistryConfiguration(Provider provider, Config config, Sql sql, Cache cache) {
     public enum Provider {
@@ -46,7 +46,7 @@ public record RegistryConfiguration(Provider provider, Config config, Sql sql, C
         }
     }
 
-    /** Local server list settings; required only by the CONFIG provider. */
+    /** Server node list configuration file settings; required only by the CONFIG provider. */
     public record Config(Path serversPath) {
         public Config {
             Objects.requireNonNull(serversPath, "serversPath");

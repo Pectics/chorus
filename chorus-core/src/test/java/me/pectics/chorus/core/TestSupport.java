@@ -78,7 +78,7 @@ public final class TestSupport {
         return new ServerNode(id, id, "localhost", 25565);
     }
 
-    public static ConfigServerNodeRegistry servers() {
+    public static ConfigServerNodeRegistry serverNodeRegistry() {
         return new ConfigServerNodeRegistry(
                 new ServerNodeRegistrySnapshot(
                         Map.of(

@@ -272,7 +272,7 @@ class ConfigurationSchemaTest {
     }
 
     @Test
-    void serverListSchemaEnforcesFlatEntriesAndAddressBounds() {
+    void serverNodeConfigurationSchemaEnforcesFlatEntriesAndAddressBounds() {
         for (String invalid :
                 List.of(
                         SERVERS.replace("25565", "0"),
@@ -307,7 +307,8 @@ class ConfigurationSchemaTest {
                 "[2001:db8::1]:25565",
                 "[fe80::1%eth0]:25565"
             })
-    void serverListSchemaAcceptsExplicitHostnameIpv4AndBracketedIpv6Addresses(String address) {
+    void serverNodeConfigurationSchemaAcceptsExplicitHostnameIpv4AndBracketedIpv6Addresses(
+            String address) {
         var servers = fixture(ConfigurationDocumentType.SERVERS);
         ((ObjectNode) servers.get("backend")).put("address", address);
         assertThat(contract(ConfigurationDocumentType.SERVERS).validate(servers)).isEmpty();
@@ -315,7 +316,7 @@ class ConfigurationSchemaTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"tags", "metadata"})
-    void serverListSchemaRejectsRemovedExtensionFields(String field) {
+    void serverNodeConfigurationSchemaRejectsRemovedExtensionFields(String field) {
         var servers = fixture(ConfigurationDocumentType.SERVERS);
         var entry = (ObjectNode) servers.at("/backend");
         if (field.equals("tags")) {

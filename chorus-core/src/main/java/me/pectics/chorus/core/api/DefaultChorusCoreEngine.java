@@ -42,7 +42,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
     private final TicketConfiguration ticket;
     private final IssuanceConfiguration issuance;
     private final VerificationConfiguration verification;
-    private final ServerNodeRegistry servers;
+    private final ServerNodeRegistry serverNodeRegistry;
     private final TrustedIssuerStore issuers;
     private final TicketSigner signer;
     private final ReplayGuard replay;
@@ -62,7 +62,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             TicketConfiguration ticket,
             IssuanceConfiguration issuance,
             VerificationConfiguration verification,
-            ServerNodeRegistry servers,
+            ServerNodeRegistry serverNodeRegistry,
             TrustedIssuerStore issuers,
             TicketSigner signer,
             ReplayGuard replay,
@@ -71,7 +71,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         this.ticket = Objects.requireNonNull(ticket, "ticket");
         this.issuance = issuance;
         this.verification = Objects.requireNonNull(verification, "verification");
-        this.servers = Objects.requireNonNull(servers, "servers");
+        this.serverNodeRegistry = Objects.requireNonNull(serverNodeRegistry, "serverNodeRegistry");
         this.issuers = Objects.requireNonNull(issuers, "issuers");
         this.signer = signer;
         this.replay = replay;
@@ -93,7 +93,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
 
     @Override
     public ServerNodeRegistry getServerNodeRegistry() {
-        return servers;
+        return serverNodeRegistry;
     }
 
     @Override
@@ -120,10 +120,11 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             me.pectics.chorus.core.registry.ServerNode target;
             try {
                 target =
-                        servers.find(request.targetNodeId())
+                        serverNodeRegistry
+                                .find(request.targetNodeId())
                                 .orElseThrow(() -> reject(TicketError.UNKNOWN_TARGET));
             } catch (IllegalStateException unavailable) {
-                throw reject(TicketError.SERVER_LIST_UNAVAILABLE);
+                throw reject(TicketError.REGISTRY_UNAVAILABLE);
             }
             Instant issuedAt = clock.instant().truncatedTo(ChronoUnit.SECONDS);
             var claims =
