@@ -28,9 +28,9 @@ import me.pectics.chorus.core.registry.ServerNodeRegistry;
 
 /**
  * SQL routing with bounded, serial background I/O and a hard monotonic cache age. Construction
- * loads the first snapshot and may block. Lookup never performs I/O. Takes ownership of the store,
- * even when construction fails; close outside event loops. Local issuer trust is a separate
- * resource.
+ * loads the first snapshot and may block. Lookup never performs I/O. Ownership transfers after
+ * argument validation; a failed initial load also closes the store. Close outside event loops.
+ * Local issuer trust is a separate resource.
  */
 public final class SqlServerRegistry implements ServerNodeRegistry, AutoCloseable {
     /** Blocking database boundary, called only during startup or on the registry worker. */

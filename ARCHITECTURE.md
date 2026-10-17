@@ -658,7 +658,7 @@ SQL 模式沿用 `registry.config.issuers-path`，不要求或读取 `servers-pa
 `sql.engine` 为 `POSTGRESQL / MYSQL / MARIADB`，连接字段为 `host / port / database / username / password-path`。
 `tls.mode` 为 `DISABLED / VERIFY_FULL`；可选 `ca-cert` 是相对主配置的 PEM CA bundle 路径，省略时统一使用 JVM 默认信任库。
 `DISABLED` 不接受 `ca-cert`，`VERIFY_FULL` 必须验证证书链和连接主机名，不降级为明文或跳过验证。
-MySQL 的自定义 CA 转换为连接专用临时 PKCS12，随连接池关闭删除，不改动全局 JVM 设置。
+MySQL 的自定义 CA 转换为连接专用临时 PKCS12；MariaDB 未指定 CA 时将 JVM 信任根导出到连接专用 PKCS12，避免其基于密码的自动证书回退。临时信任库随连接池关闭删除，不改动全局 JVM 设置。
 密码文件采用 UTF-8，上限 64 KiB；只移除末尾一个 LF 或 CRLF，其余空白保留。信任密钥路径仍相对签发者文件。
 
 `pool.max-connections` 是每个节点连接池的上限；`acquire-timeout` 以整毫秒表示，范围为 500～2147483647ms。
@@ -814,11 +814,12 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准密钥签名、HS256 与 Ed25519 算法混淆拒绝。
 6. 静态目录变更、无外部数据库服务运行；共享目录故障缓存过期验证在 Phase 2 完成。
 
-### Phase 2：SQL 服务器目录实现
+### Phase 2：SQL 服务器目录实现（已实现）
 
 通过 PostgreSQL、MySQL、MariaDB 实现 `ServerNodeRegistry` 的后台快照同步与故障缓存。
 `TrustedIssuerRegistry` 与全部密钥保持本地文件加载；本轮不增加信任同步、心跳或 SQL 核销。
-管理写入的权限/凭据配置与 PostgreSQL 自定义 schema 保留 TODO；真实数据库与 TLS 验证使用独立集成测试任务。
+管理写入的权限/凭据配置与 PostgreSQL 自定义 schema 保留 TODO；真实数据库与 TLS 验证使用独立 `sqlIntegrationTest` 任务，不纳入普通 `check/build`。
+已验证 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13：三库初始化、完整刷新、无效数据与版本拒绝、锁等待查询超时、缓存过期/恢复、TLS 证书/主机名校验，以及本地 Ed25519/HMAC 与 SQLite 防重放闭环。此列表是已测矩阵，不据此承诺所有历史版本或 SQL 核销兼容性。
 
 ### Phase 3：首个平台适配
 

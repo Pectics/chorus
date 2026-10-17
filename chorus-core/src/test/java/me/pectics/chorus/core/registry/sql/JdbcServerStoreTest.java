@@ -6,9 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Path;
 import java.time.Duration;
 import me.pectics.chorus.core.config.model.RegistryConfiguration.*;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class JdbcServerStoreTest {
     @ParameterizedTest
@@ -33,12 +33,10 @@ class JdbcServerStoreTest {
         }
     }
 
-    @Test
-    void rejectsHostnamesContainingConnectionParameters() {
-        assertThatThrownBy(
-                        () ->
-                                JdbcServerStore.jdbcUrl(
-                                        settings(Engine.MYSQL, "host?sslMode=DISABLED", "chorus")))
+    @ParameterizedTest
+    @ValueSource(strings = {"host?sslMode=DISABLED", "user@host", "host/path", "host#fragment"})
+    void rejectsHostnamesContainingConnectionParameters(String host) {
+        assertThatThrownBy(() -> JdbcServerStore.jdbcUrl(settings(Engine.MYSQL, host, "chorus")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid SQL hostname");
     }

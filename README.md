@@ -315,7 +315,7 @@ Java 的 `SqlServerRegistry.refresh()` 可显式异步刷新，返回 `Completio
 
 独立验证命令是 `./gradlew :chorus-core:sqlIntegrationTest`，使用测试专用 CA 与仅含 `localhost` 名称的证书，要求本地 Docker。
 测试覆盖三库初始化、大小写 ID、增删改刷新、错误结构版本、查询锁超时、TLS 成功/不可信 CA/主机名不匹配，
-以及 SQL 目录配合本地 Ed25519/HMAC 和 SQLite 的完整闭环。镜像和依赖版本在 Version Catalog 固定。
+以及 SQL 目录配合本地 Ed25519/HMAC 和 SQLite 的完整闭环。镜像和依赖版本在 Version Catalog 固定；当前已测 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13，不代表已验证其他版本。
 测试证书及私钥仅为公开测试夹具，不用于部署；签发 CA 的私钥不入库。
 
 ## 许可

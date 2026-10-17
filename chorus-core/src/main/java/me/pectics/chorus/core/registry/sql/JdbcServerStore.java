@@ -114,7 +114,9 @@ public final class JdbcServerStore implements SqlServerRegistry.Store {
     static String jdbcUrl(Sql settings) {
         try {
             var endpoint = new URI("sql", null, settings.host(), settings.port(), null, null, null);
-            if (endpoint.getPort() != settings.port()
+            if (endpoint.getHost() == null
+                    || endpoint.getRawUserInfo() != null
+                    || endpoint.getPort() != settings.port()
                     || endpoint.getRawQuery() != null
                     || endpoint.getRawFragment() != null
                     || endpoint.getRawPath() != null && !endpoint.getRawPath().isEmpty()) {
