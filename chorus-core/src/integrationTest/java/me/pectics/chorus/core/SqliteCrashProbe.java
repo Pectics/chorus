@@ -5,8 +5,8 @@ import java.sql.DriverManager;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneOffset;
-import me.pectics.chorus.core.state.ReplayDecision;
-import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
+import me.pectics.chorus.core.replay.ReplayDecision;
+import me.pectics.chorus.core.replay.sqlite.SqliteReplayGuard;
 
 /** Child process intentionally exits without resource cleanup to exercise WAL recovery. */
 public final class SqliteCrashProbe {

@@ -28,7 +28,7 @@ import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.registry.config.ConfigRegistries;
-import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
+import me.pectics.chorus.core.replay.sqlite.SqliteReplayGuard;
 
 /** Blocking startup I/O and resource assembly. Invoke outside platform event loops. */
 public final class CoreBootstrap {

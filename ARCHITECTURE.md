@@ -85,7 +85,7 @@ chorus/
 │       │   ├── config/                 # 配置文件提供的目录与信任快照
 │       │   └── sql/                    # 可选的 Turso/libSQL 与 JDBC 实现
 │       ├── policy/                     # UUID / Profile 身份解析策略
-│       └── state/                      # ReplayGuard：仅负责 Ticket 防重放
+│       └── replay/                     # ReplayGuard：仅负责 Ticket 防重放
 │           ├── sqlite/                 # 本地 SQLite 持久化消费记录
 │           ├── sql/                    # 可选 SQL 实现；后端选型待确定
 │           └── redis/                  # 仅预留未来扩展，不进入 MVP
@@ -103,7 +103,7 @@ chorus/
 
 **依赖方向**：平台模块 → `chorus-common` → `chorus-core`；平台模块也可直接依赖 `chorus-core`。核心不反向依赖平台 API。
 
-`registry/sql` 和 `state/sql` 表示逻辑适配器；如相关外部依赖较多，可在未来提取为独立发布的 adapter artifact，**不要求 MVP 先增加 Gradle 子模块**。
+`registry/sql` 和 `replay/sql` 表示逻辑适配器；如相关外部依赖较多，可在未来提取为独立发布的 adapter artifact，**不要求 MVP 先增加 Gradle 子模块**。
 
 `chorus-core` 可以使用通用 Java 库、数据库驱动和密码学库，但不能持有 `Player`、`GameProfile` 或 Netty `Channel` 等平台对象。数据库 I/O 与定时调度通过接口封装。
 
@@ -441,14 +441,14 @@ public interface IdentityResolutionPolicy {
 
 签发者权限不取决于 Ticket 自己携带的数字 `trustLevel`。
 
-### 3.6 `state`：Ticket 防重放，不管理背包会话锁
+### 3.6 `replay`：Ticket 防重放，不管理背包会话锁
 
 原设计 `TicketStateCoordinator` 同时执行票据核销、等待源服退出、远程强踢。此方案存在“源服心跳 10 秒、目标服等待 3 秒”的时序冲突、先核销后等待导致的失败恢复问题，也把游戏数据保存纳入了身份验证。**v1 移除强制跨服会话栅栏**。
 
 保留独立 SPI：
 
 ```java
-package me.pectics.chorus.core.state;
+package me.pectics.chorus.core.replay;
 
 import java.time.Instant;
 import java.util.concurrent.CompletionStage;

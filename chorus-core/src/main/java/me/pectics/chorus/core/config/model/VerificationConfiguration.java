@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.6, 3.8, and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/state/sqlite/SqliteReplayGuard.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/sqlite/SqliteReplayGuard.java
  * sync: Use this clock skew for both ticket verification and durable replay retention.
  * @endcontext
  */

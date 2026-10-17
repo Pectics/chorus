@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, section 3.8
- * related: chorus-core/src/main/java/me/pectics/chorus/core/state/ReplayGuard.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/ReplayGuard.java
  * sync: Keep asynchronous failure semantics and consumption order aligned.
  * @endcontext
  */

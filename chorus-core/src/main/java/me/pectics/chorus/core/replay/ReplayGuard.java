@@ -4,7 +4,7 @@
  * sync: Keep expiration tolerance and durable consumption aligned with engine verification.
  * @endcontext
  */
-package me.pectics.chorus.core.state;
+package me.pectics.chorus.core.replay;
 
 import java.time.Instant;
 import java.util.concurrent.CompletionStage;

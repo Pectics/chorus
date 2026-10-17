@@ -14,8 +14,8 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import me.pectics.chorus.core.state.ReplayDecision;
-import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
+import me.pectics.chorus.core.replay.ReplayDecision;
+import me.pectics.chorus.core.replay.sqlite.SqliteReplayGuard;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

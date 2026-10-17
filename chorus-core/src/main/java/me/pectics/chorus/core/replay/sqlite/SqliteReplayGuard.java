@@ -1,11 +1,11 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.6, 3.8, and 5.2
- * related: chorus-core/src/main/java/me/pectics/chorus/core/state/ReplayGuard.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/ReplayGuard.java
  * sync: Complete ACCEPTED only after FULL-synchronous WAL commit; never change backend on errors.
  * @endcontext
  */
-package me.pectics.chorus.core.state.sqlite;
+package me.pectics.chorus.core.replay.sqlite;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -23,8 +23,8 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import me.pectics.chorus.core.state.ReplayDecision;
-import me.pectics.chorus.core.state.ReplayGuard;
+import me.pectics.chorus.core.replay.ReplayDecision;
+import me.pectics.chorus.core.replay.ReplayGuard;
 
 /**
  * One persistent receiver database, one bounded serial I/O worker. Opening and closing may block;

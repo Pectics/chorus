@@ -1,2 +1,2 @@
 /** Atomic ticket replay prevention. */
-package me.pectics.chorus.core.state;
+package me.pectics.chorus.core.replay;

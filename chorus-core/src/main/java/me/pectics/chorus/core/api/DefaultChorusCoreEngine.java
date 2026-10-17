@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, section 3.8
- * related: chorus-core/src/main/java/me/pectics/chorus/core/state/ReplayGuard.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/ReplayGuard.java
  * sync: Complete policy and profile checks before durable consumption; never compensate a consumed ticket.
  * @endcontext
  */
@@ -30,7 +30,7 @@ import me.pectics.chorus.core.policy.IdentityPolicy;
 import me.pectics.chorus.core.policy.ResolvedPlayerProfile;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
 import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
-import me.pectics.chorus.core.state.ReplayGuard;
+import me.pectics.chorus.core.replay.ReplayGuard;
 
 /**
  * Phase-1 engine. Takes ownership of ReplayGuard; other injected collaborators remain caller-owned.
