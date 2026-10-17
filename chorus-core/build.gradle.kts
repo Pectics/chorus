@@ -1,10 +1,45 @@
 /*
  * @context
- * refs: ARCHITECTURE.md, sections 2.2 and 6
- * related: gradle/libs.versions.toml; AGENTS.md
- * sync: Keep real SQLite integration tests in check and build without external services.
+ * refs: ARCHITECTURE.md, sections 2.2, 3.9, and 6
+ * related: gradle/libs.versions.toml; AGENTS.md;
+ *          chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/
+ * sync: Keep schema source annotations out of packaged resources, and local integration tests in check.
  * @endcontext
  */
+
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.io.FilterReader
+import java.io.Reader
+import java.io.StringReader
+
+buildscript {
+    dependencies { classpath(localGroovy()) }
+}
+
+class MinifiedSchemaReader(reader: Reader) :
+    FilterReader(
+        StringReader(
+            reader.use { JsonOutput.toJson(withoutComments(JsonSlurper().parse(it))) },
+        ),
+    ) {
+    companion object {
+        private fun withoutComments(value: Any?): Any? =
+            when (value) {
+                is Map<*, *> ->
+                    value.filterKeys { it != "\$comment" }.mapValues { withoutComments(it.value) }
+                is List<*> -> value.map { withoutComments(it) }
+                else -> value
+            }
+    }
+}
+
+tasks.processResources {
+    filteringCharset = "UTF-8"
+    filesMatching("me/pectics/chorus/core/config/schema/**/*.schema.json") {
+        filter<MinifiedSchemaReader>()
+    }
+}
 
 val integrationTest =
     sourceSets.create("integrationTest") {

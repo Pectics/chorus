@@ -679,6 +679,7 @@ operator-b/peer-01:
 | `trusted-issuers.yml` | [trusted-issuers.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/trusted-issuers.schema.json) |
 
 各 Schema 在根节点定义对应文件的全部结构，拥有独立的版本化 `$id`，复用片段放在该文件内部的 `$defs`；不以聚合 Schema 的片段入口替代三个文件契约。
+源文件保留可读排版与 `$comment`（含 TODO）；构建时由 `processResources` 递归移除全部 `$comment` 并输出无多余空白的紧凑 JSON，资源路径及其余 Schema 内容保持不变。
 字段、必填项、类型、枚举、值域、列表唯一性、条件规则和可声明的字符串语法优先在 Schema 中维护；
 例如 `GATEWAY` / `PEER` 的密钥及签发策略、`BACKEND` / `PEER` 的防重放配置条件必填，以及时长语法和整秒精度均由主配置 Schema 定义。
 文件格式演进应首先修改对应 Schema 及其契约测试，Java 适配所消费值的转换和运行时行为，不另维护一份配置字段白名单或格式校验表。

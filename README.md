@@ -80,6 +80,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 | `trusted-issuers.yml` | [trusted-issuers.schema.json](chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/trusted-issuers.schema.json) |
 
 各 Schema 的根节点就是对应文件的完整格式，可以单独用于编辑器或其他 Draft 2020-12 验证器。
+构建时 `processResources` 将三个 Schema 压缩为紧凑 JSON，递归移除全部 `$comment`；源文件保留排版、注释与 TODO，JAR 中的资源路径和其余内容保持不变。
 运行时使用 `com.networknt:json-schema-validator` 从 Core JAR 加载对应 Schema，无需联网获取。
 字段结构、必填项、类型、枚举、数值范围、列表唯一性、条件规则与时长语法均在 Schema 中定义；配置格式变化优先修改对应 Schema 和契约测试。
 只有启用 Sender 时才要求签发密钥与 `issuance`，只有启用 Receiver 时才要求 `replay-guard`；已出现的配置段均接受结构验证。
