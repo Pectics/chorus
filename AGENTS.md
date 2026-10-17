@@ -36,7 +36,9 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 ./gradlew :chorus-common:test    # common 测试（有测试后执行）
 ./gradlew spotlessApply         # 应用格式化
 ./gradlew spotlessCheck         # 只检查格式
-./gradlew build                 # 当前启用模块的格式检查、构建与测试
+./gradlew spotbugs              # 当前启用模块全部 source set 的静态分析，不执行测试
+./gradlew spotbugsMain          # 仅分析当前启用模块的生产代码
+./gradlew build                 # 当前启用模块的格式检查、静态分析、构建与测试
 ./gradlew projects              # 核对实际启用的模块
 ```
 
@@ -50,6 +52,9 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
   `check` / `build` 包含格式检查，修改后运行 `spotlessApply`，最终提交序列交付审计前运行适用的 `spotlessCheck` 与测试；普通构建不自动改写源码。
   本地检查点允许先提交再验证，具体流程见 §3.1。
   格式化仅覆盖当前启用模块与显式列出的手写构建/配置文件，不扫描被忽略的平台、生成文件或 Markdown 文档。
+- SpotBugs 分析当前启用模块的生产代码与测试代码，使用最大分析深度和中/高置信度告警；发现告警时使 `check` / `build` 失败。
+  `spotbugs` 仅编译并分析各 source set，包含 SQL 集成测试源码但不启动数据库或执行测试；HTML / XML 报告位于各模块 `build/reports/spotbugs/`。
+  先修复实际问题；确认为误报或有意契约时，仅对具体告警和成员排除并写明理由，不用全量 baseline 或忽略失败绕过检查。
 - 依赖、平台与插件版本从 `gradle/libs.versions.toml` 读取，模块脚本不硬编码版本；
   foojay-resolver 例外写在 `settings.gradle.kts`，因为其 `plugins {}` 无法读取 catalog。
   项目发布版本目前在 `gradle.properties`，Wrapper 发行包版本在 `gradle/wrapper/gradle-wrapper.properties`，不要在模块中复制。

@@ -1,15 +1,20 @@
 /*
  * @context
  * related: gradle/libs.versions.toml; settings.gradle.kts
- * sync: Pin formatter versions in the catalog and limit targets to enabled modules.
+ * sync: Pin formatter and analyzer versions in the catalog and limit checks to enabled modules.
  * @endcontext
  */
 
 import com.diffplug.gradle.spotless.SpotlessExtension
+import com.github.spotbugs.snom.Confidence
+import com.github.spotbugs.snom.Effort
+import com.github.spotbugs.snom.SpotBugsExtension
+import com.github.spotbugs.snom.SpotBugsTask
 
 plugins {
     java
     alias(libs.plugins.spotless)
+    alias(libs.plugins.spotbugs) apply false
 }
 
 spotless {
@@ -27,6 +32,7 @@ spotless {
 subprojects {
     apply(plugin = "java-library")
     apply(plugin = "com.diffplug.spotless")
+    apply(plugin = "com.github.spotbugs")
 
     java {
         toolchain {
@@ -50,4 +56,22 @@ subprojects {
             endWithNewline()
         }
     }
+
+    configure<SpotBugsExtension> {
+        toolVersion.set(rootProject.libs.versions.spotbugs.get())
+        effort.set(Effort.MAX)
+        reportLevel.set(Confidence.MEDIUM)
+        ignoreFailures.set(false)
+    }
+
+    tasks.withType<SpotBugsTask>().configureEach {
+        reports.create("html") { required.set(true) }
+        reports.create("xml") { required.set(true) }
+    }
+}
+
+tasks.register("spotbugs") {
+    description = "Runs SpotBugs for all source sets in enabled modules without executing tests."
+    group = "verification"
+    dependsOn(subprojects.map { it.tasks.withType<SpotBugsTask>() })
 }

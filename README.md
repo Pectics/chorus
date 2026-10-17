@@ -39,7 +39,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 ## 常用命令
 
 ```bash
-./gradlew build                  # 当前启用模块的格式检查、构建与测试
+./gradlew build                  # 当前启用模块的格式检查、静态分析、构建与测试
 ./gradlew :chorus-core:build     # 仅核心（不依赖平台 API，最快）
 ./gradlew :chorus-core:test      # 纯 Core 单元测试
 ./gradlew :chorus-core:integrationTest # 本地 SQLite 与配置闭环；build 自动包含
@@ -47,6 +47,8 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 ./gradlew :chorus-common:test    # common 测试（有测试后执行）
 ./gradlew spotlessApply          # 应用格式化
 ./gradlew spotlessCheck          # 只检查格式
+./gradlew spotbugs               # 分析当前启用模块全部 source set，不执行测试
+./gradlew spotbugsMain           # 仅分析生产代码
 ./gradlew projects              # 查看实际启用的模块
 ```
 
@@ -58,6 +60,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 - 公开 API 的输入约束、线程约束与错误语义随接口一起提交
 - 除独立 `.md` 文档外，注释一律使用英语；以 5～10% 为注释密度指导，优先可读代码，只解释代码无法快速表达的语义
 - Spotless 统一格式：Java 使用 google-java-format AOSP（4 空格），Gradle Kotlin DSL 使用 ktfmt；`check` / `build` 包含格式检查
+- SpotBugs 静态分析生产代码与测试代码，使用最大分析深度，中/高置信度告警会阻断 `check` / `build`；HTML / XML 报告位于各模块 `build/reports/spotbugs/`。`spotbugs` 包含 SQL 测试源码的编译与分析，但不执行测试或启动数据库
 - 普通测试及 `check` / `build` 不依赖外部数据库服务；SQLite 使用临时文件。独立 `sqlIntegrationTest` 使用本地 Docker，首次需下载数据库与 Testcontainers 镜像
 - 实现顺序见 ARCHITECTURE.md §6：先让 `chorus-core` 测试通过，再推进平台接入
 - Git 使用白名单，只收录显式放行内容；模块内部的构建产物与缓存不收录

@@ -24,6 +24,8 @@ postgresql-test-image = "17.11-alpine"
 mysql-test-image = "8.4.10"
 mariadb-test-image = "11.4.13"
 spotless = "8.10.4"
+spotbugs-plugin = "6.5.13"
+spotbugs = "4.10.5"
 # Matches Spotless's adapter; 1.37.0 breaks its style API.
 google-java-format = "1.36.1"
 ktfmt = "0.65"
@@ -53,3 +55,4 @@ assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 [plugins]
 fabric-loom-remap = { id = "net.fabricmc.fabric-loom-remap", version.ref = "fabric-loom" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugs-plugin" }
