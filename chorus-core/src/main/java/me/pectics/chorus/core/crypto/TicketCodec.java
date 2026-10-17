@@ -1,6 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.4, 3.7, and 3.8
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/crypto/TicketCompression.java
  * sync: Keep the wire schema, strict parsing, and issuer-bound algorithm allowlist aligned.
  * @endcontext
  */
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import me.pectics.chorus.core.api.TicketError;
@@ -37,18 +39,28 @@ import me.pectics.chorus.core.model.TicketClaims;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.TrustedIssuerRegistry;
 
-/** Bounded version-1 Compact JWS. Only approved local keys are used; no remote key discovery. */
+/** Bounded version-1 JWS with optional compression. Only approved local keys are used. */
 public final class TicketCodec {
     private static final JOSEObjectType TYPE = new JOSEObjectType("chorus-ticket+jwt");
     private static final Set<String> CLAIM_FIELDS =
             Set.of("version", "jti", "iss", "aud", "iat", "nbf", "exp", "identity", "extensions");
     private final int maxPayloadBytes;
     private final int maxPropertyBytes;
+    private final TicketCompression compression;
 
     /**
      * Limits are explicit configuration, not product defaults. Property size counts UTF-8 bytes.
      */
     public TicketCodec(int maxPayloadBytes, int maxPropertyBytes) {
+        this(maxPayloadBytes, maxPropertyBytes, TicketCompression.NONE);
+    }
+
+    /**
+     * Compression applies to the complete signed JWS. The payload limit includes its outer frame;
+     * the decompressed JWS is limited to 64 KiB. Decoding accepts every supported encoding,
+     * regardless of the outgoing compression choice. Instances are safe for concurrent calls.
+     */
+    public TicketCodec(int maxPayloadBytes, int maxPropertyBytes, TicketCompression compression) {
         if (maxPayloadBytes < 1
                 || maxPayloadBytes > 5120
                 || maxPropertyBytes < 1
@@ -57,6 +69,7 @@ public final class TicketCodec {
         }
         this.maxPayloadBytes = maxPayloadBytes;
         this.maxPropertyBytes = maxPropertyBytes;
+        this.compression = Objects.requireNonNull(compression, "compression");
     }
 
     public byte[] encode(TicketClaims claims, TicketSigner signer) {
@@ -110,7 +123,7 @@ public final class TicketCodec {
         } catch (com.nimbusds.jose.JOSEException e) {
             throw new IllegalStateException("Ticket signing failed", e);
         }
-        byte[] result = jws.serialize().getBytes(StandardCharsets.US_ASCII);
+        byte[] result = compression.encode(jws.serialize().getBytes(StandardCharsets.US_ASCII));
         if (result.length > maxPayloadBytes) {
             throw reject(TicketError.TICKET_TOO_LARGE);
         }
@@ -128,6 +141,7 @@ public final class TicketCodec {
             throw reject(TicketError.TICKET_TOO_LARGE);
         }
         try {
+            bytes = TicketCompression.decode(bytes);
             for (byte b : bytes) {
                 if (b < 0) {
                     throw reject(TicketError.MALFORMED_TICKET);
@@ -286,7 +300,7 @@ public final class TicketCodec {
                         .decode(ByteBuffer.wrap(bytes))
                         .toString();
         checkStructure(json);
-        return JSONObjectUtils.parse(json, 5120);
+        return JSONObjectUtils.parse(json, TicketCompression.MAX_DECOMPRESSED_BYTES);
     }
 
     private static final class Scope {

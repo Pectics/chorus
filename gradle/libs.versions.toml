@@ -13,6 +13,7 @@ snakeyaml = "2.7"
 json-schema-validator = "3.0.8"
 jackson = "3.2.3"
 nimbus-jose-jwt = "10.10"
+zstd-jni = "1.5.7-23"
 sqlite-jdbc = "3.53.4.0"
 spotless = "8.10.4"
 # Matches Spotless's adapter; 1.37.0 breaks its style API.
@@ -29,6 +30,7 @@ snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
 jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
 nimbus-jose-jwt = { module = "com.nimbusds:nimbus-jose-jwt", version.ref = "nimbus-jose-jwt" }
+zstd-jni = { module = "com.github.luben:zstd-jni", version.ref = "zstd-jni" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }

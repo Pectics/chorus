@@ -64,6 +64,7 @@ dependencies {
     }
     implementation(libs.jackson.databind)
     implementation(libs.nimbus.jose.jwt)
+    implementation(libs.zstd.jni)
     runtimeOnly(libs.sqlite.jdbc)
 
     testImplementation(libs.junit.jupiter)
