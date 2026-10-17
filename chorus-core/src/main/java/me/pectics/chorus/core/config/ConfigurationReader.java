@@ -80,8 +80,34 @@ final class ConfigurationReader {
         return new RegistryConfiguration(
                 RegistryConfiguration.Provider.valueOf(value.get("provider").asString()),
                 new RegistryConfiguration.Config(
-                        base.resolve(config.get("servers-path").asString()),
-                        base.resolve(config.get("issuers-path").asString())));
+                        optionalPath(config, "servers-path", base),
+                        base.resolve(config.get("issuers-path").asString())),
+                value.has("sql") ? sql(value.get("sql"), base) : null,
+                value.has("cache")
+                        ? new RegistryConfiguration.Cache(
+                                duration(value.at("/cache/refresh-interval")),
+                                duration(value.at("/cache/max-stale")))
+                        : null);
+    }
+
+    private static RegistryConfiguration.Sql sql(JsonNode value, Path base) {
+        return new RegistryConfiguration.Sql(
+                RegistryConfiguration.Engine.valueOf(value.get("engine").asString()),
+                value.get("host").asString(),
+                value.get("port").asInt(),
+                value.get("database").asString(),
+                value.get("username").asString(),
+                base.resolve(value.get("password-path").asString()),
+                new RegistryConfiguration.Tls(
+                        RegistryConfiguration.TlsMode.valueOf(value.at("/tls/mode").asString()),
+                        optionalPath(value.get("tls"), "ca-cert", base)),
+                new RegistryConfiguration.Pool(
+                        value.at("/pool/max-connections").asInt(),
+                        duration(value.at("/pool/acquire-timeout"))),
+                new RegistryConfiguration.Timeouts(
+                        duration(value.at("/timeouts/connect")),
+                        duration(value.at("/timeouts/query")),
+                        duration(value.at("/timeouts/socket"))));
     }
 
     static ReplayGuardConfiguration replayGuard(JsonNode value, Path base) {
@@ -97,6 +123,10 @@ final class ConfigurationReader {
     }
 
     static void requireImplementedOptions(JsonNode root) {
+        if (root.at("/registry/provider").asString().equals("SQL")) {
+            // TODO: Enable SQL after JDBC routing and resource assembly are implemented.
+            throw new IllegalArgumentException("registry.provider SQL is not implemented");
+        }
         var replay = root.get("replay-guard");
         if (replay != null) {
             requireImplementedBackend(

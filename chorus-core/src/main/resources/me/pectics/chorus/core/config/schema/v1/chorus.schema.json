@@ -82,13 +82,23 @@
     "registry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "config"],
+      "required": [
+        "provider",
+        "config"
+      ],
       "properties": {
-        "provider": {"const": "CONFIG"},
+        "provider": {
+          "enum": [
+            "CONFIG",
+            "SQL"
+          ]
+        },
         "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["servers-path", "issuers-path"],
+          "required": [
+            "issuers-path"
+          ],
           "properties": {
             "servers-path": {
               "$ref": "#/$defs/nonBlankString",
@@ -96,11 +106,179 @@
             },
             "issuers-path": {
               "$ref": "#/$defs/nonBlankString",
-              "description": "Trust path relative to chorus.yml, validated with trusted-issuers.schema.json."
+              "description": "Local trust path relative to chorus.yml, used by both CONFIG and SQL; keys are never synchronized through SQL."
+            }
+          }
+        },
+        "sql": {
+          "$comment": "TODO: SQL routing implementation is pending. TODO: PostgreSQL sql.schema and future write-account separation remain undecided (ARCHITECTURE.md section 7.2).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "engine",
+            "host",
+            "port",
+            "database",
+            "username",
+            "password-path",
+            "tls",
+            "pool",
+            "timeouts"
+          ],
+          "properties": {
+            "engine": {
+              "enum": [
+                "POSTGRESQL",
+                "MYSQL",
+                "MARIADB"
+              ]
+            },
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$(?![\\s\\S])",
+              "description": "ASCII DNS name, IPv4, or unbracketed IPv6; no URL or connection parameters."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "database": {
+              "$ref": "#/$defs/nonBlankString"
+            },
+            "username": {
+              "$ref": "#/$defs/nonBlankString"
+            },
+            "password-path": {
+              "$ref": "#/$defs/nonBlankString",
+              "description": "UTF-8 password file relative to chorus.yml; one trailing LF or CRLF is removed, other whitespace is preserved."
+            },
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "enum": [
+                    "DISABLED",
+                    "VERIFY_FULL"
+                  ]
+                },
+                "ca-cert": {
+                  "$ref": "#/$defs/nonBlankString",
+                  "description": "Optional PEM CA bundle path relative to chorus.yml. Omitted uses the JVM default truststore."
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "mode": {
+                        "const": "DISABLED"
+                      }
+                    }
+                  },
+                  "then": {
+                    "not": {
+                      "required": [
+                        "ca-cert"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "pool": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "max-connections",
+                "acquire-timeout"
+              ],
+              "properties": {
+                "max-connections": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                },
+                "acquire-timeout": {
+                  "$ref": "#/$defs/duration",
+                  "description": "Whole milliseconds in 500..2147483647; waits for the pool, independently of physical connect timeout."
+                }
+              }
+            },
+            "timeouts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "connect",
+                "query",
+                "socket"
+              ],
+              "properties": {
+                "connect": {
+                  "$ref": "#/$defs/duration",
+                  "description": "Positive whole milliseconds fitting 1..2147483647. Driver seconds round upward; query applies per statement."
+                },
+                "query": {
+                  "$ref": "#/$defs/duration",
+                  "description": "Positive whole milliseconds fitting 1..2147483647. Driver seconds round upward; query applies per statement."
+                },
+                "socket": {
+                  "$ref": "#/$defs/duration",
+                  "description": "Positive whole milliseconds fitting 1..2147483647. Driver seconds round upward; query applies per statement."
+                }
+              }
+            }
+          }
+        },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "refresh-interval",
+            "max-stale"
+          ],
+          "properties": {
+            "refresh-interval": {
+              "$ref": "#/$defs/duration"
+            },
+            "max-stale": {
+              "$ref": "#/$defs/duration",
+              "description": "Hard age limit since the last successful SQL server snapshot; must exceed refresh-interval. Failed refreshes never extend it. Local trust does not expire."
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "CONFIG"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "config": {
+                "required": [
+                  "servers-path"
+                ]
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "sql",
+              "cache"
+            ]
+          }
+        }
+      ]
     },
     "issuance": {
       "description": "Sender permissions and lifetime. Receivers independently enforce their trust policies.",

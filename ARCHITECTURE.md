@@ -152,16 +152,16 @@ chorus/
 提供两个互斥的**目录来源模式**：
 
 1. **`CONFIG`**：每台 Chorus 节点读取管理员提供的本地 `servers` 与 `trusted-issuers` 配置。不存在自动同步权威；管理员负责分发与更新一致的配置，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
-2. **`SHARED_SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。服务器运行时获取可信快照，使用本地缓存解析目标地址并获取已批准的验签密钥绑定。Turso/libSQL 是推荐适配实现之一，标准 JDBC 是可选后端。
+2. **`SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。本轮只通过 JDBC 同步 `servers`，支持 PostgreSQL、MySQL、MariaDB。签发者批准、信任策略和所有密钥继续由本地文件维护，不读取或创建 SQL 信任表；Turso/libSQL 留待后续适配。
 
-两种模式使用相同的 Core 读取接口；目录选择由 `registry.provider` 表达，`CONFIG` 模式的文件路径位于 `registry.config`。
+两种模式使用相同的 Core 读取接口；目录选择由 `registry.provider` 表达，文件路径位于 `registry.config`；两种模式都要求 `issuers-path`，仅 `CONFIG` 要求 `servers-path`。SQL 连接参数位于 `registry.sql`，服务器快照策略位于 `registry.cache`。
 防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选目录数据库。
 
 跨服主联盟中不必要求所有服主共用一个具有写权限的数据库。可为每个管理域维护自己的目录，再在本地明确授权**外域签发者**。本地管理员选择信任哪些外域公钥和身份类型。
 
 #### 管理命令（**候选方案，尚未最终确认**）
 
-平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后交给 `registry` 的管理员写入接口。对于 `CONFIG`，仅更新**本机配置**；对于 `SHARED_SQL`，写入管理域权威数据库。没有共享存储时，命令不会神奇同步到其他节点。
+平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后交给 `registry` 的管理员写入接口。对于 `CONFIG`，仅更新**本机配置**；对于 `SQL`，服务器目录可写入管理域权威数据库；信任修改仍限本机文件，不同步到 SQL。没有共享存储时，命令不会神奇同步到其他节点。
 
 权限验证发生在平台管理界面；是否采用游戏内指令作为正式配置入口，仍待确定。无需首先开发网页后台。
 
@@ -176,9 +176,9 @@ chorus/
 
 #### 缓存与数据库故障
 
-- 上次**经过批准**的目录与验签密钥快照可以留在内存中；共享数据库临时不可用时，继续使用该快照执行静态路由与本地验签。
+- 上次**经过批准**的服务器目录可以留在内存中；共享数据库临时不可用时，在允许期限内继续使用旧目录。本地信任与密钥不依赖 SQL 刷新，也不因 SQL 缓存过期而失效。
 - 缓存中不存在的新节点、陌生公钥、未经批准的密钥变更，一律不因数据库故障而自动被接受。
-- 快照的最大可用陈旧时间由配置控制；过期则拒绝依赖该信息的新转移。**撤销密钥传播会受缓存期限影响**，文档必须公开此取舍。
+- `cache.max-stale` 从最后一次成功读取并完整校验服务器目录起计时，失败不重置，到期拒绝依赖目录的新操作；`refresh-interval` 必须更短。SQL 缓存不负责传播密钥撤销，本地信任仍须由管理员分发和显式重新加载。
 - 节点冷启动且数据库不可用、又没有可验证的本地可信快照时不能凭空发现其他服务器；可使用管理员提供的静态备用快照。
 - **不能把 SQL 票据核销错误自动降级为本地核销**：两个后端不共享消费记录，会造成票据重复接受。控制面缓存策略与数据面 ReplayGuard 故障策略是两回事。
 
@@ -233,60 +233,24 @@ public interface TrustedIssuerRegistry {
 
 写入型管理接口另行声明，例如 `ServerDirectoryAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
 
-### 3.3 共享数据库存储草案（共享目录与 `REGISTRY` 防重放后端的实现草案）
+### 3.3 SQL 服务器目录存储契约
 
-此处 SQL 示例以 SQLite/libSQL 兼容方言表达。MySQL/PostgreSQL 必须实现对应的 dialect、迁移及并发测试，不能认为 `DELETE ... RETURNING` 在所有 JDBC 数据库中通用。
+本轮数据库仅保存服务器目录，不同步任何签发者批准、信任策略、公钥、私钥或 HMAC 密钥。
+`chorus_registry_schema(singleton, version)` 保存结构版本；`chorus_servers(node_id, display_name, host, port)`
+对应 `ServerNode`，节点 ID 保持大小写敏感。表结构版本为 `1`，三种数据库各有完整初始化脚本，位于
+`chorus-core/src/main/resources/me/pectics/chorus/core/registry/sql/v1/`。
 
-```sql
--- 管理员维护的权威节点目录；运行时心跳不得覆盖本表
-CREATE TABLE chorus_servers (
-    node_id        TEXT PRIMARY KEY,
-    display_name   TEXT NOT NULL,
-    host           TEXT NOT NULL,
-    port           INTEGER NOT NULL,
-    role_hint      TEXT,
-    enabled        INTEGER NOT NULL DEFAULT 1,
-    updated_at_ms  INTEGER NOT NULL
-);
+管理员先执行对应脚本再维护目录；节点运行时不自动建表或迁移，不注册自身、不修改目录。
+SQL 使用固定表名，PostgreSQL 本轮固定使用 `public`；TODO（§7.2）：自定义 `sql.schema` 尚未引入。
+TODO（§7.2）：未来管理或核销写操作所需的账号隔离及凭据配置可能调整，当前连接字段不承诺为最终权限模型。
 
--- 管理员批准的信任条目；示例为按接收节点授权
-CREATE TABLE chorus_trusted_issuers (
-    receiver_node_id        TEXT NOT NULL,
-    issuer_node_id          TEXT NOT NULL,
-    public_keys_ed25519_json TEXT NOT NULL,
-    policy_json             TEXT NOT NULL,
-    enabled                 INTEGER NOT NULL DEFAULT 1,
-    updated_at_ms           INTEGER NOT NULL,
-    PRIMARY KEY (receiver_node_id, issuer_node_id)
-);
+SQL 读取在后台工作线程完成，完整目录通过模型与本节点/签发目标引用检查后才原子发布。
+数据库结构版本错误、目录值无效、必需目标丢失或读取失败均保留旧目录，不刷新其成功时间。
+启动没有可用首个目录时拒绝初始化；后续缓存到期只影响依赖目录的操作，本地信任验票不因目录不可用而被禁止。
+数据库错误不回退 `servers.yml`，以免在故障时悄悄更换权威来源。
 
--- 可选的节点观测数据；不用于授权
-CREATE TABLE chorus_node_presence (
-    node_id          TEXT PRIMARY KEY,
-    online_players   INTEGER,
-    max_players      INTEGER,
-    last_heartbeat_ms INTEGER
-);
-```
-
-上述 `chorus_node_presence` 只有在能合理限制节点写入权限时才作为共享心跳实现。单纯共享一个全写令牌不能安全阻止节点篡改其他节点的状态；若无法安全实现，可先禁用心跳写入，手动目录仍然可用。
-
-**条件性扩展：** 若最终选择 SQL 票据核销，才增加如下数据表，不在只使用共享目录时创建：
-
-```sql
-CREATE TABLE chorus_tickets (
-    jti              TEXT PRIMARY KEY,
-    issuer_node_id   TEXT NOT NULL,
-    target_node_id   TEXT NOT NULL,
-    expires_at_ms    INTEGER NOT NULL
-);
-CREATE INDEX idx_chorus_tickets_expires
-    ON chorus_tickets(expires_at_ms);
-```
-
-`chorus_sessions` 全局交接锁表不纳入 MVP。若未来真正需要可选全局会话协调，必须先独立定义故障恢复、租约过期、fencing token 与共享数据写入方的责任，再另拟规格。
-
-SQL ReplayGuard 可在具备所需语义的数据库中使用原子条件删除，例如 SQLite/libSQL 的 `DELETE ... RETURNING`，但不能据此假设网络故障时调用方总能知道事务是否提交；重复请求需要按**结果未知**与**已使用**处理，不能放行。
+心跳、共享信任表和 SQL 票据核销均不在本轮创建或实现。`REGISTRY` 防重放仍为 TODO 并由启动装配拒绝；
+未来实现核销时需独立定义原子消费及提交结果未知的语义，不把服务器目录兼容性视为核销兼容性。
 
 ### 3.4 `model`：玩家身份与 Ticket
 
@@ -829,9 +793,11 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准密钥签名、HS256 与 Ed25519 算法混淆拒绝。
 6. 静态目录变更、无外部数据库服务运行；共享目录故障缓存过期验证在 Phase 2 完成。
 
-### Phase 2：共享目录 SQL 实现
+### Phase 2：SQL 服务器目录实现（开发中）
 
-基于管理员手动维护的 SQL 表实现 `ServerNodeRegistry`、`TrustedIssuerRegistry` 的快照同步、权限边界和故障缓存。再根据需求决定管理指令的最终形式、心跳上报权限隔离和 DB 方言范围。
+通过 PostgreSQL、MySQL、MariaDB 实现 `ServerNodeRegistry` 的后台快照同步与故障缓存。
+`TrustedIssuerRegistry` 与全部密钥保持本地文件加载；本轮不增加信任同步、心跳或 SQL 核销。
+管理写入的权限/凭据配置与 PostgreSQL 自定义 schema 保留 TODO；真实数据库与 TLS 验证使用独立集成测试任务。
 
 ### Phase 3：首个平台适配
 
@@ -863,7 +829,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 2. **Ticket 核销的最终默认后端**：`LOCAL`、`REGISTRY` 还是 `REDIS`，以及何种规模/可靠性目标才需要 SQL。
 3. **节点心跳**：共享数据库是否提供安全且足够细粒度的写权限，若不能则如何上报。
 4. **受控联盟深度**：是否需要外域不完全可信 Peer 对上游认证结果进行无权伪造的转发；若需要，再设计双层签名 Attestation。
-5. **数据库支持矩阵**：Turso/libSQL 及哪些 JDBC 方言进入首版；各自事务与核销语义需要集成测试。
+5. **数据库后续扩展**：本轮服务器目录目标为 PostgreSQL、MySQL、MariaDB；精确验证版本随集成测试记录。Turso/libSQL、其他方言及 SQL 核销单独评估。TODO：PostgreSQL `sql.schema`，以及未来管理/核销写权限可能导致的凭据配置调整。
 6. **精确平台版本/API**：各平台的最低支持版本、Profile 改写能力、配置阶段清 Cookie 接口。
 7. **运维参数**：默认 TTL、缓存最大陈旧时间、重放缓存容量、超时策略应在实测后确定。
 
