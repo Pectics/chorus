@@ -71,6 +71,15 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 预期拒绝通过 `TicketRejectedException.code()` 区分，平台 I/O 线程不能 `.join()`。
 关闭 Engine 会关闭其 ReplayGuard 并等待已排队工作；完成回调可能在 SQLite 工作线程执行，回调不能阻塞该线程。
 
+Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置的 `node`、`ticket`、`issuance`、
+`verification`、`crypto`、`registry`、`replay-guard` 七组分别组织，没有统一的根配置对象。
+`CoreBootstrap.open` 的文件入口保持不变；直接构造 `DefaultChorusCoreEngine` 时，分别传入
+`NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`，
+随后传入节点目录、签发者目录、签发器、防重放对象与时钟。仅接收角色的签发配置和签发器可为 `null`；
+签发角色的 TTL 仍不得超过验票最大寿命。
+原有平铺的 `CoreConfiguration` 已移除，`NodeRole` 迁入 `config.model`，Java 调用方需更新构造方式与 imports。
+配置模型不执行 I/O；密钥、目录与防重放配置由启动装配层消费。
+
 三个配置文件各有一个完整、独立的 Schema，格式契约位于 `schema/v1/`，每个文档带有自己的版本化 `$id`：
 
 | 配置文件 | Schema |

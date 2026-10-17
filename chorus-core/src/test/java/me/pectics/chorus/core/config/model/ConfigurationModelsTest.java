@@ -2,6 +2,7 @@ package me.pectics.chorus.core.config.model;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Set;
 import me.pectics.chorus.core.model.AuthType;
@@ -11,6 +12,27 @@ import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 import org.junit.jupiter.api.Test;
 
 class ConfigurationModelsTest {
+    @Test
+    void localReplayLimitsAreValidatedBeforeOpeningTheDatabase() {
+        for (var timeout :
+                java.util.List.of(
+                        Duration.ZERO,
+                        Duration.ofNanos(1),
+                        Duration.ofSeconds(-1),
+                        Duration.ofMillis((long) Integer.MAX_VALUE + 1))) {
+            assertThatThrownBy(
+                            () ->
+                                    new ReplayGuardConfiguration.Local(
+                                            Path.of("state/replay.db"), 100, timeout))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(
+                        () ->
+                                new ReplayGuardConfiguration.Local(
+                                        Path.of("state/replay.db"), 0, Duration.ofMillis(500)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     void ticketPropertiesCannotExceedTheCompleteCookieBudget() {
         assertThatThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 4097))

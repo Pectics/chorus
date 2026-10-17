@@ -77,7 +77,8 @@ chorus/
 ├── chorus-core/                         # 纯 Java 21；无 Minecraft 平台 API 依赖
 │   └── src/main/java/me/pectics/chorus/core/
 │       ├── api/                        # ChorusCoreEngine、输入输出与错误类型
-│       ├── config/                     # 配置模型、校验与装配
+│       ├── config/                     # 配置读取、转换与启动装配
+│       │   └── model/                  # 与主配置七个顶级段对应的独立值类型
 │       ├── model/                      # ServerNode、IdentityClaim、TicketClaims 等
 │       ├── crypto/                     # Ed25519/HMAC 签发与验签能力、JWS 编解码
 │       ├── registry/                   # ServerNodeRegistry、TrustedIssuerRegistry
@@ -681,6 +682,21 @@ operator-b/peer-01:
 `issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
+
+Java 配置按主文件的七个顶级段独立组织在 `config.model`：
+`NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`、
+`CryptoConfiguration`、`RegistryConfiguration` 与 `ReplayGuardConfiguration`；`NodeRole` 随节点配置放在同一包。
+不再使用平铺的 `CoreConfiguration`，也不将四组或七组重新聚合成根配置对象。各消费者只接收所需的配置组。
+签发 TTL 与签发权限同属 `IssuanceConfiguration`；密码学配置用封闭的 Ed25519 / HMAC-SHA256 两种路径表示，
+接收专用角色可不提供本地签发路径。目录的 `config` 与防重放的 `local` 参数作为各自所属组的嵌套值类型。
+配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、目录快照或防重放资源。
+
+`ConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，`ConfigurationReader` 负责主配置各段的类型转换，
+`RegistryLoader` 负责目录与信任文档及批准密钥的加载，`CoreBootstrap` 负责跨组引用检查和资源装配。
+完整装配入口使用七组独立参数；Engine 分别接收 `node / ticket / issuance / verification`，并注入已创建的运行资源。
+`issuance.ttl <= verification.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
+本地防重放设置不另设时钟容差，装配时使用同一份 `verification.clock-skew`。
+所有当前角色会消费的配置值先完成转换和数值校验，再加载密钥或打开状态库；已出现但不启用的配置段仍接受完整 Schema 验证。
 
 每种配置文件使用**独立、完整、可单独验证的 JSON Schema** 作为格式契约。当前契约版本为 `v1`，采用 JSON Schema Draft 2020-12：
 

@@ -179,6 +179,17 @@ class HmacBootstrapTest {
     }
 
     @Test
+    void invalidReplayValuesAreRejectedBeforeGeneratingTheLocalSigningSecret() throws Exception {
+        Path file = deployment("gateway", "PEER");
+        Files.writeString(
+                file, Files.readString(file).replace("busy-timeout: 500ms", "busy-timeout: 0ms"));
+        assertThatThrownBy(() -> CoreBootstrap.open(file, clock))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(file.getParent().resolve("keys")).doesNotExist();
+        assertThat(file.getParent().resolve("state")).doesNotExist();
+    }
+
+    @Test
     void validatesAllSchemasBeforeGeneratingALocalSigningSecret() throws Exception {
         Path file = deployment("gateway", "GATEWAY");
         Files.writeString(

@@ -1,9 +1,9 @@
 /*
  * @context
- * refs: ARCHITECTURE.md, sections 3.1, 3.8, and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationLoader.java;
- *          chorus-core/src/main/java/me/pectics/chorus/core/registry/config/ConfigRegistries.java
- * sync: Consume schema-approved values and validate runtime references before publishing state.
+ * refs: ARCHITECTURE.md, sections 3.1, 3.7, 3.8, and 3.9
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationReader.java;
+ *          chorus-core/src/main/java/me/pectics/chorus/core/config/RegistryLoader.java
+ * sync: Assemble independent sections only after value conversion; load approved keys before opening replay state.
  * @endcontext
  */
 package me.pectics.chorus.core.config;
@@ -13,43 +13,24 @@ import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.sql.SQLException;
 import java.time.Clock;
-import java.time.DateTimeException;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.Objects;
 import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.model.CryptoConfiguration;
 import me.pectics.chorus.core.config.model.IssuanceConfiguration;
 import me.pectics.chorus.core.config.model.NodeConfiguration;
-import me.pectics.chorus.core.config.model.NodeRole;
+import me.pectics.chorus.core.config.model.RegistryConfiguration;
+import me.pectics.chorus.core.config.model.ReplayGuardConfiguration;
 import me.pectics.chorus.core.config.model.TicketConfiguration;
 import me.pectics.chorus.core.config.model.VerificationConfiguration;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
-import me.pectics.chorus.core.crypto.SignatureAlgorithm;
-import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.crypto.TicketSigner;
-import me.pectics.chorus.core.crypto.TicketVerifier;
-import me.pectics.chorus.core.model.AuthType;
-import me.pectics.chorus.core.policy.IdentityPolicy;
-import me.pectics.chorus.core.policy.IssuancePolicy;
-import me.pectics.chorus.core.policy.IssuerTrustPolicy;
-import me.pectics.chorus.core.registry.RegistrySnapshot;
-import me.pectics.chorus.core.registry.ServerNode;
-import me.pectics.chorus.core.registry.TrustedIssuer;
 import me.pectics.chorus.core.registry.config.ConfigRegistries;
 import me.pectics.chorus.core.state.sqlite.SqliteReplayGuard;
-import tools.jackson.databind.JsonNode;
 
-/**
- * Blocking startup I/O and runtime assembly. Invoke outside platform event loops. File format
- * validation belongs to each document's schema; domain objects still protect their runtime
- * invariants, including relationships between converted durations and references across files.
- */
+/** Blocking startup I/O and resource assembly. Invoke outside platform event loops. */
 public final class CoreBootstrap {
     private CoreBootstrap() {}
 
@@ -59,59 +40,49 @@ public final class CoreBootstrap {
     }
 
     /**
-     * Loads the current file formats with explicit operational limits. YAML and schema errors throw
-     * IllegalArgumentException with the file path; schema errors also identify the field.
+     * Loads independently typed sections with explicit operational limits. YAML and schema errors
+     * throw IllegalArgumentException with the file path; schema errors also identify the field.
+     * Conversion and reference checks precede resource assembly. Only sending roles load signing
+     * material, and only receiving roles open durable replay state.
      */
     public static ChorusCoreEngine open(Path configurationFile, Clock clock)
             throws IOException, GeneralSecurityException, SQLException {
+        Objects.requireNonNull(clock, "clock");
         var root = ConfigurationLoader.read(configurationFile, Document.CORE);
-        requireImplementedOptions(root);
+        ConfigurationReader.requireImplementedOptions(root);
         Path base = configurationFile.toAbsolutePath().normalize().getParent();
-        var role = NodeRole.valueOf(root.at("/node/role").asString());
-        var crypto = root.get("crypto");
-        var ticket = root.get("ticket");
-        var verification = root.get("verification");
-        var node =
-                new NodeConfiguration(
-                        root.at("/node/id").asString(),
-                        root.at("/node").has("display-name")
-                                ? root.at("/node/display-name").asString()
-                                : null,
-                        role);
-        var ticketConfiguration =
-                new TicketConfiguration(
-                        ticket.get("cookie-key").asString(),
-                        ticket.get("max-payload-bytes").asInt(),
-                        ticket.get("max-property-bytes").asInt(),
-                        ticket.has("compression")
-                                ? TicketCompression.valueOf(ticket.get("compression").asString())
-                                : TicketCompression.ZSTD);
-        var verificationConfiguration =
-                new VerificationConfiguration(
-                        duration(verification.get("max-lifetime")),
-                        duration(verification.get("clock-skew")),
-                        verification.get("enforce-transfer-intent").asBoolean(),
-                        IdentityPolicy.valueOf(verification.get("identity-policy").asString()));
+        var node = ConfigurationReader.node(root.get("node"));
+        var ticket = ConfigurationReader.ticket(root.get("ticket"));
         var issuance =
-                role.sender()
-                        ? new IssuanceConfiguration(
-                                duration(root.at("/issuance/ttl")),
-                                new IssuancePolicy(
-                                        policy(root.get("issuance")),
-                                        strings(root.at("/issuance/allowed-targets"))))
+                node.role().sender() ? ConfigurationReader.issuance(root.get("issuance")) : null;
+        var verification = ConfigurationReader.verification(root.get("verification"));
+        var crypto = ConfigurationReader.crypto(root.get("crypto"), base);
+        var registry = ConfigurationReader.registry(root.get("registry"), base);
+        var replay =
+                node.role().receiver()
+                        ? ConfigurationReader.replayGuard(root.get("replay-guard"), base)
                         : null;
-        if (role.sender()
-                && issuance.ttl().compareTo(verificationConfiguration.maxLifetime()) > 0) {
+        return assemble(node, ticket, issuance, verification, crypto, registry, replay, clock);
+    }
+
+    private static ChorusCoreEngine assemble(
+            NodeConfiguration node,
+            TicketConfiguration ticket,
+            IssuanceConfiguration issuance,
+            VerificationConfiguration verification,
+            CryptoConfiguration crypto,
+            RegistryConfiguration registry,
+            ReplayGuardConfiguration replay,
+            Clock clock)
+            throws IOException, GeneralSecurityException, SQLException {
+        if (node.role().sender() && issuance.ttl().compareTo(verification.maxLifetime()) > 0) {
             throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
         }
-        var files = root.at("/registry/config");
-        Path serversFile = base.resolve(files.get("servers-path").asString());
-        Path trustFile = base.resolve(files.get("issuers-path").asString());
-        var directory =
-                readDirectory(ConfigurationLoader.read(serversFile, Document.SERVERS), clock);
-        var trust = ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS);
+        var files = registry.config();
+        var documents = RegistryLoader.read(files.serversPath(), files.issuersPath(), clock);
+        var directory = documents.directory();
         if (!directory.servers().containsKey(node.id())
-                || role.sender()
+                || node.role().sender()
                         && !directory
                                 .servers()
                                 .keySet()
@@ -119,26 +90,26 @@ public final class CoreBootstrap {
             throw new IllegalArgumentException(
                     "Node and issuance targets must exist in the directory");
         }
-        TicketSigner signer = role.sender() ? loadSigner(crypto, base) : null;
-        var registries = new ConfigRegistries(directory, readIssuers(trust, trustFile));
+        TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
+        var registries = new ConfigRegistries(directory, documents.loadIssuers());
         SqliteReplayGuard guard = null;
-        if (role.receiver()) {
-            var replay = root.at("/replay-guard/local");
+        if (node.role().receiver()) {
+            var local = replay.local();
             guard =
                     new SqliteReplayGuard(
-                            base.resolve(replay.get("path").asString()),
+                            local.path(),
                             node.id(),
-                            verificationConfiguration.clockSkew(),
-                            replay.get("max-entries").asInt(),
-                            duration(replay.get("busy-timeout")),
+                            verification.clockSkew(),
+                            local.maxEntries(),
+                            local.busyTimeout(),
                             clock);
         }
         try {
             return new DefaultChorusCoreEngine(
                     node,
-                    ticketConfiguration,
+                    ticket,
                     issuance,
-                    verificationConfiguration,
+                    verification,
                     registries,
                     registries,
                     signer,
@@ -152,149 +123,27 @@ public final class CoreBootstrap {
         }
     }
 
-    private record Approved(RegistrySnapshot directory, List<TrustedIssuer> issuers) {}
-
-    private static TicketSigner loadSigner(JsonNode crypto, Path base)
+    private static TicketSigner loadSigner(CryptoConfiguration crypto)
             throws IOException, GeneralSecurityException {
-        return switch (SignatureAlgorithm.valueOf(crypto.get("algorithm").asString())) {
-            case ED25519 ->
-                    Ed25519.loadSigner(
-                            base.resolve(crypto.get("private-key").asString()),
-                            base.resolve(crypto.get("public-key").asString()));
-            case HMAC_SHA256 -> HmacSha256.loadOrCreate(base.resolve(crypto.get("key").asString()));
+        return switch (crypto) {
+            case CryptoConfiguration.Ed25519 keys ->
+                    Ed25519.loadSigner(keys.privateKey(), keys.publicKey());
+            case CryptoConfiguration.HmacSha256 keys -> HmacSha256.loadOrCreate(keys.key());
         };
-    }
-
-    private static void requireImplementedOptions(JsonNode root) {
-        var replay = root.get("replay-guard");
-        if (replay != null) {
-            switch (replay.get("backend").asString()) {
-                case "LOCAL" -> {}
-                case "REGISTRY" -> {
-                    // TODO: Reuse the configured registry database for durable ticket consumption.
-                    throw new IllegalArgumentException(
-                            "replay-guard.backend REGISTRY is not implemented");
-                }
-                case "REDIS" -> {
-                    // TODO: Define Redis settings and implement a durable Redis ReplayGuard.
-                    throw new IllegalArgumentException(
-                            "replay-guard.backend REDIS is not implemented");
-                }
-                default ->
-                        throw new IllegalStateException("Unknown schema-approved replay backend");
-            }
-        }
     }
 
     /** Key paths are relative to the trust file. Both files must satisfy their own schemas. */
     public static ConfigRegistries loadRegistries(Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
-        var approved = readRegistries(serversFile, trustFile, clock);
-        return new ConfigRegistries(approved.directory(), approved.issuers());
+        var documents = RegistryLoader.read(serversFile, trustFile, clock);
+        return new ConfigRegistries(documents.directory(), documents.loadIssuers());
     }
 
     /** Parsing, schema, key, or reference failures leave the previous approved snapshot intact. */
     public static void reloadRegistries(
             ConfigRegistries registries, Path serversFile, Path trustFile, Clock clock)
             throws IOException, GeneralSecurityException {
-        var approved = readRegistries(serversFile, trustFile, clock);
-        registries.replace(approved.directory(), approved.issuers());
-    }
-
-    private static Approved readRegistries(Path serversFile, Path trustFile, Clock clock)
-            throws IOException, GeneralSecurityException {
-        var directory = ConfigurationLoader.read(serversFile, Document.SERVERS);
-        var trust = ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS);
-        return new Approved(readDirectory(directory, clock), readIssuers(trust, trustFile));
-    }
-
-    private static RegistrySnapshot readDirectory(JsonNode directory, Clock clock) {
-        var servers = new HashMap<String, ServerNode>();
-        for (var entry : directory.properties()) {
-            var value = entry.getValue();
-            String address = value.get("address").asString();
-            int separator = address.lastIndexOf(':');
-            String host = address.substring(0, separator);
-            if (host.startsWith("[")) {
-                host = host.substring(1, host.length() - 1);
-            }
-            servers.put(
-                    entry.getKey(),
-                    new ServerNode(
-                            entry.getKey(),
-                            value.has("display-name")
-                                    ? value.get("display-name").asString()
-                                    : entry.getKey(),
-                            host,
-                            Integer.parseInt(address.substring(separator + 1))));
-        }
-        return new RegistrySnapshot(servers, clock.instant(), false);
-    }
-
-    private static List<TrustedIssuer> readIssuers(JsonNode trust, Path trustFile)
-            throws IOException, GeneralSecurityException {
-        var issuers = new ArrayList<TrustedIssuer>();
-        Path base = trustFile.toAbsolutePath().normalize().getParent();
-        for (var entry : trust.properties()) {
-            var value = entry.getValue();
-            var algorithm =
-                    value.has("algorithm")
-                            ? SignatureAlgorithm.valueOf(value.get("algorithm").asString())
-                            : SignatureAlgorithm.ED25519;
-            var verifiers = new ArrayList<TicketVerifier>();
-            Iterable<JsonNode> paths =
-                    value.has("keys") ? value.get("keys") : List.of(value.get("key"));
-            for (var key : paths) {
-                Path path = base.resolve(key.asString());
-                verifiers.add(
-                        switch (algorithm) {
-                            case ED25519 -> Ed25519.loadVerifier(path);
-                            case HMAC_SHA256 -> HmacSha256.load(path);
-                        });
-            }
-            issuers.add(
-                    new TrustedIssuer(
-                            entry.getKey(),
-                            verifiers,
-                            !value.has("enabled") || value.get("enabled").asBoolean(),
-                            policy(value)));
-        }
-        return List.copyOf(issuers);
-    }
-
-    private static IssuerTrustPolicy policy(JsonNode value) {
-        var types = new HashSet<AuthType>();
-        value.get("allowed-auth-schemes")
-                .forEach(item -> types.add(AuthType.valueOf(item.asString())));
-        return new IssuerTrustPolicy(types, strings(value.get("allowed-providers")));
-    }
-
-    private static Set<String> strings(JsonNode value) {
-        var result = new HashSet<String>();
-        value.forEach(item -> result.add(item.asString()));
-        return Set.copyOf(result);
-    }
-
-    private static Duration duration(JsonNode node) {
-        String value = node.asString();
-        try {
-            if (Character.isDigit(value.charAt(0))) {
-                int suffix = value.endsWith("ms") ? 2 : 1;
-                long amount = Long.parseLong(value.substring(0, value.length() - suffix));
-                return switch (value.substring(value.length() - suffix)) {
-                    case "ms" -> Duration.ofMillis(amount);
-                    case "s" -> Duration.ofSeconds(amount);
-                    case "m" -> Duration.ofMinutes(amount);
-                    case "h" -> Duration.ofHours(amount);
-                    default ->
-                            throw new IllegalStateException(
-                                    "Unsupported schema-approved duration unit");
-                };
-            }
-            return Duration.parse(value);
-        } catch (DateTimeException | ArithmeticException | NumberFormatException failure) {
-            throw new IllegalArgumentException(
-                    "Configuration duration cannot be represented at runtime");
-        }
+        var documents = RegistryLoader.read(serversFile, trustFile, clock);
+        registries.replace(documents.directory(), documents.loadIssuers());
     }
 }
