@@ -23,8 +23,8 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - `chorus-paper`、`chorus-velocity`、`chorus-fabric` 仍是架构规划的一部分；本地可能存在暂存骨架，
   **有意被 Git 忽略且不纳入构建**。不得因为目录存在就自动启用、放行或补全平台实现。
 - Core 已实现 Phase 1：`CONFIG`（YAML 配置文件）目录与信任、Ed25519 / HMAC-SHA256 Ticket、ZSTD（默认）/ GZIP / NONE 编码与有界解压、身份策略、SQLite 持久化防重放与异步 Engine；
-  单测与本地集成测试覆盖核心闭环。Common 仍只有包职责说明；共享 SQL 与平台接入尚未实现。
-- 实施顺序遵循架构 §6：先完成并测试 Core，再推进共享 SQL 目录，随后只验证一条
+  单测与本地集成测试覆盖核心闭环。SQL 已实现 PostgreSQL / MySQL / MariaDB 的服务器目录同步；信任策略与全部密钥仍在本地，不同步到 SQL。Common 仍只有包职责说明，平台接入尚未实现。
+- 实施顺序遵循架构 §6：Core 与 SQL 服务器目录完成验证后，只推进一条
   **正版 Gateway → 离线 Paper Backend** 路线；其他平台与扩展场景按后续阶段推进。
 
 ## 3. 构建、验证与 Git
@@ -32,6 +32,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 ```bash
 ./gradlew :chorus-core:test      # Core 快速单测
 ./gradlew :chorus-core:integrationTest # 本地 SQLite 与完整配置集成验证
+./gradlew :chorus-core:sqlIntegrationTest # 独立三库与 TLS 验证；需本地 Docker
 ./gradlew :chorus-common:test    # common 测试（有测试后执行）
 ./gradlew spotlessApply         # 应用格式化
 ./gradlew spotlessCheck         # 只检查格式
@@ -40,7 +41,8 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 ```
 
 - Java 21 Toolchain；使用仓库内的 Wrapper，不依赖特定 IDE。
-- 测试执行不依赖网络或外部数据库服务；本地 SQLite 集成测试使用临时文件，纳入 `check` / `build`。
+- 普通单测、本地 SQLite 集成测试与 `check` / `build` 不依赖外部数据库服务；SQLite 使用临时文件。
+  独立 `sqlIntegrationTest` 使用本地 Docker，不纳入普通 `check` / `build`；首次需要拉取数据库与 Testcontainers 镜像，固定镜像版本也从 Version Catalog 读取。
   首次准备 Wrapper、Toolchain 和依赖可能需要下载，缓存齐备后可加 `--offline`。
 - 优先运行改动模块的相关测试；修改共享构建配置时运行 `build` 并核对 `projects`。
   SQL、网络故障与数据库方言验证放独立集成测试任务。脚手架测试通过不等于业务功能通过。
@@ -112,7 +114,8 @@ feat(core): Add the verification pipeline
 - 日志不得记录完整 Cookie、私钥、共享密钥或数据库凭据。
 - 防重放实现按后端职责命名：`replay.local.LocalReplayGuard` 对应 `LOCAL`，`replay.registry` 对应 `REGISTRY`，`replay.redis` 对应 `REDIS`。
   本地后端当前使用 SQLite，持久化提交确认后才返回成功；保留原数据库及 WAL，故障时拒绝，不回退内存。
-- 架构 §7.2 的管理方式、核销默认后端、心跳权限、联盟 Attestation、数据库支持矩阵、平台最低版本和运维默认参数仍未决定。
+- 架构 §7.2 的管理方式、核销默认后端、心跳权限、联盟 Attestation、后续数据库扩展、平台最低版本和运维默认参数仍未决定。
+  SQL 运行账号权限与未来写入所需凭据配置、PostgreSQL `sql.schema` 必须保留 TODO；当前仅做服务器目录读取，不借此引入管理写接口或密钥同步。
   实现所需临时选择保持可替换，并标注 `UNDECIDED`（未决）及设计出处，不将示例值写成产品承诺。
 
 ## 5. 注释与文件头引用区

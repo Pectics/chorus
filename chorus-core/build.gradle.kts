@@ -48,6 +48,20 @@ val integrationTest =
         runtimeClasspath += output + compileClasspath
     }
 
+val sqlIntegrationTest =
+    sourceSets.create("sqlIntegrationTest") {
+        compileClasspath += sourceSets.main.get().output + sourceSets.test.get().output
+        runtimeClasspath += output + compileClasspath
+    }
+
+configurations[sqlIntegrationTest.implementationConfigurationName].extendsFrom(
+    configurations.testImplementation.get(),
+)
+
+configurations[sqlIntegrationTest.runtimeOnlyConfigurationName].extendsFrom(
+    configurations.testRuntimeOnly.get(),
+)
+
 configurations[integrationTest.implementationConfigurationName].extendsFrom(
     configurations.testImplementation.get(),
 )
@@ -71,6 +85,8 @@ dependencies {
     runtimeOnly(libs.mysql.connector)
     runtimeOnly(libs.mariadb.connector)
 
+    add(sqlIntegrationTest.implementationConfigurationName, libs.testcontainers)
+
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
     testRuntimeOnly(libs.junit.platform.launcher)
@@ -87,3 +103,18 @@ val integrationTestTask =
     }
 
 tasks.check { dependsOn(integrationTestTask) }
+
+// SQL service tests are opt-in; check/build remain independent of Docker and external databases.
+tasks.register<Test>("sqlIntegrationTest") {
+    description = "Runs real PostgreSQL, MySQL, and MariaDB directory and TLS integration tests."
+    group = "verification"
+    testClassesDirs = sqlIntegrationTest.output.classesDirs
+    classpath = sqlIntegrationTest.runtimeClasspath
+    systemProperty(
+        "chorus.sql.postgresql.image",
+        "postgres:" + libs.versions.postgresql.test.image.get(),
+    )
+    systemProperty("chorus.sql.mysql.image", "mysql:" + libs.versions.mysql.test.image.get())
+    systemProperty("chorus.sql.mariadb.image", "mariadb:" + libs.versions.mariadb.test.image.get())
+    shouldRunAfter(integrationTestTask)
+}

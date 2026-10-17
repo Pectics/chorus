@@ -12,14 +12,14 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 或任意具备 Sender 能力的服务器跳往目标 Receiver 时，游戏流量由客户端直连目标地址，认证结果通过短期
 签名 Ticket 透传，无需常驻游戏流量中转。
 
-> **当前状态：Core Phase 1 已实现，Common 仍为骨架。** Core 可独立签发、验证 Ticket 并持久化防重放；尚未接入 Minecraft 平台。
+> **当前状态：Core Phase 1 与 SQL 服务器目录已实现，Common 仍为骨架。** Core 可独立签发、验证 Ticket 并持久化防重放；尚未接入 Minecraft 平台。
 > [ARCHITECTURE.md](ARCHITECTURE.md) 是唯一架构定义，协作与维护约定见 [AGENTS.md](AGENTS.md)。
 
 ## 模块
 
 | 模块 | 职责 | 当前范围 |
 |---|---|---|
-| `chorus-core` | 纯 Java：节点目录快照、受信任签发者、Ticket 签发与验签、身份解析策略、防重放 | Phase 1 已实现，含静态配置与本地 SQLite |
+| `chorus-core` | 纯 Java：节点目录快照、受信任签发者、Ticket 签发与验签、身份解析策略、防重放 | Phase 1 与 SQL 目录已实现，信任和密钥仍在本地 |
 | `chorus-common` | 平台无关的 Minecraft 生命周期支撑：Cookie 单飞读取、本节点转移会话、平台 SPI | 已纳入 Git 白名单与构建，仍为骨架 |
 | `chorus-paper` | Paper 适配：事件与 API 对接、命令、Cookie、Transfer、GameProfile 应用 | 后续开发，暂不收录或构建 |
 | `chorus-velocity` | Velocity 适配：入口认证卸载与 Sender 能力 | 后续开发，暂不收录或构建 |
@@ -43,6 +43,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 ./gradlew :chorus-core:build     # 仅核心（不依赖平台 API，最快）
 ./gradlew :chorus-core:test      # 纯 Core 单元测试
 ./gradlew :chorus-core:integrationTest # 本地 SQLite 与配置闭环；build 自动包含
+./gradlew :chorus-core:sqlIntegrationTest # 独立三库/TLS 验证；需本地 Docker，build 不包含
 ./gradlew :chorus-common:test    # common 测试（有测试后执行）
 ./gradlew spotlessApply          # 应用格式化
 ./gradlew spotlessCheck          # 只检查格式
@@ -57,7 +58,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 - 公开 API 的输入约束、线程约束与错误语义随接口一起提交
 - 除独立 `.md` 文档外，注释一律使用英语；以 5～10% 为注释密度指导，优先可读代码，只解释代码无法快速表达的语义
 - Spotless 统一格式：Java 使用 google-java-format AOSP（4 空格），Gradle Kotlin DSL 使用 ktfmt；`check` / `build` 包含格式检查
-- 测试执行不依赖网络或外部数据库服务；SQLite 使用临时文件，集成测试纳入 `check` / `build`
+- 普通测试及 `check` / `build` 不依赖外部数据库服务；SQLite 使用临时文件。独立 `sqlIntegrationTest` 使用本地 Docker，首次需下载数据库与 Testcontainers 镜像
 - 实现顺序见 ARCHITECTURE.md §6：先让 `chorus-core` 测试通过，再推进平台接入
 - Git 使用白名单，只收录显式放行内容；模块内部的构建产物与缓存不收录
 - Agent 主动用本地提交组织阶段与修复，尚未推送的任务历史可整理和重放；保留阶段边界，最终 push 前由人类审计并授权，详见 `AGENTS.md` §3.1
@@ -67,9 +68,9 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 ## Core 独立使用
 
 入口为 `CoreBootstrap.open(Path)`（默认 UTC 时钟）或可注入 `Clock` 的重载，返回 `ChorusCoreEngine`。
-初始化会读取 YAML、加载密钥并打开本地 SQLite，必须在启动线程上执行；签发和验证返回 `CompletionStage`。
+初始化会读取 YAML、加载本地密钥，并按配置连接 SQL、打开本地 SQLite，必须在启动线程上执行；签发和验证返回 `CompletionStage`。
 预期拒绝通过 `TicketRejectedException.code()` 区分，平台 I/O 线程不能 `.join()`。
-关闭 Engine 会关闭其 ReplayGuard 并等待已排队工作；若在本地工作线程的完成回调内关闭，则发起停止后返回，并在已有任务结束后释放存储。
+关闭装配返回的 Engine 会释放其 SQL 连接池、刷新调度器和 ReplayGuard，并等待已接收工作；若在本地工作线程的完成回调内关闭，则发起停止后返回，并在已有任务结束后释放存储。
 回调不能阻塞工作线程。
 防重放 API 位于 `me.pectics.chorus.core.replay`；本地实现为 `replay.local.LocalReplayGuard`，当前使用 SQLite。
 `local / registry / redis` 子包按核销后端职责命名，分别对应配置枚举 `LOCAL / REGISTRY / REDIS`。
@@ -99,9 +100,9 @@ Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置�
 Java 消费验证后的值，负责转换、字段间数值关系、密钥内容和跨文件引用。校验失败不打开状态库、不替换已批准快照。
 错误包含文件、JSON Pointer 字段路径及校验关键字；YAML 解析保留 1 MiB 大小、深度、重复键、别名和类型限制。
 
-Phase 1 支持 `CONFIG` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
+Core 支持 `CONFIG` / `SQL` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
-共享 SQL、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519、HMAC-SHA256 及 ZSTD / GZIP 压缩。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
+SQL 核销、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519、HMAC-SHA256 及 ZSTD / GZIP 压缩。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
 
 下面是 Receiver 的 `chorus.yml`。**UNDECIDED（架构 §7.2）：寿命、时钟容差、字节限额、容量和锁等待时间均为示例，
 没有隐式运维默认值。** 发送端的 `issuance.ttl`、`verification.max-lifetime` 与 `verification.clock-skew` 要求整秒；TTL 为正且不超过最大寿命，Cookie 限额不能超过 5120。
@@ -180,7 +181,7 @@ Ed25519 密钥由管理员提供：私钥使用 PKCS#8，公钥使用 X.509 SPKI
 `CoreBootstrap.loadRegistries` / `reloadRegistries` 提供 `registry.config.ConfigRegistries` 的显式加载与快照替换；加载失败保留旧快照，不自动监视文件。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
-主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时目录显示名来自 `servers.yml`，未配置时使用节点 ID。
+主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时目录显示名来自所选目录；`CONFIG` 未配置时使用节点 ID，SQL 表要求显式显示名。
 单把验签密钥可用 `key: keys/gateway.pub`，等价于 `keys: [keys/gateway.pub]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
 `keys` 是密钥路径字符串列表，可保留多把同算法密钥支持轮换；接收端依次尝试这些密钥。
 签发者级 `enabled: false` 会禁用其全部密钥；撤销单把密钥时从列表移除。配置变更在快照替换后生效。
@@ -242,6 +243,80 @@ SQLite 使用 WAL 与 `synchronous=FULL`，消费成功必须等待持久化提�
 数据库绑定节点 ID 与清理使用的时钟容差；不匹配时拒绝启用，避免重新接受此前清理过的旧票据。
 正常重启须复用持久本地目录并保留数据库及 WAL；删除状态、恢复旧备份、换空路径或复制为另一独立消费实例不在普通重启保证内。
 已有库损坏不自动重建；提交后即使回调丢失或平台登录失败，也不恢复票据，需要可信上游重新签发。
+
+## SQL 服务器目录
+
+SQL 只同步服务器列表；`trusted-issuers.yml`、信任策略与所有密钥始终由管理员在本地维护。
+将主配置的 `registry` 段替换为下例即可，其余签发、验票和 `LOCAL` 防重放配置保持按角色填写。
+**UNDECIDED（架构 §7.2）：下面的连接数、刷新间隔、缓存期限与超时都是显式示例，不是默认值。**
+
+```yaml
+registry:
+  provider: SQL
+  config:
+    issuers-path: trusted-issuers.yml
+  sql:
+    engine: POSTGRESQL
+    host: db.example.net
+    port: 5432
+    database: chorus
+    username: chorus_user
+    password-path: registry-password.txt
+    tls:
+      mode: VERIFY_FULL
+      ca-cert: registry-ca.pem
+    pool:
+      max-connections: 2
+      acquire-timeout: 3s
+    timeouts:
+      connect: 3s
+      query: 5s
+      socket: 10s
+  cache:
+    refresh-interval: 10s
+    max-stale: 2m
+```
+
+`engine` 可选 `POSTGRESQL / MYSQL / MARIADB`，数据库切换不改变配置结构。`SQL` 模式不读取 `servers-path`。
+管理员先在选定数据库执行对应的完整初始化脚本，再维护 `chorus_servers`，包括本节点及签发策略允许的所有目标：
+
+| 数据库 | 初始化脚本 |
+|---|---|
+| PostgreSQL | [postgresql.sql](chorus-core/src/main/resources/me/pectics/chorus/core/registry/sql/v1/postgresql.sql) |
+| MySQL | [mysql.sql](chorus-core/src/main/resources/me/pectics/chorus/core/registry/sql/v1/mysql.sql) |
+| MariaDB | [mariadb.sql](chorus-core/src/main/resources/me/pectics/chorus/core/registry/sql/v1/mariadb.sql) |
+
+脚本适用于空库，不自动重复执行或迁移；结构版本位于 `chorus_registry_schema`，服务器 ID 区分大小写。
+路由表使用拆分的 `host`、`port`，IPv6 的 `host` 不带方括号：
+
+```sql
+INSERT INTO chorus_servers (node_id, display_name, host, port)
+VALUES ('gateway', 'Gateway', 'gateway.example.net', 25565),
+       ('backend', 'Backend', 'backend.example.net', 25565);
+```
+
+运行账号当前只需读取目录与版本表，节点不建表、不写目录。**TODO：未来管理/核销写操作可能要求账号隔离或凭据字段调整，当前配置不是最终权限模型。**
+**TODO：PostgreSQL 的 `sql.schema` 暂不引入，本轮固定使用 `public`。** 心跳、共享信任与密钥表、SQL 核销均不在本轮实现。
+
+`password-path` 与 `ca-cert` 相对 `chorus.yml`；密码是上限 64 KiB 的 UTF-8 文件，只去掉末尾一个 LF/CRLF，保留其余空白。
+`VERIFY_FULL` 校验证书链和主机名，省略 `ca-cert` 时使用 JVM 默认信任库；私有 CA 可提供 PEM bundle。
+`DISABLED` 必须移除 `ca-cert`。MySQL `caching_sha2_password` 的完整认证可能需要 TLS；实现不自动打开公钥检索。
+`acquire-timeout` 是等连接池的时间，最小 500ms；`connect / query / socket` 分别限制物理连接、单条 SQL 和网络读取。
+SQL 与缓存时长须为整毫秒且不超过 2147483647ms；驱动只支持秒的设置会向上取整。
+
+启动必须成功读取第一个完整目录，结构版本、目录值或本节点/目标引用有错则启动失败。
+后续后台读取成功才整体替换；失败保留旧目录，不重置期限，也不回退 `servers.yml`。
+`max-stale` 从最后一次完整成功刷新开始计算，到期拒绝依赖目录的操作；使用单调时钟，不受系统时间回拨影响。
+成功读到相同目录仍更新成功时间。过期只影响路由，本地信任仍可验票；SQL 刷新不重读本地信任和密钥，SQL 模式的信任变更通过重新打开 Engine 生效。
+
+Java 的 `SqlServerRegistry.refresh()` 可显式异步刷新，返回 `CompletionStage`；并发调用共用当前刷新尝试。
+失败异常不携带驱动原始诊断，防止输出凭据；`snapshot().stale()` 在刷新失败或超过刷新间隔时为真，超过 `max-stale` 则抛出不可用异常。
+直接构造 `DefaultChorusCoreEngine` 时，SQL 协作者仍由调用方关闭；通过 `CoreBootstrap.open` 创建时自动随 Engine 关闭。
+
+独立验证命令是 `./gradlew :chorus-core:sqlIntegrationTest`，使用测试专用 CA 与仅含 `localhost` 名称的证书，要求本地 Docker。
+测试覆盖三库初始化、大小写 ID、增删改刷新、错误结构版本、查询锁超时、TLS 成功/不可信 CA/主机名不匹配，
+以及 SQL 目录配合本地 Ed25519/HMAC 和 SQLite 的完整闭环。镜像和依赖版本在 Version Catalog 固定。
+测试证书及私钥仅为公开测试夹具，不用于部署；签发 CA 的私钥不入库。
 
 ## 许可
 

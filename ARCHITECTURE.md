@@ -1,6 +1,6 @@
 # Chorus：基于 Minecraft 1.20.5+ `/transfer` 与 Cookie 机制的分布式服务器互联架构设计方案
 
-> **修订版**：Draft v1.2（Core Phase 1 与本地持久化防重放）\
+> **修订版**：Draft v1.3（SQL 服务器目录与本地信任）\
 > **文档用途**：可独立阅读的架构与接口设计稿；不是声称所有平台 API 均已验证的实现手册。  
 > **项目名称**：`Chorus`  
 > **Maven Group / 包名前缀**：`me.pectics.chorus`  
@@ -83,7 +83,7 @@ chorus/
 │       ├── crypto/                     # Ed25519/HMAC 签发与验签能力、JWS 编解码
 │       ├── registry/                   # ServerNodeRegistry、TrustedIssuerRegistry
 │       │   ├── config/                 # 配置文件提供的目录与信任快照
-│       │   └── sql/                    # 可选的 Turso/libSQL 与 JDBC 实现
+│       │   └── sql/                    # PostgreSQL / MySQL / MariaDB 服务器目录
 │       ├── policy/                     # UUID / Profile 身份解析策略
 │       └── replay/                     # ReplayGuard：仅负责 Ticket 防重放
 │           ├── local/                  # 本地持久化消费记录；当前使用 SQLite
@@ -473,7 +473,7 @@ public sealed interface TicketSigner extends TicketVerifier
 
 `TicketCodec` 直接调用对象的 `sign` / `verify`，无须额外签名服务或按密钥类型分支。Engine 直接持有一个本地 `TicketSigner`（接收专用角色可为空）；受信任签发者保存不可变 `TicketVerifier` 列表并提供批准的算法，传入签发器时通过 `verifier()` 归一到验签视图，避免批准记录保留 Ed25519 私钥，并按归一后的材料检查重复。验票捕获同一批准记录用于验签和策略检查，保留轮换、禁用、算法绑定与快照替换语义。密钥装配在启动阶段完成，本地签发材料的替换通过重新装配 Engine 生效。
 
-密钥轮换：一个签发者可同时批准多把同算法验签密钥，签发端使用当前本地密钥；撤销通过受信任配置传播，数据库故障缓存期的撤销延迟必须被接受并记录。密钥加载失败时禁止以无签名模式继续。
+密钥轮换：一个签发者可同时批准多把同算法验签密钥，签发端使用当前本地密钥；撤销通过本地受信任配置分发并重新加载；SQL 不同步密钥，也不影响本地信任的有效期。密钥加载失败时禁止以无签名模式继续。
 
 Ed25519 继续加载管理员提供的 PKCS#8 私钥与 X.509 SPKI 公钥（DER / PEM）。HMAC 的 `crypto.key` 指定原始 32 字节 `.key` 文件：签发角色在文件不存在时用密码学安全随机数生成，创建父目录，以排他方式创建文件，并在文件内容持久化后返回；支持 POSIX 权限时新文件设为 `0600`。已有文件直接复用，空文件、长度错误、读取或写入失败均拒绝，不覆盖或自动重置已有密钥。写入中断可能留下无效文件，后续启动仍拒绝，需管理员修复。
 
@@ -640,8 +640,9 @@ operator-b/peer-01:
 | 信任条目 `algorithm: ED25519 / HMAC_SHA256` | 为该签发者的全部 `key / keys` 绑定验签算法；省略为 `ED25519` | 已实现；信任加载不生成密钥，不跨算法回退 |
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
 | `ticket.compression: ZSTD / GZIP` | 压缩完整签名 Ticket；省略配置时默认 `ZSTD` | 已实现；版本化帧与有界解压，接收端兼容所有三种编码 |
+| `registry.provider: SQL` | JDBC 同步服务器目录；信任仍读取 `registry.config.issuers-path` | 已实现 PostgreSQL / MySQL / MariaDB；初始化脚本与独立集成测试见 §3.3、§6 |
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
-| `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | TODO：共享目录数据库适配与核销尚未实现；启动拒绝 |
+| `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | TODO：SQL 核销尚未实现；启动拒绝 |
 | `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
 | `allowed-auth-schemes: YGGDRASIL / FLOODGATE` | 预留的身份来源名称 | TODO：身份流程尚未实现；即使策略允许，Engine 仍拒绝对应身份的签发与接收 |
 
@@ -653,12 +654,32 @@ operator-b/peer-01:
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
+SQL 模式沿用 `registry.config.issuers-path`，不要求或读取 `servers-path`；`sql` 与 `cache` 必填。
+`sql.engine` 为 `POSTGRESQL / MYSQL / MARIADB`，连接字段为 `host / port / database / username / password-path`。
+`tls.mode` 为 `DISABLED / VERIFY_FULL`；可选 `ca-cert` 是相对主配置的 PEM CA bundle 路径，省略时统一使用 JVM 默认信任库。
+`DISABLED` 不接受 `ca-cert`，`VERIFY_FULL` 必须验证证书链和连接主机名，不降级为明文或跳过验证。
+MySQL 的自定义 CA 转换为连接专用临时 PKCS12，随连接池关闭删除，不改动全局 JVM 设置。
+密码文件采用 UTF-8，上限 64 KiB；只移除末尾一个 LF 或 CRLF，其余空白保留。信任密钥路径仍相对签发者文件。
+
+`pool.max-connections` 是每个节点连接池的上限；`acquire-timeout` 以整毫秒表示，范围为 500～2147483647ms。
+`timeouts.connect / query / socket` 分别约束物理连接、单条语句与网络读取，均为 1～2147483647 的整毫秒。
+驱动只支持秒的设置向上取整；这些分段超时不等于一次完整刷新任务的总期限。
+`cache.refresh-interval / max-stale` 使用同一整毫秒范围，后者必须更长；陈旧期限由单调时钟约束，
+`RegistrySnapshot.refreshedAt` 是供展示的墙上时钟时间，刷新失败或系统时间回拨都不延长缓存。
+这些参数保持显式配置，示例不是运维默认值。完整 SQL 配置示例见 README。
+
+`SqlServerRegistry` 通过 `Store` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
+启动首次读取可阻塞，热路径始终只读内存。关闭会停止定时器、等待已接收的工作并关闭存储；完成回调内关闭不会等待自身。
+`CoreBootstrap.open` 创建的 SQL 连接池与调度器随返回 Engine 关闭，装配失败也释放已创建资源。
+直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。SQL 模式不会自动重载本地信任，变更通过重新装配 Engine 生效；
+`CONFIG` 模式保留原显式重载入口与整组快照替换语义。
+
 Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 `NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`、
 `CryptoConfiguration`、`RegistryConfiguration` 与 `ReplayGuardConfiguration`；`NodeRole` 随节点配置放在同一包。
 不再使用平铺的 `CoreConfiguration`，也不将四组或七组重新聚合成根配置对象。各消费者只接收所需的配置组。
 签发 TTL 与签发权限同属 `IssuanceConfiguration`；密码学配置用封闭的 Ed25519 / HMAC-SHA256 两种路径表示，
-接收专用角色可不提供本地签发路径。目录的 `config` 与防重放的 `local` 参数作为各自所属组的嵌套值类型。
+接收专用角色可不提供本地签发路径。目录的 `config / sql / cache` 与防重放的 `local` 参数作为各自所属组的嵌套值类型。
 配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、目录快照或防重放资源。
 
 `ConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，`ConfigurationReader` 负责主配置各段的类型转换，
@@ -793,7 +814,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准密钥签名、HS256 与 Ed25519 算法混淆拒绝。
 6. 静态目录变更、无外部数据库服务运行；共享目录故障缓存过期验证在 Phase 2 完成。
 
-### Phase 2：SQL 服务器目录实现（开发中）
+### Phase 2：SQL 服务器目录实现
 
 通过 PostgreSQL、MySQL、MariaDB 实现 `ServerNodeRegistry` 的后台快照同步与故障缓存。
 `TrustedIssuerRegistry` 与全部密钥保持本地文件加载；本轮不增加信任同步、心跳或 SQL 核销。
