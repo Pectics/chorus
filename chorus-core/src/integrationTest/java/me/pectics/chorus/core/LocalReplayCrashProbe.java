@@ -6,16 +6,16 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import me.pectics.chorus.core.replay.ReplayDecision;
-import me.pectics.chorus.core.replay.sqlite.SqliteReplayGuard;
+import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 
 /** Child process intentionally exits without resource cleanup to exercise WAL recovery. */
-public final class SqliteCrashProbe {
-    private SqliteCrashProbe() {}
+public final class LocalReplayCrashProbe {
+    private LocalReplayCrashProbe() {}
 
     public static void main(String[] arguments) throws Exception {
         Path file = Path.of(arguments[0]);
         var guard =
-                new SqliteReplayGuard(
+                new LocalReplayGuard(
                         file,
                         "backend",
                         Duration.ofSeconds(2),

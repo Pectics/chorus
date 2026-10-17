@@ -106,7 +106,8 @@ feat(core): Add the verification pipeline
   源 Schema 保留可读排版和 `$comment`；`processResources` 负责最小化产物并递归移除全部 `$comment`，不改写源文件。
 - 平台 API 使用 `compileOnly` / `modImplementation`，不打入产物；具体登录接口和最低兼容版本须实测。
 - 日志不得记录完整 Cookie、私钥、共享密钥或数据库凭据。
-- 本地 ReplayGuard 使用 SQLite，持久化提交确认后才返回成功；保留原数据库及 WAL，故障时拒绝，不回退内存。
+- 防重放实现按后端职责命名：`replay.local.LocalReplayGuard` 对应 `LOCAL`，`replay.registry` 对应 `REGISTRY`，`replay.redis` 对应 `REDIS`。
+  本地后端当前使用 SQLite，持久化提交确认后才返回成功；保留原数据库及 WAL，故障时拒绝，不回退内存。
 - 架构 §7.2 的管理方式、核销默认后端、心跳权限、联盟 Attestation、数据库支持矩阵、平台最低版本和运维默认参数仍未决定。
   实现所需临时选择保持可替换，并标注 `UNDECIDED`（未决）及设计出处，不将示例值写成产品承诺。
 

@@ -15,20 +15,20 @@ import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import me.pectics.chorus.core.replay.ReplayDecision;
-import me.pectics.chorus.core.replay.sqlite.SqliteReplayGuard;
+import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class SqliteReplayGuardTest {
+class LocalReplayGuardTest {
     @TempDir Path directory;
     private final MutableClock clock = new MutableClock(TestSupport.NOW);
 
-    private SqliteReplayGuard open(Path path, int capacity) throws Exception {
-        return new SqliteReplayGuard(
+    private LocalReplayGuard open(Path path, int capacity) throws Exception {
+        return new LocalReplayGuard(
                 path, "backend", Duration.ofSeconds(2), capacity, Duration.ofMillis(500), clock);
     }
 
-    private CompletableFuture<ReplayDecision> consume(SqliteReplayGuard guard, String jti) {
+    private CompletableFuture<ReplayDecision> consume(LocalReplayGuard guard, String jti) {
         return guard.consume("gateway", jti, "backend", TestSupport.NOW.plusSeconds(15))
                 .toCompletableFuture();
     }
@@ -144,7 +144,7 @@ class SqliteReplayGuardTest {
         assertThat(consume(guard, "closed").get()).isEqualTo(ReplayDecision.UNAVAILABLE);
         assertThatThrownBy(
                         () ->
-                                new SqliteReplayGuard(
+                                new LocalReplayGuard(
                                         file,
                                         "other",
                                         Duration.ofSeconds(2),
@@ -154,7 +154,7 @@ class SqliteReplayGuardTest {
                 .isInstanceOf(java.sql.SQLException.class);
         assertThatThrownBy(
                         () ->
-                                new SqliteReplayGuard(
+                                new LocalReplayGuard(
                                         file,
                                         "backend",
                                         Duration.ofSeconds(3),
@@ -198,7 +198,7 @@ class SqliteReplayGuardTest {
                                             .toString(),
                                     "-cp",
                                     System.getProperty("chorus.integration.classpath"),
-                                    SqliteCrashProbe.class.getName(),
+                                    LocalReplayCrashProbe.class.getName(),
                                     file.toString(),
                                     mode)
                             .redirectErrorStream(true)

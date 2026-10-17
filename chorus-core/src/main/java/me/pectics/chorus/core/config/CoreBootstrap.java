@@ -28,7 +28,7 @@ import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.registry.config.ConfigRegistries;
-import me.pectics.chorus.core.replay.sqlite.SqliteReplayGuard;
+import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 
 /** Blocking startup I/O and resource assembly. Invoke outside platform event loops. */
 public final class CoreBootstrap {
@@ -92,11 +92,11 @@ public final class CoreBootstrap {
         }
         TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
         var registries = new ConfigRegistries(directory, documents.loadIssuers());
-        SqliteReplayGuard guard = null;
+        LocalReplayGuard guard = null;
         if (node.role().receiver()) {
             var local = replay.local();
             guard =
-                    new SqliteReplayGuard(
+                    new LocalReplayGuard(
                             local.path(),
                             node.id(),
                             verification.clockSkew(),

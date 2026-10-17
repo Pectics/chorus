@@ -5,7 +5,7 @@
  * sync: Complete ACCEPTED only after FULL-synchronous WAL commit; never change backend on errors.
  * @endcontext
  */
-package me.pectics.chorus.core.replay.sqlite;
+package me.pectics.chorus.core.replay.local;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -31,7 +31,7 @@ import me.pectics.chorus.core.replay.ReplayGuard;
  * consume never performs I/O on the caller. Completion callbacks may run on the I/O worker and must
  * not block it. Preserve the database and its WAL across restarts; a new empty path is new state.
  */
-public final class SqliteReplayGuard implements ReplayGuard {
+public final class LocalReplayGuard implements ReplayGuard {
     private final Object lifecycle = new Object();
     private final Connection connection;
     private final ThreadPoolExecutor executor;
@@ -44,7 +44,7 @@ public final class SqliteReplayGuard implements ReplayGuard {
     private volatile Thread worker;
     private volatile SQLException closeFailure;
 
-    public SqliteReplayGuard(
+    public LocalReplayGuard(
             Path file,
             String targetNodeId,
             Duration clockSkew,
@@ -90,7 +90,7 @@ public final class SqliteReplayGuard implements ReplayGuard {
                         TimeUnit.MILLISECONDS,
                         new ArrayBlockingQueue<>(capacity),
                         task -> {
-                            var thread = new Thread(task, "chorus-sqlite-replay");
+                            var thread = new Thread(task, "chorus-local-replay");
                             thread.setDaemon(true);
                             worker = thread;
                             return thread;

@@ -86,8 +86,8 @@ chorus/
 │       │   └── sql/                    # 可选的 Turso/libSQL 与 JDBC 实现
 │       ├── policy/                     # UUID / Profile 身份解析策略
 │       └── replay/                     # ReplayGuard：仅负责 Ticket 防重放
-│           ├── sqlite/                 # 本地 SQLite 持久化消费记录
-│           ├── sql/                    # 可选 SQL 实现；后端选型待确定
+│           ├── local/                  # 本地持久化消费记录；当前使用 SQLite
+│           ├── registry/               # 复用目录数据库的核销后端；尚未实现
 │           └── redis/                  # 仅预留未来扩展，不进入 MVP
 │
 ├── chorus-common/                       # 平台无关的 Minecraft 生命周期支撑
@@ -103,7 +103,10 @@ chorus/
 
 **依赖方向**：平台模块 → `chorus-common` → `chorus-core`；平台模块也可直接依赖 `chorus-core`。核心不反向依赖平台 API。
 
-`registry/sql` 和 `replay/sql` 表示逻辑适配器；如相关外部依赖较多，可在未来提取为独立发布的 adapter artifact，**不要求 MVP 先增加 Gradle 子模块**。
+`registry/sql` 和 `replay/registry` 表示逻辑适配器；如相关外部依赖较多，可在未来提取为独立发布的 adapter artifact，**不要求 MVP 先增加 Gradle 子模块**。
+
+`replay` 子包按核销后端职责命名，与配置枚举 `LOCAL / REGISTRY / REDIS` 对齐。
+本地实现入口为 `replay.local.LocalReplayGuard`，公开命名不绑定底层存储技术；当前 SQLite 的持久化与故障语义见 §3.6。
 
 `chorus-core` 可以使用通用 Java 库、数据库驱动和密码学库，但不能持有 `Player`、`GameProfile` 或 Netty `Channel` 等平台对象。数据库 I/O 与定时调度通过接口封装。
 

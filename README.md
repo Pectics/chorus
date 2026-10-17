@@ -70,7 +70,8 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 初始化会读取 YAML、加载密钥并打开本地 SQLite，必须在启动线程上执行；签发和验证返回 `CompletionStage`。
 预期拒绝通过 `TicketRejectedException.code()` 区分，平台 I/O 线程不能 `.join()`。
 关闭 Engine 会关闭其 ReplayGuard 并等待已排队工作；完成回调可能在 SQLite 工作线程执行，回调不能阻塞该线程。
-防重放 API 位于 `me.pectics.chorus.core.replay`，本地 SQLite 实现位于其 `sqlite` 子包。
+防重放 API 位于 `me.pectics.chorus.core.replay`；本地实现为 `replay.local.LocalReplayGuard`，当前使用 SQLite。
+`local / registry / redis` 子包按核销后端职责命名，分别对应配置枚举 `LOCAL / REGISTRY / REDIS`。
 
 Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置的 `node`、`ticket`、`issuance`、
 `verification`、`crypto`、`registry`、`replay-guard` 七组分别组织，没有统一的根配置对象。
