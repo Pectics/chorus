@@ -58,7 +58,7 @@ subprojects {
     }
 
     configure<SpotBugsExtension> {
-        toolVersion.set(rootProject.libs.versions.spotbugs.get())
+        toolVersion.set(rootProject.libs.versions.spotbugs.engine)
         effort.set(Effort.MAX)
         reportLevel.set(Confidence.MEDIUM)
         ignoreFailures.set(false)
