@@ -106,7 +106,7 @@ tasks.check { dependsOn(integrationTestTask) }
 
 // SQL service tests are opt-in; check/build remain independent of Docker and external databases.
 tasks.register<Test>("sqlIntegrationTest") {
-    description = "Runs real PostgreSQL, MySQL, and MariaDB directory and TLS integration tests."
+    description = "Runs real PostgreSQL, MySQL, and MariaDB server list and TLS integration tests."
     group = "verification"
     testClassesDirs = sqlIntegrationTest.output.classesDirs
     classpath = sqlIntegrationTest.runtimeClasspath

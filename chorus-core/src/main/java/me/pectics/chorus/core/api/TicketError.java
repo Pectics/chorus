@@ -24,6 +24,7 @@ public enum TicketError {
     TICKET_TOO_LARGE,
     CAPABILITY_DISABLED,
     UNKNOWN_TARGET,
-    DIRECTORY_UNAVAILABLE,
+    /** The server list cannot supply an approved, usable snapshot. */
+    SERVER_LIST_UNAVAILABLE,
     ENGINE_CLOSED
 }

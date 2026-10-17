@@ -12,14 +12,14 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 或任意具备 Sender 能力的服务器跳往目标 Receiver 时，游戏流量由客户端直连目标地址，认证结果通过短期
 签名 Ticket 透传，无需常驻游戏流量中转。
 
-> **当前状态：Core Phase 1 与 SQL 服务器目录已实现，Common 仍为骨架。** Core 可独立签发、验证 Ticket 并持久化防重放；尚未接入 Minecraft 平台。
+> **当前状态：Core Phase 1 与 SQL 服务器列表已实现，Common 仍为骨架。** Core 可独立签发、验证 Ticket 并持久化防重放；尚未接入 Minecraft 平台。
 > [ARCHITECTURE.md](ARCHITECTURE.md) 是唯一架构定义，协作与维护约定见 [AGENTS.md](AGENTS.md)。
 
 ## 模块
 
 | 模块 | 职责 | 当前范围 |
 |---|---|---|
-| `chorus-core` | 纯 Java：节点目录快照、受信任签发者、Ticket 签发与验签、身份解析策略、防重放 | Phase 1 与 SQL 目录已实现，信任和密钥仍在本地 |
+| `chorus-core` | 纯 Java：服务器列表快照、受信任签发者、Ticket 签发与验签、身份解析策略、防重放 | Phase 1 与 SQL 服务器列表已实现，信任和密钥仍在本地 |
 | `chorus-common` | 平台无关的 Minecraft 生命周期支撑：Cookie 单飞读取、本节点转移会话、平台 SPI | 已纳入 Git 白名单与构建，仍为骨架 |
 | `chorus-paper` | Paper 适配：事件与 API 对接、命令、Cookie、Transfer、GameProfile 应用 | 后续开发，暂不收录或构建 |
 | `chorus-velocity` | Velocity 适配：入口认证卸载与 Sender 能力 | 后续开发，暂不收录或构建 |
@@ -82,13 +82,13 @@ Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置�
 `verification`、`crypto`、`registry`、`replay-guard` 七组分别组织，没有统一的根配置对象。
 `CoreBootstrap.open` 的文件入口保持不变；直接构造 `DefaultChorusCoreEngine` 时，分别传入
 `NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`，
-随后传入节点目录、独立的本地签发者信任对象、签发器、防重放对象与时钟。仅接收角色的签发配置和签发器可为 `null`；
+随后传入服务器列表、独立的本地签发者信任对象、签发器、防重放对象与时钟。仅接收角色的签发配置和签发器可为 `null`；
 签发角色的 TTL 仍不得超过验票最大寿命。
 原有平铺的 `CoreConfiguration` 已移除，`NodeRole` 迁入 `config.model`，Java 调用方需更新构造方式与 imports。
-配置模型不执行 I/O；密钥、目录与防重放配置由启动装配层消费。
+配置模型不执行 I/O；密钥、Registry 与防重放配置由启动装配层消费。
 
-Registry 只负责服务器目录；本地批准记录位于独立的 `me.pectics.chorus.core.trust` 包。
-服务器出现在目录中不会自动获得签发者信任，目录刷新也不修改本地批准。Chorus 不自动分发信任策略、公钥、私钥或 HMAC 密钥。
+Registry 当前提供 `servers` 服务器列表，后续可扩展其他数据项；本地批准记录位于独立的 `me.pectics.chorus.core.trust` 包。
+服务器出现在服务器列表中不会自动获得签发者信任，服务器列表刷新也不修改本地批准。Chorus 不自动分发信任策略、公钥、私钥或 HMAC 密钥。
 
 三个配置文件各有一个完整、独立的 Schema，格式契约位于 `schema/v1/`，每个文档带有自己的版本化 `$id`：
 
@@ -106,7 +106,7 @@ Registry 只负责服务器目录；本地批准记录位于独立的 `me.pectic
 Java 消费验证后的值，负责转换、字段间数值关系、密钥内容和跨文件引用。校验失败不打开状态库、不替换已批准快照。
 错误包含文件、JSON Pointer 字段路径及校验关键字；YAML 解析保留 1 MiB 大小、深度、重复键、别名和类型限制。
 
-Core 支持 `CONFIG` / `SQL` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
+Core 支持 `CONFIG` / `SQL` Registry 来源、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID` 和
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
 SQL 核销、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519、HMAC-SHA256 及 ZSTD / GZIP 压缩。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
 
@@ -153,7 +153,7 @@ backend:
   address: backend.example.net:25565
 ```
 
-`trusted-issuers.yml` 按签发者 ID 平铺；每项由本机管理员批准，目录中的节点不会自动获得信任：
+`trusted-issuers.yml` 按签发者 ID 平铺；每项由本机管理员批准，服务器列表中的节点不会自动获得信任：
 
 ```yaml
 gateway:
@@ -180,21 +180,21 @@ issuance:
 接收端自动识别所有三种编码，本节点的压缩选择只影响签发。`NONE` 保持原有裸 JWS；旧版接收端只支持此格式，滚动升级时先升级接收端，发送端在此之前显式保留 `NONE`。
 
 `replay-guard.backend` 的配置契约列出 `LOCAL | REGISTRY | REDIS`。
-**TODO（未实现）**：`REGISTRY` / `REDIS` 防重放后端仍未实现，当前启动会在读取目录或打开状态库前拒绝这些选项；运行时代码和 Schema 均保留 TODO 定位。
+**TODO（未实现）**：`REGISTRY` / `REDIS` 防重放后端仍未实现，当前启动会在读取服务器列表或打开状态库前拒绝这些选项；运行时代码和 Schema 均保留 TODO 定位。
 `REGISTRY` 的设计语义为复用 `registry` 数据库，不能与 `registry.provider: CONFIG` 组合，该约束由 Schema 校验。
 `LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
 
-主配置内的路径相对 `chorus.yml`；目录文件为 `registry.config.servers-path`，信任文件为 `verification.trusted-issuers-path`，批准的密钥路径相对信任文件。
-`CoreBootstrap.loadServerRegistry` / `reloadServerRegistry` 加载和替换 `registry.config.ConfigServerNodeRegistry` 的目录快照；
+主配置内的路径相对 `chorus.yml`；服务器列表文件为 `registry.config.servers-path`，信任文件为 `verification.trusted-issuers-path`，批准的密钥路径相对信任文件。
+`CoreBootstrap.loadServerRegistry` / `reloadServerRegistry` 加载和替换 `registry.config.ConfigServerNodeRegistry` 的服务器列表快照；
 `loadTrustedIssuers` / `reloadTrustedIssuers` 独立加载和替换 `trust.config.ConfigTrustedIssuerStore` 的本地批准记录。
 重载各自完整校验后原子替换，失败保留该对象原快照；这些文件 I/O 入口须在平台事件线程之外调用，不自动监视文件。
 直接装配 Engine 时可重载所注入的对象；`CoreBootstrap.open` 创建的本地信任变更通过重新打开 Engine 生效。
 迁移旧主配置时，把 `registry.config.issuers-path` 移到 `verification.trusted-issuers-path`；旧位置由 Schema 拒绝，SQL 模式可删除整个 `registry.config`。
 Java 调用方把 `registry.TrustedIssuer / TrustedIssuerRegistry` 改为 `trust.TrustedIssuer / TrustedIssuerStore`；
-原 `ConfigRegistries` 和 `loadRegistries / reloadRegistries` 联合入口已移除，改为分别管理目录与信任。
+原 `ConfigRegistries` 和 `loadRegistries / reloadRegistries` 联合入口已移除，改为分别管理服务器列表与信任。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
-主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时目录显示名来自所选目录；`CONFIG` 未配置时使用节点 ID，SQL 表要求显式显示名。
+主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时服务器显示名来自所选服务器列表；`CONFIG` 未配置时使用节点 ID，SQL 表要求显式显示名。
 单把验签密钥可用 `key: keys/gateway.key`，等价于 `keys: [keys/gateway.key]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
 `keys` 是密钥路径字符串列表，可保留多把同算法密钥支持轮换；接收端依次尝试这些密钥。
 签发者级 `enabled: false` 会禁用其全部密钥；撤销单把密钥时从列表移除。配置变更在快照替换后生效。
@@ -252,7 +252,7 @@ SQLite 使用 WAL 与 `synchronous=FULL`，消费成功必须等待持久化提�
 正常重启须复用持久本地目录并保留数据库及 WAL；删除状态、恢复旧备份、换空路径或复制为另一独立消费实例不在普通重启保证内。
 已有库损坏不自动重建；提交后即使回调丢失或平台登录失败，也不恢复票据，需要可信上游重新签发。
 
-## SQL 服务器目录
+## SQL 服务器列表
 
 SQL 只同步服务器列表；`trusted-issuers.yml`、信任策略与所有密钥始终由管理员在本地维护。
 将主配置的 `registry` 段替换为下例即可，其余签发、验票和 `LOCAL` 防重放配置保持按角色填写。
@@ -284,7 +284,7 @@ registry:
 ```
 
 `engine` 可选 `POSTGRESQL / MYSQL / MARIADB`，数据库切换不改变配置结构。`SQL` 模式无需 `registry.config`，不读取 `servers-path`。
-本地信任仍由 `verification.trusted-issuers-path` 指定，与切换目录来源无关。
+本地信任仍由 `verification.trusted-issuers-path` 指定，与切换 Registry 来源无关。
 管理员先在选定数据库执行对应的完整初始化脚本，再维护 `chorus_servers`，包括本节点及签发策略允许的所有目标：
 
 | 数据库 | 初始化脚本 |
@@ -302,7 +302,7 @@ VALUES ('gateway', 'Gateway', 'gateway.example.net', 25565),
        ('backend', 'Backend', 'backend.example.net', 25565);
 ```
 
-运行账号当前只需读取目录与版本表，节点不建表、不写目录。**TODO：未来管理/核销写操作可能要求账号隔离或凭据字段调整，当前配置不是最终权限模型。**
+运行账号当前只需读取服务器列表与版本表，节点不建表、不写服务器列表。**TODO：未来管理/核销写操作可能要求账号隔离或凭据字段调整，当前配置不是最终权限模型。**
 **TODO：PostgreSQL 的 `sql.schema` 暂不引入，本轮固定使用 `public`。** 心跳、共享信任与密钥表、SQL 核销均不在本轮实现。
 
 `password-path` 与 `ca-cert` 相对 `chorus.yml`；密码是上限 64 KiB 的 UTF-8 文件，只去掉末尾一个 LF/CRLF，保留其余空白。
@@ -311,10 +311,11 @@ VALUES ('gateway', 'Gateway', 'gateway.example.net', 25565),
 `acquire-timeout` 是等连接池的时间，最小 500ms；`connect / query / socket` 分别限制物理连接、单条 SQL 和网络读取。
 SQL 与缓存时长须为整毫秒且不超过 2147483647ms；驱动只支持秒的设置会向上取整。
 
-启动必须成功读取第一个完整目录，结构版本、目录值或本节点/目标引用有错则启动失败。
-后续后台读取成功才整体替换；失败保留旧目录，不重置期限，也不回退 `servers.yml`。
-`max-stale` 从最后一次完整成功刷新开始计算，到期拒绝依赖目录的操作；使用单调时钟，不受系统时间回拨影响。
-成功读到相同目录仍更新成功时间。过期只影响路由，本地信任仍可验票；SQL 刷新不重读本地信任和密钥，SQL 模式的信任变更通过重新打开 Engine 生效。
+启动必须成功读取第一个完整服务器列表，结构版本、服务器列表值或本节点/目标引用有错则启动失败。
+后续后台读取成功才整体替换；失败保留旧服务器列表，不重置期限，也不回退 `servers.yml`。
+`max-stale` 从最后一次完整成功刷新开始计算，到期拒绝依赖服务器列表的操作；使用单调时钟，不受系统时间回拨影响。
+成功读到相同服务器列表仍更新成功时间。过期只影响路由，本地信任仍可验票；SQL 刷新不重读本地信任和密钥，SQL 模式的信任变更通过重新打开 Engine 生效。
+服务器列表不可用时，签发失败使用 `SERVER_LIST_UNAVAILABLE` 错误码。
 
 Java 的 `SqlServerNodeRegistry.refresh()` 可显式异步刷新，返回 `CompletionStage`；并发调用共用当前刷新尝试。
 失败异常不携带驱动原始诊断，防止输出凭据；`snapshot().stale()` 在刷新失败或超过刷新间隔时为真，超过 `max-stale` 则抛出不可用异常。
@@ -322,7 +323,7 @@ Java 的 `SqlServerNodeRegistry.refresh()` 可显式异步刷新，返回 `Compl
 
 独立验证命令是 `./gradlew :chorus-core:sqlIntegrationTest`，使用测试专用 CA 与仅含 `localhost` 名称的证书，要求本地 Docker。
 测试覆盖三库初始化、大小写 ID、增删改刷新、错误结构版本、查询锁超时、TLS 成功/不可信 CA/主机名不匹配，
-以及 SQL 目录配合本地 Ed25519/HMAC 和 SQLite 的完整闭环。镜像和依赖版本在 Version Catalog 固定；当前已测 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13，不代表已验证其他版本。
+以及 SQL 服务器列表配合本地 Ed25519/HMAC 和 SQLite 的完整闭环。镜像和依赖版本在 Version Catalog 固定；当前已测 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13，不代表已验证其他版本。
 测试证书及私钥仅为公开测试夹具，不用于部署；签发 CA 的私钥不入库。
 
 ## 许可

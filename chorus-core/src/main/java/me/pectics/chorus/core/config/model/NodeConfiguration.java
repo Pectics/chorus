@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 2.4 and 3.9
- * sync: Keep local role requirements separate from directory labels and issuer trust.
+ * sync: Keep local role requirements separate from server labels and issuer trust.
  * @endcontext
  */
 package me.pectics.chorus.core.config.model;
@@ -10,7 +10,7 @@ import java.util.Objects;
 
 /**
  * Local node identity and role. The optional display name is descriptive and does not override
- * directory entries. Invalid IDs or blank labels throw IllegalArgumentException; a null role throws
+ * server entries. Invalid IDs or blank labels throw IllegalArgumentException; a null role throws
  * NullPointerException.
  */
 public record NodeConfiguration(String id, String displayName, NodeRole role) {

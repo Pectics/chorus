@@ -2,7 +2,7 @@
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.2, and 3.9
  * related: chorus-core/src/main/java/me/pectics/chorus/core/registry/config/ConfigServerNodeRegistry.java
- * sync: Validate complete local server directories independently of issuer approvals and keys.
+ * sync: Validate complete local server lists independently of issuer approvals and keys.
  * @endcontext
  */
 package me.pectics.chorus.core.config;
@@ -20,9 +20,9 @@ final class RegistryLoader {
     private RegistryLoader() {}
 
     static RegistrySnapshot read(Path serversFile, Clock clock) throws IOException {
-        var directory = ConfigurationLoader.read(serversFile, Document.SERVERS);
+        var serversDocument = ConfigurationLoader.read(serversFile, Document.SERVERS);
         var servers = new HashMap<String, ServerNode>();
-        for (var entry : directory.properties()) {
+        for (var entry : serversDocument.properties()) {
             var value = entry.getValue();
             String address = value.get("address").asString();
             int separator = address.lastIndexOf(':');

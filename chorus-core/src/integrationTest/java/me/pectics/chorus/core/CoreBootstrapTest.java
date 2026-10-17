@@ -228,7 +228,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void directoryReloadDoesNotReadTrustAndDoesNotAgeOutConfigApproval() throws Exception {
+    void serverListReloadDoesNotReadTrustAndDoesNotAgeOutConfigApproval() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         var registry = CoreBootstrap.loadServerRegistry(servers, clock);
@@ -255,7 +255,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void trustCanBeLoadedAndReloadedWithoutAnyServerDirectoryOrSigningKey() throws Exception {
+    void trustCanBeLoadedAndReloadedWithoutAnyServerListOrSigningKey() throws Exception {
         Path trust = directory.resolve("trusted-issuers.yml");
         Files.delete(directory.resolve("servers.yml"));
         Files.delete(directory.resolve("private.der"));
@@ -272,7 +272,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void directoryMembershipDoesNotApproveAnIssuerOrConsumeItsTicket() throws Exception {
+    void serverListMembershipDoesNotApproveAnIssuerOrConsumeItsTicket() throws Exception {
         Path senderFile = write("gateway.yml", configuration("gateway", NodeRole.GATEWAY));
         Path receiverFile = write("backend.yml", configuration("backend", NodeRole.BACKEND));
         byte[] payload;
@@ -471,7 +471,7 @@ class CoreBootstrapTest {
     }
 
     @Test
-    void trustSchemaFailureRetainsApprovalsWithoutBlockingDirectoryReload() throws Exception {
+    void trustSchemaFailureRetainsApprovalsWithoutBlockingServerListReload() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         var registry = CoreBootstrap.loadServerRegistry(servers, clock);

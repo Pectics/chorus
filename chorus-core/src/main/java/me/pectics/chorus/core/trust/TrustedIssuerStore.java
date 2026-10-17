@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.2 and 3.7
- * sync: Keep issuer approvals independent of server discovery and directory refreshes.
+ * sync: Keep issuer approvals independent of server discovery and server list refreshes.
  * @endcontext
  */
 package me.pectics.chorus.core.trust;

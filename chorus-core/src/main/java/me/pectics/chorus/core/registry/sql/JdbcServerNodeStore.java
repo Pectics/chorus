@@ -35,9 +35,9 @@ import me.pectics.chorus.core.config.model.RegistryConfiguration.TlsMode;
 import me.pectics.chorus.core.registry.ServerNode;
 
 /**
- * Pooled JDBC reads of the versioned server directory. Opening loads credentials and may block;
- * load and close must run off event loops. Never creates tables or loads issuer keys. Owns its pool
- * and any connection-specific truststore; no JVM-wide TLS properties are changed.
+ * Pooled JDBC reads of the versioned server list. Opening loads credentials and may block; load and
+ * close must run off event loops. Never creates tables or loads issuer keys. Owns its pool and any
+ * connection-specific truststore; no JVM-wide TLS properties are changed.
  */
 public final class JdbcServerNodeStore implements SqlServerNodeRegistry.Store {
     private final HikariDataSource pool;
@@ -60,7 +60,7 @@ public final class JdbcServerNodeStore implements SqlServerNodeRegistry.Store {
         try {
             var config = new HikariConfig();
             config.setPoolName(
-                    "chorus-directory-" + settings.engine().name().toLowerCase(Locale.ROOT));
+                    "chorus-servers-" + settings.engine().name().toLowerCase(Locale.ROOT));
             config.setDriverClassName(
                     switch (settings.engine()) {
                         case POSTGRESQL -> "org.postgresql.Driver";
@@ -227,7 +227,7 @@ public final class JdbcServerNodeStore implements SqlServerNodeRegistry.Store {
             }
         } catch (SQLException failure) {
             throw new SQLException(
-                    "Unable to read SQL server directory; check connection, schema version, and rows",
+                    "Unable to read SQL server list; check connection, schema version, and rows",
                     failure.getSQLState(),
                     failure.getErrorCode());
         }

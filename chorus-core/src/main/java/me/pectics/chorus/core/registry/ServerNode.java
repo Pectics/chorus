@@ -2,12 +2,12 @@
  * @context
  * refs: ARCHITECTURE.md, section 3.2
  * related: chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/v1/servers.schema.json
- * sync: Keep routing fields aligned with the directory schema and bootstrap assembly.
+ * sync: Keep routing fields aligned with the server list schema and bootstrap assembly.
  * @endcontext
  */
 package me.pectics.chorus.core.registry;
 
-/** Administrator-approved routing data. A directory entry does not grant issuer trust. */
+/** Administrator-approved routing data. A server entry does not grant issuer trust. */
 public record ServerNode(String nodeId, String displayName, String host, int port) {
     public ServerNode {
         if (nodeId == null

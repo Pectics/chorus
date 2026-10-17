@@ -3,7 +3,7 @@
   "$id": "urn:chorus:configuration:chorus:v1",
   "$comment": "The complete chorus.yml v1 format contract. See ARCHITECTURE.md section 3.9. TODO: REGISTRY/REDIS replay backends are reserved and rejected by runtime assembly until implemented.",
   "title": "Chorus configuration v1",
-  "description": "File-based Core configuration with explicit operational limits. Assembly checks duration arithmetic, field relationships, implemented options, key contents, and directory references.",
+  "description": "File-based Core configuration with explicit operational limits. Assembly checks duration arithmetic, field relationships, implemented options, key contents, and server references.",
   "type": "object",
   "additionalProperties": false,
   "required": ["node", "ticket", "crypto", "registry", "verification"],
@@ -16,7 +16,7 @@
         "id": {"$ref": "#/$defs/nodeId"},
         "display-name": {
           "$ref": "#/$defs/nonBlankString",
-          "description": "Descriptive local label only. Core does not consume it; runtime directory display names come from servers.yml."
+          "description": "Descriptive local label only. Core does not consume it; runtime server display names come from the configured server list."
         },
         "role": {
           "description": "GATEWAY sends tickets, BACKEND receives tickets, and PEER supports both operations.",
@@ -101,7 +101,7 @@
           "properties": {
             "servers-path": {
               "$ref": "#/$defs/nonBlankString",
-              "description": "Directory path relative to chorus.yml, validated with servers.schema.json."
+              "description": "Server list file path relative to chorus.yml, validated with servers.schema.json."
             }
           }
         },

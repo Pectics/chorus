@@ -123,7 +123,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                         servers.find(request.targetNodeId())
                                 .orElseThrow(() -> reject(TicketError.UNKNOWN_TARGET));
             } catch (IllegalStateException unavailable) {
-                throw reject(TicketError.DIRECTORY_UNAVAILABLE);
+                throw reject(TicketError.SERVER_LIST_UNAVAILABLE);
             }
             Instant issuedAt = clock.instant().truncatedTo(ChronoUnit.SECONDS);
             var claims =

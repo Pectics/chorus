@@ -91,12 +91,12 @@ public final class CoreBootstrap {
         LocalReplayGuard guard = null;
         try {
             var trust = TrustLoader.read(verification.trustedIssuersPath());
-            RegistrySnapshot directory;
+            RegistrySnapshot snapshot;
             var requiredNodes = new HashSet<String>();
             requiredNodes.add(node.id());
             if (node.role().sender()) requiredNodes.addAll(issuance.policy().allowedTargets());
             if (registry.provider() == RegistryConfiguration.Provider.CONFIG) {
-                directory = RegistryLoader.read(registry.config().serversPath(), clock);
+                snapshot = RegistryLoader.read(registry.config().serversPath(), clock);
             } else {
                 sql =
                         new SqlServerNodeRegistry(
@@ -104,11 +104,11 @@ public final class CoreBootstrap {
                                 registry.cache(),
                                 requiredNodes,
                                 clock);
-                directory = sql.snapshot();
+                snapshot = sql.snapshot();
             }
-            if (!directory.servers().keySet().containsAll(requiredNodes)) {
+            if (!snapshot.servers().keySet().containsAll(requiredNodes)) {
                 throw new IllegalArgumentException(
-                        "Node and issuance targets must exist in the directory");
+                        "Node and issuance targets must exist in the server list");
             }
             TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
             var issuers = new ConfigTrustedIssuerStore(trust.loadIssuers());
@@ -129,7 +129,7 @@ public final class CoreBootstrap {
                             ticket,
                             issuance,
                             verification,
-                            sql == null ? new ConfigServerNodeRegistry(directory) : sql,
+                            sql == null ? new ConfigServerNodeRegistry(snapshot) : sql,
                             issuers,
                             signer,
                             guard,
@@ -165,13 +165,15 @@ public final class CoreBootstrap {
         };
     }
 
-    /** Blocking directory load. Validates servers.yml only; no trust or key files are accessed. */
+    /**
+     * Blocking server list load. Validates servers.yml only; no trust or key files are accessed.
+     */
     public static ConfigServerNodeRegistry loadServerRegistry(Path serversFile, Clock clock)
             throws IOException {
         return new ConfigServerNodeRegistry(RegistryLoader.read(serversFile, clock));
     }
 
-    /** Blocking directory reload. Parsing or schema failures leave the old directory intact. */
+    /** Blocking server list reload. Parsing or schema failures leave the old snapshot intact. */
     public static void reloadServerRegistry(
             ConfigServerNodeRegistry registry, Path serversFile, Clock clock) throws IOException {
         registry.replace(RegistryLoader.read(serversFile, clock));
@@ -184,7 +186,8 @@ public final class CoreBootstrap {
     }
 
     /**
-     * Blocking trust reload. Invalid documents or keys retain all old approvals; no directory I/O.
+     * Blocking trust reload. Invalid documents or keys retain all old approvals; no server list
+     * I/O.
      */
     public static void reloadTrustedIssuers(ConfigTrustedIssuerStore issuers, Path trustFile)
             throws IOException, GeneralSecurityException {

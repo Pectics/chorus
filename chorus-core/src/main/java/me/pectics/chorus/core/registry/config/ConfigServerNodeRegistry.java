@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
 
-/** Thread-safe in-memory directory loaded by the administrator; reads never perform file I/O. */
+/** Thread-safe in-memory server list loaded by the administrator; reads never perform file I/O. */
 public final class ConfigServerNodeRegistry implements ServerNodeRegistry {
     private final AtomicReference<RegistrySnapshot> state = new AtomicReference<>();
 
@@ -20,7 +20,7 @@ public final class ConfigServerNodeRegistry implements ServerNodeRegistry {
     }
 
     /**
-     * Atomically publishes the complete immutable directory; null leaves the old snapshot intact.
+     * Atomically publishes the complete immutable server list; null leaves the old snapshot intact.
      */
     public void replace(RegistrySnapshot snapshot) {
         state.set(Objects.requireNonNull(snapshot, "snapshot"));

@@ -131,7 +131,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
         var current = state;
         long age = ticker.getAsLong() - current.loadedAt();
         if (closed || age >= cache.maxStale().toNanos()) {
-            throw new IllegalStateException("SQL server directory is unavailable");
+            throw new IllegalStateException("SQL server list is unavailable");
         }
         var snapshot = current.snapshot();
         if (current.failed() || age >= cache.refreshInterval().toNanos()) {
@@ -149,7 +149,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
         synchronized (lifecycle) {
             if (closed)
                 return CompletableFuture.failedFuture(
-                        new IllegalStateException("SQL server registry is closed"));
+                        new IllegalStateException("SQL server list is closed"));
             if (pending != null) return pending.minimalCompletionStage();
             var result = new CompletableFuture<Void>();
             pending = result;
@@ -164,9 +164,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
                         } catch (SQLException | RuntimeException invalid) {
                             var previous = state;
                             state = new State(previous.snapshot(), previous.loadedAt(), true);
-                            failure =
-                                    new IllegalStateException(
-                                            "SQL server directory refresh failed");
+                            failure = new IllegalStateException("SQL server list refresh failed");
                         }
                         synchronized (lifecycle) {
                             pending = null;
@@ -183,7 +181,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
         var snapshot = new RegistrySnapshot(servers, clock.instant(), false);
         if (!snapshot.servers().keySet().containsAll(requiredNodes)) {
             throw new IllegalArgumentException(
-                    "Node and issuance targets must exist in the SQL directory");
+                    "Node and issuance targets must exist in the SQL server list");
         }
         return new State(snapshot, ticker.getAsLong(), false);
     }
@@ -206,7 +204,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
             }
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted closing SQL server registry");
+            throw new IllegalStateException("Interrupted closing SQL server list");
         }
         if (closeFailure != null) throw closeFailure;
     }

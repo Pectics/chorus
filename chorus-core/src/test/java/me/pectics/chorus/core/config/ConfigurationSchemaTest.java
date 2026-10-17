@@ -155,7 +155,7 @@ class ConfigurationSchemaTest {
     }
 
     @Test
-    void configDirectoryRequiresItsOwnFileSettings() {
+    void configRegistryRequiresItsOwnFileSettings() {
         var core = (ObjectNode) fixture(Document.CORE);
         var registry = (ObjectNode) core.get("registry");
         registry.remove("config");
@@ -166,7 +166,7 @@ class ConfigurationSchemaTest {
 
     @ParameterizedTest
     @EnumSource(Provider.class)
-    void trustPathBelongsOnlyToVerificationForBothDirectoryProviders(Provider provider) {
+    void trustPathBelongsOnlyToVerificationForBothRegistryProviders(Provider provider) {
         var core = (ObjectNode) fixture(Document.CORE);
         if (provider == Provider.SQL) {
             core.set("registry", JSON.readTree(SqlConfigurationTest.REGISTRY));
@@ -267,7 +267,7 @@ class ConfigurationSchemaTest {
     }
 
     @Test
-    void directorySchemaEnforcesFlatEntriesAndAddressBounds() {
+    void serverListSchemaEnforcesFlatEntriesAndAddressBounds() {
         for (String invalid :
                 List.of(
                         SERVERS.replace("25565", "0"),
@@ -300,7 +300,7 @@ class ConfigurationSchemaTest {
                 "[2001:db8::1]:25565",
                 "[fe80::1%eth0]:25565"
             })
-    void directorySchemaAcceptsExplicitHostnameIpv4AndBracketedIpv6Addresses(String address) {
+    void serverListSchemaAcceptsExplicitHostnameIpv4AndBracketedIpv6Addresses(String address) {
         var servers = fixture(Document.SERVERS);
         ((ObjectNode) servers.get("backend")).put("address", address);
         assertThat(contract(Document.SERVERS).validate(servers)).isEmpty();
@@ -308,7 +308,7 @@ class ConfigurationSchemaTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"tags", "metadata"})
-    void directorySchemaRejectsRemovedExtensionFields(String field) {
+    void serverListSchemaRejectsRemovedExtensionFields(String field) {
         var servers = fixture(Document.SERVERS);
         var entry = (ObjectNode) servers.at("/backend");
         if (field.equals("tags")) {

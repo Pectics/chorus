@@ -2,7 +2,7 @@ package me.pectics.chorus.core.registry;
 
 import java.util.Optional;
 
-/** Thread-safe approved snapshots. Reads must not block or perform I/O. */
+/** Thread-safe access to the registry's server list. Reads must not block or perform I/O. */
 public interface ServerNodeRegistry {
     /** Throws IllegalStateException when no approved, still-usable snapshot exists. */
     RegistrySnapshot snapshot();

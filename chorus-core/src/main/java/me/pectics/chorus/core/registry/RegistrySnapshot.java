@@ -4,7 +4,10 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 
-/** Immutable approved directory. Stale is informational; the provider enforces usability limits. */
+/**
+ * Immutable approved server snapshot. Stale is informational; the provider enforces usability
+ * limits.
+ */
 public record RegistrySnapshot(
         Map<String, ServerNode> servers, Instant refreshedAt, boolean stale) {
     public RegistrySnapshot {
@@ -13,7 +16,7 @@ public record RegistrySnapshot(
         servers.forEach(
                 (id, node) -> {
                     if (!id.equals(node.nodeId())) {
-                        throw new IllegalArgumentException("Directory key differs from node ID");
+                        throw new IllegalArgumentException("Server map key differs from node ID");
                     }
                 });
     }

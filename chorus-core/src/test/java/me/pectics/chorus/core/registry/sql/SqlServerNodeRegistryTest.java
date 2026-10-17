@@ -60,7 +60,7 @@ class SqlServerNodeRegistryTest {
             store.fail = true;
             assertThatThrownBy(
                             () -> registry.refresh().toCompletableFuture().get(2, TimeUnit.SECONDS))
-                    .hasRootCauseMessage("SQL server directory refresh failed")
+                    .hasRootCauseMessage("SQL server list refresh failed")
                     .satisfies(
                             failure -> {
                                 var trace = new java.io.StringWriter();
@@ -74,7 +74,7 @@ class SqlServerNodeRegistryTest {
             store.nodes = Map.of();
             assertThatThrownBy(
                             () -> registry.refresh().toCompletableFuture().get(2, TimeUnit.SECONDS))
-                    .hasRootCauseMessage("SQL server directory refresh failed");
+                    .hasRootCauseMessage("SQL server list refresh failed");
             ticker.set(Duration.ofMinutes(2).toNanos());
             assertThatThrownBy(registry::snapshot).isInstanceOf(IllegalStateException.class);
             store.nodes =
@@ -109,7 +109,7 @@ class SqlServerNodeRegistryTest {
             assertThatThrownBy(registry::snapshot).isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(
                             () -> registry.refresh().toCompletableFuture().get(2, TimeUnit.SECONDS))
-                    .hasRootCauseMessage("SQL server registry is closed");
+                    .hasRootCauseMessage("SQL server list is closed");
         } finally {
             store.release.countDown();
             registry.close();

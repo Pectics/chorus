@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:chorus:configuration:trusted-issuers:v1",
   "$comment": "The complete trusted-issuers.yml v1 format contract. See ARCHITECTURE.md sections 3.2 and 3.9. Runtime assembly checks key contents and duplicate keys, including different paths to the same key.",
-  "title": "Chorus issuer trust directory v1",
+  "title": "Chorus issuer trust store v1",
   "description": "Local receiver approvals indexed by issuer node ID. An empty mapping grants no trust; tickets must target the local node.",
   "type": "object",
   "propertyNames": {

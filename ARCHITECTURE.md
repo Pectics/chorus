@@ -1,6 +1,6 @@
 # Chorus：基于 Minecraft 1.20.5+ `/transfer` 与 Cookie 机制的分布式服务器互联架构设计方案
 
-> **修订版**：Draft v1.4（服务器目录与本地信任独立）\
+> **修订版**：Draft v1.4（Registry 与本地信任独立）\
 > **文档用途**：可独立阅读的架构与接口设计稿；不是声称所有平台 API 均已验证的实现手册。  
 > **项目名称**：`Chorus`  
 > **Maven Group / 包名前缀**：`me.pectics.chorus`  
@@ -42,7 +42,7 @@ Chorus 利用这些机制构建**无常驻游戏流量中转的跨服互联体�
 
 **授权传递**：JWT 签名正确，不等于某台服务器可以断言任意认证来源、任意用户或任意目标节点。需要明确签发者信任范围。
 
-**节点配置**：传统 Proxy 集中维护 `servers` 列表；Chorus 没有必然存在的中央代理。需要让管理员管理节点目录，同时选择静态配置或可选的共享 SQL 控制面。
+**节点配置**：传统 Proxy 集中维护 `servers` 列表；Chorus 没有必然存在的中央代理。需要让管理员管理服务器列表，同时选择静态配置或可选的共享 SQL 控制面。
 
 **一次性票据**：限定有效期、签发者和目标节点，避免同一 Ticket 被目标节点重复接受。其后端可以是本地 SQLite 持久化记录，也可以在有明确需要时使用共享 SQL。
 
@@ -81,15 +81,15 @@ chorus/
 │       │   └── model/                  # 与主配置七个顶级段对应的独立值类型
 │       ├── model/                      # ServerNode、IdentityClaim、TicketClaims 等
 │       ├── crypto/                     # Ed25519/HMAC 签发与验签能力、JWS 编解码
-│       ├── registry/                   # ServerNodeRegistry：仅服务器目录
-│       │   ├── config/                 # 配置文件提供的服务器目录快照
-│       │   └── sql/                    # PostgreSQL / MySQL / MariaDB 服务器目录
+│       ├── registry/                   # Registry 数据访问；当前实现 servers
+│       │   ├── config/                 # 配置文件提供的服务器列表快照
+│       │   └── sql/                    # PostgreSQL / MySQL / MariaDB 服务器列表
 │       ├── trust/                      # TrustedIssuer、TrustedIssuerStore：本地信任
 │       │   └── config/                 # 本机管理员批准的签发者与验签材料
 │       ├── policy/                     # UUID / Profile 身份解析策略
 │       └── replay/                     # ReplayGuard：仅负责 Ticket 防重放
 │           ├── local/                  # 本地持久化消费记录；当前使用 SQLite
-│           ├── registry/               # 复用目录数据库的核销后端；尚未实现
+│           ├── registry/               # 复用 Registry 数据库的核销后端；尚未实现
 │           └── redis/                  # 仅预留未来扩展，不进入 MVP
 │
 ├── chorus-common/                       # 平台无关的 Minecraft 生命周期支撑
@@ -125,7 +125,7 @@ chorus/
 
 | 模块 | 职责 | 明确不负责 |
 |---|---|---|
-| `chorus-core` | 节点目录快照、受信任签发者、Ticket、验签、策略、UUID 解析、ReplayGuard | 收发 Minecraft Packet、PlayerQuit、保存背包 |
+| `chorus-core` | 服务器列表快照、受信任签发者、Ticket、验签、策略、UUID 解析、ReplayGuard | 收发 Minecraft Packet、PlayerQuit、保存背包 |
 | `chorus-common` | 单连接 Cookie Single-Flight、本地玩家身份会话、转移中状态、平台 SPI | 共享数据库会话锁、核心签名算法 |
 | `chorus-paper` | Paper 事件与 API 对接、命令、Cookie、Transfer、Profile 应用 | Core 密码学实现 |
 | `chorus-velocity` | 入口网关或可用能力内的 Sender/Receiver，异步登录对接 | 假定具有与 Paper 相同的登录 API |
@@ -149,22 +149,25 @@ chorus/
 
 ### 3.1 控制面：谁维护权威 `servers` 列表？
 
+**Registry（注册表）** 指可容纳多种数据项的整体，**`servers`（服务器列表）** 是其中当前已实现的数据项。
+后续数据项按各自需求扩展；本地签发者信任继续由独立的 `trust` 模块管理。
+
 **已确认需求**：管理员维护服务器列表；共享 SQL 是默认倾向但**不是 Chorus 协议运行的必需组件**。静态模式必须可行。
 
-提供两个互斥的**目录来源模式**：
+Registry 提供两个互斥的**来源模式**：
 
-1. **`CONFIG`**：每台 Chorus 节点读取管理员提供的本地 `servers` 配置。不存在自动同步权威；管理员负责分发与更新目录，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
-2. **`SQL`**：同一管理域用数据库作为权威节点目录。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。本轮只通过 JDBC 同步 `servers`，支持 PostgreSQL、MySQL、MariaDB。签发者批准、信任策略和所有密钥继续由本地文件维护，不读取或创建 SQL 信任表；Turso/libSQL 留待后续适配。
+1. **`CONFIG`**：每台 Chorus 节点读取管理员提供的本地 `servers` 配置。不存在自动同步权威；管理员负责分发与更新服务器列表，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
+2. **`SQL`**：同一管理域用数据库作为权威服务器列表。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。本轮只通过 JDBC 同步 `servers`，支持 PostgreSQL、MySQL、MariaDB。签发者批准、信任策略和所有密钥继续由本地文件维护，不读取或创建 SQL 信任表；Turso/libSQL 留待后续适配。
 
-两种模式使用相同的服务器目录读取接口；目录选择由 `registry.provider` 表达，`CONFIG` 的文件路径为 `registry.config.servers-path`。SQL 连接参数位于 `registry.sql`，服务器快照策略位于 `registry.cache`，无需 `registry.config`。
-本地信任不属于 Registry，统一通过 `verification.trusted-issuers-path` 指定，与目录来源无关。Chorus 不自动分发签发者批准、信任策略、公钥、私钥或 HMAC 密钥，管理员负责在各节点部署所需文件。
-防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选目录数据库。
+两种模式使用相同的服务器列表读取接口；Registry 来源由 `registry.provider` 表达，`CONFIG` 的服务器列表文件路径为 `registry.config.servers-path`。SQL 连接参数位于 `registry.sql`，当前服务器快照策略位于 `registry.cache`，无需 `registry.config`。
+本地信任不属于 Registry，统一通过 `verification.trusted-issuers-path` 指定，与 Registry 来源无关。Chorus 不自动分发签发者批准、信任策略、公钥、私钥或 HMAC 密钥，管理员负责在各节点部署所需文件。
+防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选 Registry 数据库。
 
-跨服主联盟中不必要求所有服主共用一个具有写权限的数据库。可为每个管理域维护自己的目录，再在本地明确授权**外域签发者**。本地管理员选择信任哪些外域公钥和身份类型。
+跨服主联盟中不必要求所有服主共用一个具有写权限的数据库。可为每个管理域维护自己的服务器列表，再在本地明确授权**外域签发者**。本地管理员选择信任哪些外域公钥和身份类型。
 
 #### 管理命令（**候选方案，尚未最终确认**）
 
-平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后分别交给服务器目录或本地信任的管理员接口。对于 `CONFIG`，仅更新**本机目录配置**；对于 `SQL`，服务器目录可写入管理域权威数据库；信任修改仍限本机文件，不同步到 SQL。没有共享存储时，命令不会神奇同步到其他节点。
+平台层可以提供 `chorus server list/add/update/remove`、`chorus trust list/add/revoke` 等管理命令，经平台权限检查后分别交给服务器列表或本地信任的管理员接口。对于 `CONFIG`，仅更新**本机服务器列表配置**；对于 `SQL`，服务器列表可写入管理域权威数据库；信任修改仍限本机文件，不同步到 SQL。没有共享存储时，命令不会神奇同步到其他节点。
 
 权限验证发生在平台管理界面；是否采用游戏内指令作为正式配置入口，仍待确定。无需首先开发网页后台。
 
@@ -172,7 +175,7 @@ chorus/
 
 - **`ServerNodeRegistry`**：节点 ID、显示名和连接地址，解决“往哪里转”。
 - **`trust.TrustedIssuerStore`**：由本机管理员批准的签发者、算法、验签密钥列表与身份来源范围，解决“本机信任谁”，独立于 Registry。
-- 目录包含某节点不代表授予其签发者信任；目录刷新不添加、续期或撤销本地批准。
+- 服务器列表包含某节点不代表授予其签发者信任；服务器列表刷新不添加、续期或撤销本地批准。
 - 心跳信息只用于 UI 与路由提示，不是授予身份签发权限的凭据。
 - 节点上报的候选公钥不能自动成为受信任公钥；密钥轮换需批准或受可信旧密钥授权的轮换流程。
 
@@ -180,15 +183,15 @@ chorus/
 
 #### 缓存与数据库故障
 
-- 上次**经过批准**的服务器目录可以留在内存中；共享数据库临时不可用时，在允许期限内继续使用旧目录。本地信任与密钥不依赖 SQL 刷新，也不因 SQL 缓存过期而失效。
+- 上次**经过批准**的服务器列表可以留在内存中；共享数据库临时不可用时，在允许期限内继续使用旧服务器列表。本地信任与密钥不依赖 SQL 刷新，也不因 SQL 缓存过期而失效。
 - 缓存中不存在的新节点、陌生公钥、未经批准的密钥变更，一律不因数据库故障而自动被接受。
-- `cache.max-stale` 从最后一次成功读取并完整校验服务器目录起计时，失败不重置，到期拒绝依赖目录的新操作；`refresh-interval` 必须更短。SQL 缓存不负责传播密钥撤销，本地信任仍须由管理员分发和显式重新加载。
+- `cache.max-stale` 从最后一次成功读取并完整校验服务器列表起计时，失败不重置，到期拒绝依赖服务器列表的新操作；`refresh-interval` 必须更短。SQL 缓存不负责传播密钥撤销，本地信任仍须由管理员分发和显式重新加载。
 - 节点冷启动且数据库不可用、又没有可验证的本地可信快照时不能凭空发现其他服务器；可使用管理员提供的静态备用快照。
 - **不能把 SQL 票据核销错误自动降级为本地核销**：两个后端不共享消费记录，会造成票据重复接受。控制面缓存策略与数据面 ReplayGuard 故障策略是两回事。
 
 ### 3.2 `registry` 与 `trust` API 设计
 
-节点目录只保存节点 ID、显示名、主机名与端口；分组标签和通用元数据不纳入当前配置及模型。
+服务器列表只保存节点 ID、显示名、主机名与端口；分组标签和通用元数据不纳入当前配置及模型。
 
 ```java
 package me.pectics.chorus.core.registry;
@@ -236,28 +239,28 @@ public interface TrustedIssuerStore {
 静态配置的 `key: path` 等价于 `keys: [path]`，两者至少提供一个；同时提供时只加载 `keys`，不合并或回退到 `key`。
 配置、API 与 Ticket 均不使用密钥标识，接收端按签发节点 ID 查找批准记录；签发者启用时依次尝试其批准密钥，验签后使用该签发者的策略。
 
-写入型管理接口另行声明，例如 `ServerDirectoryAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
+写入型管理接口另行声明，例如 `ServerNodeAdmin` / `TrustAdmin`，不并入面向所有运行节点的公开只读接口。心跳采集可通过独立 `NodePresenceReporter` 实现，**不应让 `registerSelf()` 覆盖管理员的 ServerNode 定义**。
 
-### 3.3 SQL 服务器目录存储契约
+### 3.3 SQL 服务器列表存储契约
 
-SQL 目录实现命名为 `SqlServerNodeRegistry`，JDBC 读取实现命名为 `JdbcServerNodeStore`，与目录领域对象 `ServerNode` 保持一致。
+SQL 服务器列表实现命名为 `SqlServerNodeRegistry`，JDBC 读取实现命名为 `JdbcServerNodeStore`，与服务器节点对象 `ServerNode` 保持一致。
 
-本轮数据库仅保存服务器目录，不同步任何签发者批准、信任策略、公钥、私钥或 HMAC 密钥。
+本轮数据库仅保存服务器列表，不同步任何签发者批准、信任策略、公钥、私钥或 HMAC 密钥。
 `chorus_registry_schema(singleton, version)` 保存结构版本；`chorus_servers(node_id, display_name, host, port)`
 对应 `ServerNode`，节点 ID 保持大小写敏感。表结构版本为 `1`，三种数据库各有完整初始化脚本，位于
 `chorus-core/src/main/resources/me/pectics/chorus/core/registry/sql/v1/`。
 
-管理员先执行对应脚本再维护目录；节点运行时不自动建表或迁移，不注册自身、不修改目录。
+管理员先执行对应脚本再维护服务器列表；节点运行时不自动建表或迁移，不注册自身、不修改服务器列表。
 SQL 使用固定表名，PostgreSQL 本轮固定使用 `public`；TODO（§7.2）：自定义 `sql.schema` 尚未引入。
 TODO（§7.2）：未来管理或核销写操作所需的账号隔离及凭据配置可能调整，当前连接字段不承诺为最终权限模型。
 
-SQL 读取在后台工作线程完成，完整目录通过模型与本节点/签发目标引用检查后才原子发布。
-数据库结构版本错误、目录值无效、必需目标丢失或读取失败均保留旧目录，不刷新其成功时间。
-启动没有可用首个目录时拒绝初始化；后续缓存到期只影响依赖目录的操作，本地信任验票不因目录不可用而被禁止。
+SQL 读取在后台工作线程完成，完整服务器列表通过模型与本节点/签发目标引用检查后才原子发布。
+数据库结构版本错误、服务器列表值无效、必需目标丢失或读取失败均保留旧服务器列表，不刷新其成功时间。
+启动没有可用首个服务器列表时拒绝初始化；后续缓存到期只影响依赖服务器列表的操作，本地信任验票不因服务器列表不可用而被禁止。
 数据库错误不回退 `servers.yml`，以免在故障时悄悄更换权威来源。
 
 心跳、共享信任表和 SQL 票据核销均不在本轮创建或实现。`REGISTRY` 防重放仍为 TODO 并由启动装配拒绝；
-未来实现核销时需独立定义原子消费及提交结果未知的语义，不把服务器目录兼容性视为核销兼容性。
+未来实现核销时需独立定义原子消费及提交结果未知的语义，不把服务器列表兼容性视为核销兼容性。
 
 ### 3.4 `model`：玩家身份与 Ticket
 
@@ -449,9 +452,9 @@ public interface ReplayGuard {
 `LocalReplayGuard` 负责公开输入校验、有界串行调度与关闭协调，包内 `SqliteReplayStore` 负责连接、初始化、完整核销事务及数据库故障状态。
 启动、消费和关闭保证不并发访问同一连接；连接在已接收任务全部结束后关闭。消费完成回调可能在工作线程执行，回调内关闭只发起停止并返回，避免等待自身；从外部调用 Guard 的关闭方法可等待实际终止并获取关闭错误。
 
-**`REGISTRY` 后端（TODO，未实现，最终默认未定）**：该后端复用 `registry` 配置的数据库，不能用于 `CONFIG` 目录；预登记方案中 Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
+**`REGISTRY` 后端（TODO，未实现，最终默认未定）**：该后端复用 `registry` 配置的数据库，不能用于 `CONFIG` 来源；预登记方案中 Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
 
-**待确认选型**：共享 SQL 对节点目录是否有用，与 Ticket 是否应注册/核销于 SQL 是两个独立决策。MVP 可以先实现本地 SQLite ReplayGuard 以测试核心协议；这不代表最终产品默认一定选本地核销。
+**待确认选型**：共享 SQL 对服务器列表是否有用，与 Ticket 是否应注册/核销于 SQL 是两个独立决策。MVP 可以先实现本地 SQLite ReplayGuard 以测试核心协议；这不代表最终产品默认一定选本地核销。
 
 Phase 1 的运维参数保持显式配置（§7.2）；不提供运行中修改时钟容差的热更新。
 
@@ -488,7 +491,7 @@ public sealed interface TicketSigner extends TicketVerifier
 
 Ed25519 继续加载管理员提供的 PKCS#8 私钥与 X.509 SPKI 公钥（DER / PEM）。HMAC 的 `crypto.key` 指定原始 32 字节 `.key` 文件：签发角色在文件不存在时用密码学安全随机数生成，创建父目录，以排他方式创建文件，并在文件内容持久化后返回；支持 POSIX 权限时新文件设为 `0600`。已有文件直接复用，空文件、长度错误、读取或写入失败均拒绝，不覆盖或自动重置已有密钥。写入中断可能留下无效文件，后续启动仍拒绝，需管理员修复。
 
-管理员将同一 `.key` 文件同步给需要信任该签发者的节点；信任加载与重载只读取文件，缺失时不生成替代密钥。接收专用节点不生成本地签发密钥。先验证所有配置文件的 Schema 和目录目标引用，再生成本地签发密钥、加载批准密钥，最后打开防重放状态；因此 Peer 可在同一次启动中引用刚生成的本地密钥。当前 HMAC 支持静态文件分发，不新增共享 SQL 的密钥存储设计。
+管理员将同一 `.key` 文件同步给需要信任该签发者的节点；信任加载与重载只读取文件，缺失时不生成替代密钥。接收专用节点不生成本地签发密钥。先验证所有配置文件的 Schema 和目标服务器引用，再生成本地签发密钥、加载批准密钥，最后打开防重放状态；因此 Peer 可在同一次启动中引用刚生成的本地密钥。当前 HMAC 支持静态文件分发，不新增共享 SQL 的密钥存储设计。
 
 ### 3.8 `ChorusCoreEngine` 对外 API
 
@@ -567,7 +570,7 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 ### 3.9 统一配置 `chorus.yml`
 
-下例展示使用 `CONFIG` 节点目录与 `LOCAL` SQLite 防重放的 Peer。UNDECIDED（§7.2）：所有运维参数均为显式示例值，须根据部署实测调整。
+下例展示使用 `CONFIG` 服务器列表与 `LOCAL` SQLite 防重放的 Peer。UNDECIDED（§7.2）：所有运维参数均为显式示例值，须根据部署实测调整。
 
 ```yaml
 node:
@@ -652,23 +655,23 @@ operator-b/peer-01:
 | 信任条目 `algorithm: ED25519 / HMAC_SHA256` | 为该签发者的全部 `key / keys` 绑定验签算法；省略为 `ED25519` | 已实现；信任加载不生成密钥，不跨算法回退 |
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
 | `ticket.compression: ZSTD / GZIP` | 压缩完整签名 Ticket；省略配置时默认 `ZSTD` | 已实现；版本化帧与有界解压，接收端兼容所有三种编码 |
-| `registry.provider: SQL` | JDBC 仅同步服务器目录 | 已实现 PostgreSQL / MySQL / MariaDB；初始化脚本与独立集成测试见 §3.3、§6 |
-| `verification.trusted-issuers-path` | 独立的本地签发者批准文件，两种目录来源均使用 | 已实现；密钥路径相对该文件，信任与密钥不自动分发 |
+| `registry.provider: SQL` | JDBC 仅同步服务器列表 | 已实现 PostgreSQL / MySQL / MariaDB；初始化脚本与独立集成测试见 §3.3、§6 |
+| `verification.trusted-issuers-path` | 独立的本地签发者批准文件，两种 Registry 来源均使用 | 已实现；密钥路径相对该文件，信任与密钥不自动分发 |
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
 | `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | TODO：SQL 核销尚未实现；启动拒绝 |
 | `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
 | `allowed-auth-schemes: YGGDRASIL / FLOODGATE` | 预留的身份来源名称 | TODO：身份流程尚未实现；即使策略允许，Engine 仍拒绝对应身份的签发与接收 |
 
-这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在目录读取与状态库打开前明确拒绝，`REGISTRY + CONFIG` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
+这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在服务器列表读取与状态库打开前明确拒绝，`REGISTRY + CONFIG` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
 `ticket.compression` 可省略，默认 `ZSTD`；Schema 的 `default` 为契约说明，启动装配与无压缩参数的 Java 构造器落实相同默认值。
 旧版接收端仅支持 `NONE`；滚动升级时先升级接收端，发送端在接收端升级前显式保留 `NONE`。
 `ticket.max-payload-bytes` 限制包含 JWS 编码、签名及压缩帧的最终 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
 `issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
-主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时节点目录使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
-文件路径相对主配置，信任密钥路径相对签发者文件。空目录或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
+主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时服务器列表使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
+文件路径相对主配置，信任密钥路径相对签发者文件。空服务器列表或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
 主配置必须把旧 `registry.config.issuers-path` 移到 `verification.trusted-issuers-path`；旧位置由 Schema 拒绝，不提供静默兼容或回退。`trusted-issuers.yml` 的文件内容与省略算法语义不变。
-SQL 模式无需 `registry.config`，不读取 `servers-path`；`sql` 与 `cache` 必填。若保留非活动的 `config`，仍须满足服务器目录配置的完整 Schema。
+SQL 模式无需 `registry.config`，不读取 `servers-path`；`sql` 与 `cache` 必填。若保留非活动的 `config`，仍须满足服务器列表配置的完整 Schema。
 `sql.engine` 为 `POSTGRESQL / MYSQL / MARIADB`，连接字段为 `host / port / database / username / password-path`。
 `tls.mode` 为 `DISABLED / VERIFY_FULL`；可选 `ca-cert` 是相对主配置的 PEM CA bundle 路径，省略时统一使用 JVM 默认信任库。
 `DISABLED` 不接受 `ca-cert`，`VERIFY_FULL` 必须验证证书链和连接主机名，不降级为明文或跳过验证。
@@ -693,12 +696,12 @@ Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 `CryptoConfiguration`、`RegistryConfiguration` 与 `ReplayGuardConfiguration`；`NodeRole` 随节点配置放在同一包。
 不再使用平铺的 `CoreConfiguration`，也不将四组或七组重新聚合成根配置对象。各消费者只接收所需的配置组。
 签发 TTL 与签发权限同属 `IssuanceConfiguration`；密码学配置用封闭的 Ed25519 / HMAC-SHA256 两种路径表示，
-接收专用角色可不提供本地签发路径。目录的 `config / sql / cache` 与防重放的 `local` 参数作为各自所属组的嵌套值类型。
+接收专用角色可不提供本地签发路径。Registry 的 `config / sql / cache` 与防重放的 `local` 参数作为各自所属组的嵌套值类型。
 信任文件路径属于 `VerificationConfiguration`；直接注入信任对象时可使用不带路径的构造器，配置模型不会加载文件。
-配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、目录快照或防重放资源。
+配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、服务器列表快照或防重放资源。
 
 `ConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，`ConfigurationReader` 负责主配置各段的类型转换，
-`RegistryLoader` 只读取服务器目录，`TrustLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
+`RegistryLoader` 只读取服务器列表，`TrustLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
 完整装配入口使用七组独立参数；Engine 分别接收 `node / ticket / issuance / verification`，并注入已创建的运行资源。
 `issuance.ttl <= verification.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
 本地防重放设置不另设时钟容差，装配时使用同一份 `verification.clock-skew`。
@@ -720,7 +723,7 @@ Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 
 `com.networknt:json-schema-validator` 从 Core JAR 加载每个文件的完整 Schema，运行时验证不依赖网络。
 YAML 经有界安全解析后转换为保留数值精度的 JSON 树；拒绝重复键、集合别名、非字符串映射键及非 JSON 类型。
-Java 负责时长转换的表示范围和规范化数值、字段间关系、密钥内容与匹配、文件和目录目标引用；公开领域模型继续保护自身不变量。
+Java 负责时长转换的表示范围和规范化数值、字段间关系、密钥内容与匹配、文件和目标服务器引用；公开领域模型继续保护自身不变量。
 完整验证先于持久化状态打开或快照发布，失败保留原有已批准快照。运维参数保持显式配置，不通过 Schema 引入未经验证的默认值。
 
 ---
@@ -791,8 +794,8 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 
 | 情况 | 处理 |
 |---|---|
-| 共享目录不可用，缓存仍在可信允许窗口内 | 使用缓存中的地址继续转移；验签使用独立的本地批准与密钥 |
-| 共享目录不可用，缓存不存在或超过可用期限 | 拒绝依赖缺失/过期目录信息的新转移 |
+| 共享服务器列表不可用，缓存仍在可信允许窗口内 | 使用缓存中的地址继续转移；验签使用独立的本地批准与密钥 |
+| 共享服务器列表不可用，缓存不存在或超过可用期限 | 拒绝依赖缺失/过期服务器列表信息的新转移 |
 | 本地 ReplayGuard 达容量上限 | 拒绝新票据，不提前删除仍有效记录 |
 | SQL ReplayGuard 不可用 | 拒绝核销，不动态切到本地模式 |
 | Ticket 已核销，平台后续登录失败 | 本票据作废；重新获取 Ticket |
@@ -803,7 +806,7 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 
 ### 5.3 可观测性
 
-统计 Ticket 签发、验证、拒绝、过期、重放、策略拒绝、缓存陈旧、目录同步失败。日志可记录 issuer、aud、jti 摘要和错误码，不记录完整 Cookie、私钥、共享密钥、数据库令牌。
+统计 Ticket 签发、验证、拒绝、过期、重放、策略拒绝、缓存陈旧、服务器列表同步失败。日志可记录 issuer、aud、jti 摘要和错误码，不记录完整 Cookie、私钥、共享密钥、数据库令牌。
 
 ---
 
@@ -815,7 +818,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 
 - 领域模型与配置校验。
 - Ed25519 / HMAC-SHA256 签发与验签对象、JWS 编解码、算法与密钥信任绑定；共享密钥文件缺失生成与手动分发。
-- 静态节点目录 + 可信签发者策略（不依赖共享数据库服务）。
+- 静态服务器列表 + 可信签发者策略（不依赖共享数据库服务）。
 - `ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID`；`STRICT_ONLINE_MATCH` 的核心比较逻辑可用纯对象测试验证。
 - 本地 SQLite ReplayGuard 与可替换 SPI，含真实文件上的持久化、并发与重启验证；共享 SQL 核销不纳入第一阶段。
 - `ChorusCoreEngine` 的纯 Java Mock Sender → Receiver 流程。
@@ -827,9 +830,9 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 3. 外域不可信签发者、错误 provider/target、密钥替换、过期/未来票据拒绝。
 4. 同一 JTI 并发消费只有一次成功，容量满时 fail-closed，提交完成前不返回成功，重开后继续拒绝重放。
 5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准密钥签名、HS256 与 Ed25519 算法混淆拒绝。
-6. 静态目录变更、无外部数据库服务运行；共享目录故障缓存过期验证在 Phase 2 完成。
+6. 静态服务器列表变更、无外部数据库服务运行；共享服务器列表故障缓存过期验证在 Phase 2 完成。
 
-### Phase 2：SQL 服务器目录实现（已实现）
+### Phase 2：SQL 服务器列表实现（已实现）
 
 通过 PostgreSQL、MySQL、MariaDB 实现 `ServerNodeRegistry` 的后台快照同步与故障缓存。
 `trust.TrustedIssuerStore` 与全部密钥保持本地文件加载；本轮不增加信任同步、心跳或 SQL 核销。
@@ -854,12 +857,12 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 2. 保留 `core / common / paper / velocity / fabric` 主模块结构。
 3. 服务器列表由管理员维护；共享 SQL 默认倾向，但纯静态模式必须可运行。
 4. 去中心化流量，不强制 IP 绑定，默认单 Cookie + 签名 Ticket。
-5. 目录数据库故障允许用**已批准且仍在允许期限内的缓存**继续转移。
+5. Registry 数据库故障允许用**已批准且仍在允许期限内的缓存**继续转移。
 6. 基础版不管理全局单会话/共享背包/经济一致性；仅预留扩展可能性。
 7. 同时面向私人互信集群和受控服主联盟，信任范围要可配置。
 8. 正版 Gateway → 离线 Backend Profile 透传为第一等场景；随后关注双正版、双离线、旧离线 UUID 兼容；Yggdrasil 再后，Floodgate 不作完工保证。
 9. 先完成可独立测试的 Core，再接平台。
-10. Registry 仅负责服务器目录，本地可信签发者属于独立的 `trust` 模块；Chorus 不自动分发批准关系或密钥。互信集群入门示例显式选择 HMAC，Ed25519 用于分离签发与验签权限。
+10. Registry 可容纳多种数据项，当前仅实现 `servers` 服务器列表；本地可信签发者属于独立的 `trust` 模块，Chorus 不自动分发批准关系或密钥。互信集群入门示例显式选择 HMAC，Ed25519 用于分离签发与验签权限。
 
 ### 7.2 未决定，不得擅自当作既定需求
 
@@ -867,7 +870,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 2. **Ticket 核销的最终默认后端**：`LOCAL`、`REGISTRY` 还是 `REDIS`，以及何种规模/可靠性目标才需要 SQL。
 3. **节点心跳**：共享数据库是否提供安全且足够细粒度的写权限，若不能则如何上报。
 4. **受控联盟深度**：是否需要外域不完全可信 Peer 对上游认证结果进行无权伪造的转发；若需要，再设计双层签名 Attestation。
-5. **数据库后续扩展**：本轮服务器目录目标为 PostgreSQL、MySQL、MariaDB；精确验证版本随集成测试记录。Turso/libSQL、其他方言及 SQL 核销单独评估。TODO：PostgreSQL `sql.schema`，以及未来管理/核销写权限可能导致的凭据配置调整。
+5. **数据库后续扩展**：本轮服务器列表目标为 PostgreSQL、MySQL、MariaDB；精确验证版本随集成测试记录。Turso/libSQL、其他方言及 SQL 核销单独评估。TODO：PostgreSQL `sql.schema`，以及未来管理/核销写权限可能导致的凭据配置调整。
 6. **精确平台版本/API**：各平台的最低支持版本、Profile 改写能力、配置阶段清 Cookie 接口。
 7. **运维参数**：默认 TTL、缓存最大陈旧时间、重放缓存容量、超时策略应在实测后确定。
 

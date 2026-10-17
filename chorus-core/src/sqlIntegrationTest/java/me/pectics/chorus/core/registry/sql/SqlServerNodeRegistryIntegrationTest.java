@@ -234,7 +234,7 @@ class SqlServerNodeRegistryIntegrationTest {
                                                                     Map.of()))
                                                     .toCompletableFuture()
                                                     .get(5, TimeUnit.SECONDS))
-                            .hasRootCauseMessage("DIRECTORY_UNAVAILABLE");
+                            .hasRootCauseMessage("SERVER_LIST_UNAVAILABLE");
                 }
                 var request =
                         new VerifyTicketRequest(
@@ -424,7 +424,7 @@ class SqlServerNodeRegistryIntegrationTest {
 
     private static void assertRefreshFailure(SqlServerNodeRegistry registry) {
         assertThatThrownBy(() -> refresh(registry))
-                .hasRootCauseMessage("SQL server directory refresh failed");
+                .hasRootCauseMessage("SQL server list refresh failed");
     }
 
     private byte[] resource(String name) throws IOException {

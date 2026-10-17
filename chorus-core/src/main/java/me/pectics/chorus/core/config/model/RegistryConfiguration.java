@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.1 and 3.9
- * sync: Keep directory settings independent of local issuer approvals and signing material.
+ * sync: Keep registry settings independent of local issuer approvals and signing material.
  * @endcontext
  */
 package me.pectics.chorus.core.config.model;
@@ -11,8 +11,8 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Server directory source settings. Paths are relative to the main configuration; construction
- * performs no I/O. SQL synchronizes routing only, never issuer approvals or keys.
+ * Registry source settings. Paths are relative to the main configuration; construction performs no
+ * I/O. SQL currently synchronizes server records, never issuer approvals or keys.
  */
 public record RegistryConfiguration(Provider provider, Config config, Sql sql, Cache cache) {
     public enum Provider {
@@ -31,7 +31,7 @@ public record RegistryConfiguration(Provider provider, Config config, Sql sql, C
         VERIFY_FULL
     }
 
-    /** Constructs a local directory source without SQL resources. */
+    /** Constructs a configuration-backed registry source without SQL resources. */
     public RegistryConfiguration(Provider provider, Config config) {
         this(provider, config, null, null);
     }
@@ -46,7 +46,7 @@ public record RegistryConfiguration(Provider provider, Config config, Sql sql, C
         }
     }
 
-    /** Local server directory; required only by the CONFIG provider. */
+    /** Local server list settings; required only by the CONFIG provider. */
     public record Config(Path serversPath) {
         public Config {
             Objects.requireNonNull(serversPath, "serversPath");
