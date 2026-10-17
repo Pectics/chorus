@@ -1,9 +1,18 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, sections 3.2 and 3.7
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/trust/TrustedIssuer.java;
+ *          gradle/spotbugs-exclude.xml
+ * sync: Keep the verifier exposure exclusion backed by immutable approval snapshot tests.
+ * @endcontext
+ */
 package me.pectics.chorus.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
@@ -80,12 +89,16 @@ class TicketCryptoTest {
     }
 
     @Test
-    void approvalKeepsOnlyPublicEd25519VerificationAndRejectsDuplicateViews() {
+    void approvalSnapshotsPublicVerifiersAndRejectsDuplicateViews() {
         var pair = TestSupport.keyPair();
         var signer = new Ed25519.Signer(pair.getPrivate(), pair.getPublic());
-        var approval = new TrustedIssuer("gateway", List.of(signer), true, TestSupport.policy());
+        var verifiers = new ArrayList<TicketVerifier>(List.of(signer));
+        var approval = new TrustedIssuer("gateway", verifiers, true, TestSupport.policy());
+        verifiers.clear();
         assertThat(approval.verifiers()).containsExactly(signer.verifier());
         assertThat(approval.verifiers().getFirst()).isNotInstanceOf(TicketSigner.class);
+        assertThatThrownBy(() -> approval.verifiers().clear())
+                .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(
                         () ->
                                 new TrustedIssuer(
