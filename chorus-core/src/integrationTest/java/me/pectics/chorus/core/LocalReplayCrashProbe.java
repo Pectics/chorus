@@ -1,3 +1,10 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, sections 3.6 and 6
+ * related: chorus-core/src/integrationTest/java/me/pectics/chorus/core/LocalReplayGuardTest.java
+ * sync: Exit with live connections so the parent verifies recovery of committed and uncommitted WAL.
+ * @endcontext
+ */
 package me.pectics.chorus.core;
 
 import java.nio.file.Path;
@@ -38,7 +45,6 @@ public final class LocalReplayCrashProbe {
                             + TestSupport.NOW.plusSeconds(17).toEpochMilli()
                             + ")");
         }
-        guard.close();
         Runtime.getRuntime().halt(0);
     }
 }

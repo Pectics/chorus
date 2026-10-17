@@ -69,7 +69,8 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 入口为 `CoreBootstrap.open(Path)`（默认 UTC 时钟）或可注入 `Clock` 的重载，返回 `ChorusCoreEngine`。
 初始化会读取 YAML、加载密钥并打开本地 SQLite，必须在启动线程上执行；签发和验证返回 `CompletionStage`。
 预期拒绝通过 `TicketRejectedException.code()` 区分，平台 I/O 线程不能 `.join()`。
-关闭 Engine 会关闭其 ReplayGuard 并等待已排队工作；完成回调可能在 SQLite 工作线程执行，回调不能阻塞该线程。
+关闭 Engine 会关闭其 ReplayGuard 并等待已排队工作；若在本地工作线程的完成回调内关闭，则发起停止后返回，并在已有任务结束后释放存储。
+回调不能阻塞工作线程。
 防重放 API 位于 `me.pectics.chorus.core.replay`；本地实现为 `replay.local.LocalReplayGuard`，当前使用 SQLite。
 `local / registry / redis` 子包按核销后端职责命名，分别对应配置枚举 `LOCAL / REGISTRY / REDIS`。
 

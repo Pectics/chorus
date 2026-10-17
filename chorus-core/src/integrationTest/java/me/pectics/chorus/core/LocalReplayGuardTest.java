@@ -1,3 +1,10 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, sections 3.6 and 6
+ * related: chorus-core/src/integrationTest/java/me/pectics/chorus/core/LocalReplayCrashProbe.java
+ * sync: Verify persistent consumption after process exit without normal database shutdown.
+ * @endcontext
+ */
 package me.pectics.chorus.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -211,6 +218,9 @@ class LocalReplayGuardTest {
             } finally {
                 child.destroyForcibly();
             }
+            Path wal = Path.of(file + "-wal");
+            assertThat(wal).isRegularFile();
+            assertThat(Files.size(wal)).isPositive();
             try (var guard = open(file, 10)) {
                 assertThat(consume(guard, "crash-ticket").get(5, TimeUnit.SECONDS))
                         .isEqualTo(
