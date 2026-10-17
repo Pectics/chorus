@@ -35,12 +35,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.JsonNodeFactory;
 
 /** Generic bounded YAML-to-JSON loading; document format rules belong to the selected schema. */
-final class ConfigurationLoader {
+final class YamlConfigurationLoader {
     private static final int MAX_BYTES = 1_048_576;
     private static final SchemaRegistry SCHEMAS =
             SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
 
-    enum Document {
+    enum ConfigurationDocumentType {
         CORE("chorus"),
         SERVERS("servers"),
         TRUSTED_ISSUERS("trusted-issuers");
@@ -48,7 +48,7 @@ final class ConfigurationLoader {
         private final String resource;
         private final Schema schema;
 
-        Document(String name) {
+        ConfigurationDocumentType(String name) {
             resource = "/me/pectics/chorus/core/config/schema/v1/" + name + ".schema.json";
             schema = SCHEMAS.getSchema(SchemaLocation.of("classpath:" + resource));
         }
@@ -58,9 +58,9 @@ final class ConfigurationLoader {
         }
     }
 
-    private ConfigurationLoader() {}
+    private YamlConfigurationLoader() {}
 
-    static JsonNode read(Path file, Document document) throws IOException {
+    static JsonNode read(Path file, ConfigurationDocumentType document) throws IOException {
         byte[] bytes;
         try (var input = Files.newInputStream(file)) {
             bytes = input.readNBytes(MAX_BYTES + 1);
@@ -82,7 +82,7 @@ final class ConfigurationLoader {
         options.setCodePointLimit(MAX_BYTES);
         JsonNode root;
         try {
-            root = json(new Yaml(new JsonConstructor(options)).load(source), file);
+            root = json(new Yaml(new JsonNumberYamlConstructor(options)).load(source), file);
         } catch (YAMLException failure) {
             // YAML diagnostics may include source text containing credentials or key material.
             throw invalid(file, "Invalid YAML configuration");
@@ -135,8 +135,8 @@ final class ConfigurationLoader {
         };
     }
 
-    private static final class JsonConstructor extends SafeConstructor {
-        JsonConstructor(LoaderOptions options) {
+    private static final class JsonNumberYamlConstructor extends SafeConstructor {
+        JsonNumberYamlConstructor(LoaderOptions options) {
             super(options);
             // Preserve decimal precision so a fraction cannot round into a valid integer setting.
             yamlConstructors.put(

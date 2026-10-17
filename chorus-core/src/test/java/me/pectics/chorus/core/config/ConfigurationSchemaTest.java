@@ -17,7 +17,7 @@ import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SpecificationVersion;
 import java.math.BigDecimal;
 import java.util.List;
-import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
 import me.pectics.chorus.core.config.model.NodeRole;
 import me.pectics.chorus.core.config.model.RegistryConfiguration.Provider;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
@@ -60,8 +60,9 @@ class ConfigurationSchemaTest {
     private static final JsonMapper JSON = JsonMapper.shared();
 
     @ParameterizedTest
-    @EnumSource(Document.class)
-    void eachFileHasACompleteVersionedSchemaAtItsOwnRoot(Document document) throws Exception {
+    @EnumSource(ConfigurationDocumentType.class)
+    void eachFileHasACompleteVersionedSchemaAtItsOwnRoot(ConfigurationDocumentType document)
+            throws Exception {
         try (var input =
                 ConfigurationSchemaTest.class.getResourceAsStream(document.schemaResource())) {
             assertThat(input).isNotNull();
@@ -76,7 +77,7 @@ class ConfigurationSchemaTest {
                     .isTrue();
             assertThat(schema.has("$ref")).isFalse();
             assertThat(contract(document).validate(fixture(document))).isEmpty();
-            for (var other : Document.values()) {
+            for (var other : ConfigurationDocumentType.values()) {
                 if (other != document) {
                     assertThat(contract(document).validate(fixture(other))).isNotEmpty();
                 }
@@ -87,31 +88,32 @@ class ConfigurationSchemaTest {
     @ParameterizedTest
     @EnumSource(NodeRole.class)
     void rolesControlRequiredSectionsWithinTheMainSchema(NodeRole role) {
-        var core = (ObjectNode) fixture(Document.CORE);
+        var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("node")).put("role", role.name());
-        assertThat(contract(Document.CORE).validate(core).isEmpty())
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core).isEmpty())
                 .isEqualTo(role == NodeRole.BACKEND);
         ((ObjectNode) core.get("crypto"))
                 .put("private-key", "private.der")
                 .put("public-key", "public.der");
-        var issuance = ((ObjectNode) fixture(Document.TRUSTED_ISSUERS).at("/gateway"));
+        var issuance =
+                ((ObjectNode) fixture(ConfigurationDocumentType.TRUSTED_ISSUERS).at("/gateway"));
         issuance.remove("keys");
         issuance.put("ttl", "15s");
         issuance.putArray("allowed-targets").add("backend");
         core.set("issuance", issuance);
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
         var withoutReplay = core.deepCopy();
         withoutReplay.remove("replay-guard");
-        assertThat(contract(Document.CORE).validate(withoutReplay).isEmpty())
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(withoutReplay).isEmpty())
                 .isEqualTo(role == NodeRole.GATEWAY);
         var withoutIssuance = core.deepCopy();
         withoutIssuance.remove("issuance");
-        assertThat(contract(Document.CORE).validate(withoutIssuance).isEmpty())
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(withoutIssuance).isEmpty())
                 .isEqualTo(role == NodeRole.BACKEND);
         for (String field : List.of("private-key", "public-key")) {
             var withoutKey = core.deepCopy();
             ((ObjectNode) withoutKey.get("crypto")).remove(field);
-            assertThat(contract(Document.CORE).validate(withoutKey).isEmpty())
+            assertThat(contract(ConfigurationDocumentType.CORE).validate(withoutKey).isEmpty())
                     .isEqualTo(role == NodeRole.BACKEND);
         }
     }
@@ -119,71 +121,73 @@ class ConfigurationSchemaTest {
     @ParameterizedTest
     @EnumSource(NodeRole.class)
     void hmacSendersRequireOneSharedKeyWithoutPublicOrPrivateKeyFields(NodeRole role) {
-        var core = (ObjectNode) fixture(Document.CORE);
+        var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("node")).put("role", role.name());
         var crypto = (ObjectNode) core.get("crypto");
         crypto.put("algorithm", "HMAC_SHA256").put("key", "keys/shared.key");
-        var issuance = (ObjectNode) fixture(Document.TRUSTED_ISSUERS).at("/gateway");
+        var issuance =
+                (ObjectNode) fixture(ConfigurationDocumentType.TRUSTED_ISSUERS).at("/gateway");
         issuance.remove("keys");
         issuance.put("ttl", "15s");
         issuance.putArray("allowed-targets").add("backend");
         core.set("issuance", issuance);
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
         crypto.remove("key");
-        assertThat(contract(Document.CORE).validate(core).isEmpty())
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core).isEmpty())
                 .isEqualTo(role == NodeRole.BACKEND);
         crypto.put("key", "keys/shared.key");
         for (String field : List.of("private-key", "public-key")) {
             crypto.put(field, "legacy.der");
-            assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+            assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
             crypto.remove(field);
         }
         crypto.put("algorithm", "ED25519");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
     @ParameterizedTest
     @EnumSource(SignatureAlgorithm.class)
     void trustSchemaAcceptsExplicitSupportedAlgorithmsAndRejectsUnknownOnes(
             SignatureAlgorithm algorithm) {
-        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var trust = fixture(ConfigurationDocumentType.TRUSTED_ISSUERS);
         var issuer = (ObjectNode) trust.get("gateway");
         issuer.put("algorithm", algorithm.name());
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust)).isEmpty();
         issuer.put("algorithm", "HS512");
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
+                .isNotEmpty();
     }
 
     @Test
     void configRegistryRequiresItsOwnFileSettings() {
-        var core = (ObjectNode) fixture(Document.CORE);
+        var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         var registry = (ObjectNode) core.get("registry");
         registry.remove("config");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
         registry.set("config", JSON.createObjectNode());
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
     @ParameterizedTest
     @EnumSource(Provider.class)
     void trustPathBelongsOnlyToVerificationForBothRegistryProviders(Provider provider) {
-        var core = (ObjectNode) fixture(Document.CORE);
+        var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         if (provider == Provider.SQL) {
             core.set("registry", JSON.readTree(SqlConfigurationTest.REGISTRY));
         }
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
         var registry = (ObjectNode) core.get("registry");
         var files = JSON.createObjectNode().put("servers-path", "servers.yml");
         registry.set("config", files);
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
         files.put("issuers-path", "trusted-issuers.yml");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
         files.remove("issuers-path");
         var verification = (ObjectNode) core.get("verification");
         verification.remove("trusted-issuers-path");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
         verification.put("trusted-issuers-path", " ");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
     @Test
@@ -211,17 +215,18 @@ class ConfigurationSchemaTest {
                         CORE.replace("ADOPT_UPSTREAM", "UNKNOWN"),
                         CORE.replace(
                                 "\"id\": \"backend\"", "\"id\": \"backend\", \"typo\": true"))) {
-            assertThat(contract(Document.CORE).validate(JSON.readTree(invalid))).isNotEmpty();
+            assertThat(contract(ConfigurationDocumentType.CORE).validate(JSON.readTree(invalid)))
+                    .isNotEmpty();
         }
-        var core = (ObjectNode) fixture(Document.CORE);
+        var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         core.remove("crypto");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
-        core = (ObjectNode) fixture(Document.CORE);
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
+        core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         core.set("issuance", JSON.createObjectNode());
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
-        core = (ObjectNode) fixture(Document.CORE);
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
+        core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("node")).remove("role");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
     @ParameterizedTest
@@ -239,9 +244,9 @@ class ConfigurationSchemaTest {
                 "PT-1H120M"
             })
     void mainSchemaAcceptsSupportedWholeSecondDurationSpellings(String duration) {
-        var core = fixture(Document.CORE);
+        var core = fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("verification")).put("max-lifetime", duration);
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
     }
 
     @ParameterizedTest
@@ -261,9 +266,9 @@ class ConfigurationSchemaTest {
             })
     void mainSchemaRejectsInvalidDurationSyntaxAndPrecisionWithoutJavaConfigurationChecks(
             String duration) {
-        var core = fixture(Document.CORE);
+        var core = fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("verification")).put("max-lifetime", duration);
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
     @Test
@@ -281,13 +286,15 @@ class ConfigurationSchemaTest {
                         SERVERS.replace("backend", "bad id"),
                         "{\"servers\":" + SERVERS + "}",
                         "{\"backend\":{\"host\":\"localhost\",\"port\":25565}}")) {
-            assertThat(contract(Document.SERVERS).validate(JSON.readTree(invalid))).isNotEmpty();
+            assertThat(contract(ConfigurationDocumentType.SERVERS).validate(JSON.readTree(invalid)))
+                    .isNotEmpty();
         }
-        assertThat(contract(Document.SERVERS).validate(JSON.readTree("{}"))).isEmpty();
-        var core = fixture(Document.CORE);
+        assertThat(contract(ConfigurationDocumentType.SERVERS).validate(JSON.readTree("{}")))
+                .isEmpty();
+        var core = fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("ticket"))
                 .put("max-payload-bytes", new BigDecimal("4096.0000000000000000001"));
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
     @ParameterizedTest
@@ -301,22 +308,22 @@ class ConfigurationSchemaTest {
                 "[fe80::1%eth0]:25565"
             })
     void serverListSchemaAcceptsExplicitHostnameIpv4AndBracketedIpv6Addresses(String address) {
-        var servers = fixture(Document.SERVERS);
+        var servers = fixture(ConfigurationDocumentType.SERVERS);
         ((ObjectNode) servers.get("backend")).put("address", address);
-        assertThat(contract(Document.SERVERS).validate(servers)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.SERVERS).validate(servers)).isEmpty();
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"tags", "metadata"})
     void serverListSchemaRejectsRemovedExtensionFields(String field) {
-        var servers = fixture(Document.SERVERS);
+        var servers = fixture(ConfigurationDocumentType.SERVERS);
         var entry = (ObjectNode) servers.at("/backend");
         if (field.equals("tags")) {
             entry.putArray(field).add("lobby");
         } else {
             entry.putObject(field).put("region", "cn");
         }
-        assertThat(contract(Document.SERVERS).validate(servers))
+        assertThat(contract(ConfigurationDocumentType.SERVERS).validate(servers))
                 .anySatisfy(
                         error -> {
                             assertThat(error.getKeyword()).isEqualTo("additionalProperties");
@@ -344,62 +351,72 @@ class ConfigurationSchemaTest {
                         TRUST.replace("\"keys\":", "\"enabled\": \"false\", \"keys\":"),
                         TRUST.replace("\"keys\":", "\"allowed-targets\": [\"backend\"], \"keys\":"),
                         TRUST.replace("\"keys\":", "\"typo\": true, \"keys\":"))) {
-            assertThat(contract(Document.TRUSTED_ISSUERS).validate(JSON.readTree(invalid)))
+            assertThat(
+                            contract(ConfigurationDocumentType.TRUSTED_ISSUERS)
+                                    .validate(JSON.readTree(invalid)))
                     .isNotEmpty();
         }
-        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var trust = fixture(ConfigurationDocumentType.TRUSTED_ISSUERS);
         ((ObjectNode) trust.at("/gateway")).remove("allowed-providers");
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
-        trust = fixture(Document.TRUSTED_ISSUERS);
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
+                .isNotEmpty();
+        trust = fixture(ConfigurationDocumentType.TRUSTED_ISSUERS);
         ((ObjectNode) trust.at("/gateway")).put("enabled", false);
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(JSON.readTree("{}"))).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust)).isEmpty();
+        assertThat(
+                        contract(ConfigurationDocumentType.TRUSTED_ISSUERS)
+                                .validate(JSON.readTree("{}")))
+                .isEmpty();
     }
 
     @Test
     void trustSchemaAcceptsEitherKeyFormOrBothAndRequiresAtLeastOne() {
-        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var trust = fixture(ConfigurationDocumentType.TRUSTED_ISSUERS);
         var issuer = (ObjectNode) trust.at("/gateway");
         issuer.put("key", "gateway.pub");
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust)).isEmpty();
         issuer.remove("keys");
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust)).isEmpty();
         issuer.remove("key");
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
+                .isNotEmpty();
     }
 
     @Test
     void trustSchemaValidatesEachPresentKeyFieldWithoutFallingBackFromInvalidKeys() {
         for (String invalid : List.of("null", "false", "42", "[]", "{}", "\"\"", "\" \u2003\"")) {
-            var trust = fixture(Document.TRUSTED_ISSUERS);
+            var trust = fixture(ConfigurationDocumentType.TRUSTED_ISSUERS);
             var issuer = (ObjectNode) trust.at("/gateway");
             issuer.set("key", JSON.readTree(invalid));
-            assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+            assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
+                    .isNotEmpty();
             issuer.remove("keys");
-            assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+            assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
+                    .isNotEmpty();
         }
-        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var trust = fixture(ConfigurationDocumentType.TRUSTED_ISSUERS);
         var issuer = (ObjectNode) trust.at("/gateway");
         issuer.put("key", "gateway.pub");
         issuer.putArray("keys");
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust))
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
                 .anySatisfy(error -> assertThat(error.getKeyword()).isEqualTo("minItems"));
     }
 
     @ParameterizedTest
     @EnumSource(TicketCompression.class)
     void schemaAcceptsEveryImplementedCompression(TicketCompression compression) {
-        var core = fixture(Document.CORE);
+        var core = fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("ticket")).put("compression", compression.name());
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
     }
 
     @Test
     void schemaMakesCompressionOptionalAndDocumentsZstdAsTheDefault() throws Exception {
-        var core = fixture(Document.CORE);
+        var core = fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("ticket")).remove("compression");
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
-        try (var input = getClass().getResourceAsStream(Document.CORE.schemaResource())) {
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
+        try (var input =
+                getClass().getResourceAsStream(ConfigurationDocumentType.CORE.schemaResource())) {
             assertThat(
                             JSON.readTree(input)
                                     .at("/properties/ticket/properties/compression/default")
@@ -409,32 +426,32 @@ class ConfigurationSchemaTest {
         for (String invalid :
                 List.of("null", "false", "42", "[]", "{}", "\"zstd\"", "\"BROTLI\"", "\"\"")) {
             ((ObjectNode) core.get("ticket")).set("compression", JSON.readTree(invalid));
-            assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+            assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
         }
     }
 
     @Test
     void schemaRecordsReservedReplayBackendsAndRejectsRegistryReplayWithConfigFiles() {
-        var core = fixture(Document.CORE);
+        var core = fixture(ConfigurationDocumentType.CORE);
         var replay = (ObjectNode) core.get("replay-guard");
         replay.put("backend", "REDIS");
         replay.putObject("redis");
-        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
         replay.put("backend", "REGISTRY");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
         replay.put("backend", "LOCAL");
         replay.remove("local");
-        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
     @Test
     void schemasRejectLegacyRootWrappersAndRenamedPermissions() {
         assertThat(
-                        contract(Document.TRUSTED_ISSUERS)
+                        contract(ConfigurationDocumentType.TRUSTED_ISSUERS)
                                 .validate(JSON.readTree("{\"trusted-issuers\":" + TRUST + "}")))
                 .isNotEmpty();
         assertThat(
-                        contract(Document.TRUSTED_ISSUERS)
+                        contract(ConfigurationDocumentType.TRUSTED_ISSUERS)
                                 .validate(
                                         JSON.readTree(
                                                 TRUST.replace(
@@ -442,7 +459,7 @@ class ConfigurationSchemaTest {
                                                         "allowed-auth-types"))))
                 .isNotEmpty();
         assertThat(
-                        contract(Document.CORE)
+                        contract(ConfigurationDocumentType.CORE)
                                 .validate(
                                         JSON.readTree(
                                                 CORE.replace(
@@ -453,22 +470,22 @@ class ConfigurationSchemaTest {
 
     @Test
     void schemasRejectRemovedKeyIdentifiers() {
-        var core = fixture(Document.CORE);
+        var core = fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("crypto")).put("key-id", "removed");
-        assertThat(contract(Document.CORE).validate(core))
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core))
                 .anySatisfy(
                         error -> assertThat(error.getKeyword()).isEqualTo("additionalProperties"));
-        var trust = fixture(Document.TRUSTED_ISSUERS);
+        var trust = fixture(ConfigurationDocumentType.TRUSTED_ISSUERS);
         ((ObjectNode) trust.at("/gateway"))
                 .putArray("keys")
                 .addObject()
                 .put("public-key", "gateway.pub")
                 .put("kid", "removed");
-        assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust))
+        assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
                 .anySatisfy(error -> assertThat(error.getKeyword()).isEqualTo("type"));
     }
 
-    private static JsonNode fixture(Document document) {
+    private static JsonNode fixture(ConfigurationDocumentType document) {
         return JSON.readTree(
                 switch (document) {
                     case CORE -> CORE;
@@ -477,7 +494,7 @@ class ConfigurationSchemaTest {
                 });
     }
 
-    private static Schema contract(Document document) {
+    private static Schema contract(ConfigurationDocumentType document) {
         return REGISTRY.getSchema(SchemaLocation.of("classpath:" + document.schemaResource()));
     }
 }

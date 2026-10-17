@@ -6,7 +6,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Set;
 import me.pectics.chorus.core.model.AuthType;
-import me.pectics.chorus.core.policy.IdentityPolicy;
+import me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy;
 import me.pectics.chorus.core.policy.IssuancePolicy;
 import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 import org.junit.jupiter.api.Test;
@@ -57,7 +57,7 @@ class ConfigurationModelsTest {
                                             duration,
                                             Duration.ZERO,
                                             true,
-                                            IdentityPolicy.ADOPT_UPSTREAM))
+                                            BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM))
                     .isInstanceOf(IllegalArgumentException.class);
         }
         assertThatThrownBy(
@@ -66,7 +66,7 @@ class ConfigurationModelsTest {
                                         Duration.ofSeconds(15),
                                         Duration.ofMillis(500),
                                         true,
-                                        IdentityPolicy.ADOPT_UPSTREAM))
+                                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(
                         () ->
@@ -74,7 +74,7 @@ class ConfigurationModelsTest {
                                         Duration.ofSeconds(Long.MAX_VALUE / 1000),
                                         Duration.ofSeconds(1),
                                         true,
-                                        IdentityPolicy.ADOPT_UPSTREAM))
+                                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM))
                 .isInstanceOf(ArithmeticException.class);
     }
 }

@@ -14,7 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
 import me.pectics.chorus.core.config.model.RegistryConfiguration.Engine;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -41,11 +41,13 @@ class SqlConfigurationTest {
     @EnumSource(Engine.class)
     void allEnginesShareTheSameStructureAndKeepTrustLocal(Engine engine) throws Exception {
         var root = core(REGISTRY.replace("POSTGRESQL", engine.name()));
-        var settings = ConfigurationReader.registry(read(root).get("registry"), directory);
+        var settings =
+                ConfigurationSectionConverter.registry(read(root).get("registry"), directory);
         assertThat(settings.sql().engine()).isEqualTo(engine);
         assertThat(settings.config()).isNull();
         assertThat(
-                        ConfigurationReader.verification(root.get("verification"), directory)
+                        ConfigurationSectionConverter.verification(
+                                        root.get("verification"), directory)
                                 .trustedIssuersPath())
                 .isEqualTo(directory.resolve("trusted-issuers.yml"));
         assertThat(settings.sql().passwordPath()).isEqualTo(directory.resolve("password.txt"));
@@ -91,7 +93,7 @@ class SqlConfigurationTest {
                         REGISTRY.replace("\"max-stale\":\"2m\"", "\"max-stale\":\"10s\""))) {
             assertThatThrownBy(
                             () ->
-                                    ConfigurationReader.registry(
+                                    ConfigurationSectionConverter.registry(
                                             read(core(invalid)).get("registry"), directory))
                     .isInstanceOf(IllegalArgumentException.class);
         }
@@ -107,6 +109,6 @@ class SqlConfigurationTest {
     private tools.jackson.databind.JsonNode read(ObjectNode root) throws Exception {
         var file = directory.resolve("chorus.yml");
         Files.writeString(file, JsonMapper.shared().writeValueAsString(root));
-        return ConfigurationLoader.read(file, Document.CORE);
+        return YamlConfigurationLoader.read(file, ConfigurationDocumentType.CORE);
     }
 }

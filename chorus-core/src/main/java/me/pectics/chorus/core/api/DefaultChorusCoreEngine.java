@@ -26,7 +26,7 @@ import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import me.pectics.chorus.core.model.TicketClaims;
-import me.pectics.chorus.core.policy.IdentityPolicy;
+import me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy;
 import me.pectics.chorus.core.policy.ResolvedPlayerProfile;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
 import me.pectics.chorus.core.replay.ReplayGuard;
@@ -174,7 +174,8 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                     || !decoded.issuer().policy().permits(claims.identity())) {
                 throw reject(TicketError.ISSUER_POLICY_DENIED);
             }
-            if (verification.identityPolicy() == IdentityPolicy.STRICT_ONLINE_MATCH) {
+            if (verification.identityResolutionPolicy()
+                    == BuiltinIdentityResolutionPolicy.STRICT_ONLINE_MATCH) {
                 var verified = login.independentlyVerified();
                 var identity = claims.identity();
                 if (verified == null
@@ -187,7 +188,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             }
             ResolvedPlayerProfile profile;
             try {
-                profile = verification.identityPolicy().resolve(claims.identity());
+                profile = verification.identityResolutionPolicy().resolve(claims.identity());
             } catch (RuntimeException resolutionFailure) {
                 throw reject(TicketError.PROFILE_RESOLUTION_FAILED);
             }

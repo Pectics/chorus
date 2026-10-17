@@ -13,7 +13,7 @@ import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.List;
-import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
@@ -22,9 +22,11 @@ import me.pectics.chorus.core.trust.TrustedIssuer;
 import tools.jackson.databind.JsonNode;
 
 /** Validated local trust document; key reads are deferred until local signer assembly completes. */
-record TrustLoader(JsonNode document, Path file) {
-    static TrustLoader read(Path file) throws IOException {
-        return new TrustLoader(ConfigurationLoader.read(file, Document.TRUSTED_ISSUERS), file);
+record TrustedIssuerLoader(JsonNode document, Path file) {
+    static TrustedIssuerLoader read(Path file) throws IOException {
+        return new TrustedIssuerLoader(
+                YamlConfigurationLoader.read(file, ConfigurationDocumentType.TRUSTED_ISSUERS),
+                file);
     }
 
     List<TrustedIssuer> loadIssuers() throws IOException, GeneralSecurityException {
@@ -52,7 +54,7 @@ record TrustLoader(JsonNode document, Path file) {
                             entry.getKey(),
                             verifiers,
                             !value.has("enabled") || value.get("enabled").asBoolean(),
-                            ConfigurationReader.trustPolicy(value)));
+                            ConfigurationSectionConverter.trustPolicy(value)));
         }
         return List.copyOf(issuers);
     }

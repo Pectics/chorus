@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, section 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationLoader.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/config/YamlConfigurationLoader.java
  * sync: Verify all three file schemas run before persistent state or replacement snapshots are published.
  * @endcontext
  */

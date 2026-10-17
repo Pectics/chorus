@@ -11,7 +11,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.HashMap;
-import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 
@@ -20,7 +20,8 @@ final class ServerNodeRegistryLoader {
     private ServerNodeRegistryLoader() {}
 
     static ServerNodeRegistrySnapshot read(Path serversFile, Clock clock) throws IOException {
-        var serversDocument = ConfigurationLoader.read(serversFile, Document.SERVERS);
+        var serversDocument =
+                YamlConfigurationLoader.read(serversFile, ConfigurationDocumentType.SERVERS);
         var servers = new HashMap<String, ServerNode>();
         for (var entry : serversDocument.properties()) {
             var value = entry.getValue();

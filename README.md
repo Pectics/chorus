@@ -86,6 +86,8 @@ Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置�
 签发角色的 TTL 仍不得超过验票最大寿命。
 原有平铺的 `CoreConfiguration` 已移除，`NodeRole` 迁入 `config.model`，Java 调用方需更新构造方式与 imports。
 配置模型不执行 I/O；密钥、Registry 与防重放配置由启动装配层消费。
+内置身份解析枚举为 `policy.BuiltinIdentityResolutionPolicy`，通过 `VerificationConfiguration.identityResolutionPolicy()` 获取；
+签发权限中的 `IssuancePolicy.identityAssertionPolicy()` 表示允许声明的身份来源，与本地 Profile 解析分工独立。
 
 Registry 当前提供 `servers` 服务器列表，后续可扩展其他数据项；本地批准记录位于独立的 `me.pectics.chorus.core.trust` 包。
 `ChorusCoreEngine.getServerNodeRegistry()` 返回服务器节点列表接口，`snapshot()` 返回不可变的 `ServerNodeRegistrySnapshot`。

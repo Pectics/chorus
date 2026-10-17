@@ -1,11 +1,21 @@
+/*
+ * @context
+ * refs: ARCHITECTURE.md, section 3.5
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/policy/IdentityResolutionPolicy.java;
+ *          chorus-core/src/main/java/me/pectics/chorus/core/api/DefaultChorusCoreEngine.java
+ * sync: Keep built-in profile mappings separate from issuer authorization and engine-side identity checks.
+ * @endcontext
+ */
 package me.pectics.chorus.core.policy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import me.pectics.chorus.core.model.IdentityClaim;
 
-/** STRICT_ONLINE_MATCH additionally requires the engine's independent authentication check. */
-public enum IdentityPolicy implements IdentityResolutionPolicy {
+/**
+ * Built-in profile mappings; STRICT_ONLINE_MATCH also requires the engine's authentication check.
+ */
+public enum BuiltinIdentityResolutionPolicy implements IdentityResolutionPolicy {
     ADOPT_UPSTREAM,
     FORCE_OFFLINE_UUID,
     STRICT_ONLINE_MATCH;

@@ -11,7 +11,7 @@ sync: Keep exclusions limited to a specific bug pattern and reviewed member; rem
     <Match>
         <Class name="me.pectics.chorus.core.config.model.VerificationConfiguration"/>
         <Method name="&lt;init&gt;"
-                params="java.time.Duration,java.time.Duration,boolean,me.pectics.chorus.core.policy.IdentityPolicy,java.nio.file.Path"
+                params="java.time.Duration,java.time.Duration,boolean,me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy,java.nio.file.Path"
                 returns="void"/>
         <Bug pattern="RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT"/>
     </Match>

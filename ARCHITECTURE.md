@@ -215,7 +215,8 @@ public record ServerNodeRegistrySnapshot(
 ) {}
 
 public interface ServerNodeRegistry {
-    ServerNodeRegistrySnapshot snapshot();         // 热路径读取已验证快照，不做阻塞 SQL
+    // 热路径读取已验证快照，不做阻塞 SQL
+    ServerNodeRegistrySnapshot snapshot();
     Optional<ServerNode> find(String nodeId);
 }
 ```
@@ -401,6 +402,10 @@ public interface IdentityResolutionPolicy {
     ResolvedPlayerProfile resolve(IdentityClaim identity);
 }
 ```
+
+内置枚举 `BuiltinIdentityResolutionPolicy` 实现 `IdentityResolutionPolicy`；
+`VerificationConfiguration.identityResolutionPolicy()` 提供身份解析策略，
+`IssuancePolicy.identityAssertionPolicy()` 提供身份声明授权策略，两者不混用。
 
 | 策略 | 用途 | 关键语义 |
 |---|---|---|
@@ -667,7 +672,7 @@ operator-b/peer-01:
 `ticket.compression` 可省略，默认 `ZSTD`；Schema 的 `default` 为契约说明，启动装配与无压缩参数的 Java 构造器落实相同默认值。
 旧版接收端仅支持 `NONE`；滚动升级时先升级接收端，发送端在接收端升级前显式保留 `NONE`。
 `ticket.max-payload-bytes` 限制包含 JWS 编码、签名及压缩帧的最终 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
-`issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `IdentityPolicy` / `IdentityResolutionPolicy` 表达。
+`issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `policy` 包的 `BuiltinIdentityResolutionPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时服务器列表使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空服务器列表或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
@@ -688,7 +693,8 @@ MySQL 的自定义 CA 转换为连接专用临时 PKCS12；MariaDB 未指定 CA 
 
 `SqlServerNodeRegistry` 通过 `ServerNodeStore` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
 启动首次读取可阻塞，热路径始终只读内存。关闭会停止定时器、等待已接收的工作并关闭存储；完成回调内关闭不会等待自身。
-`CoreBootstrap.open` 创建的 SQL 连接池与调度器随返回 Engine 关闭，装配失败也释放已创建资源。
+`CoreBootstrap.open` 的 SQL 装配通过内部 `ResourceOwningChorusCoreEngine` 管理已创建的 Engine 与 SQL 服务器节点列表资源，
+连接池与调度器随返回 Engine 关闭，装配失败也释放已创建资源。
 直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。`CoreBootstrap.open` 不自动重载本地信任，文件变更通过重新装配 Engine 生效。
 直接装配者可用 `loadServerNodeRegistry / reloadServerNodeRegistry` 与 `loadTrustedIssuers / reloadTrustedIssuers` 分别加载和更新所注入的对象，均为阻塞文件 I/O，须在平台事件线程之外调用；旧联合入口移除。
 
@@ -701,8 +707,9 @@ Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 信任文件路径属于 `VerificationConfiguration`；直接注入信任对象时可使用不带路径的构造器，配置模型不会加载文件。
 配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、服务器列表快照或防重放资源。
 
-`ConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，`ConfigurationReader` 负责主配置各段的类型转换，
-`ServerNodeRegistryLoader` 只读取服务器列表，`TrustLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
+`YamlConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，使用 `ConfigurationDocumentType` 选择文档格式；
+`ConfigurationSectionConverter` 负责配置段的类型转换，
+`ServerNodeRegistryLoader` 只读取服务器列表，`TrustedIssuerLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
 完整装配入口使用七组独立参数；Engine 分别接收 `node / ticket / issuance / verification`，并注入已创建的运行资源。
 `issuance.ttl <= verification.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
 本地防重放设置不另设时钟容差，装配时使用同一份 `verification.clock-skew`。

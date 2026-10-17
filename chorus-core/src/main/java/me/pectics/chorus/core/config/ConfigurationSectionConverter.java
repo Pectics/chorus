@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, section 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationLoader.java;
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/config/YamlConfigurationLoader.java;
  *          chorus-core/src/main/java/me/pectics/chorus/core/config/CoreBootstrap.java
  * sync: Convert schema-approved sections without opening keys, databases, or publishing snapshots.
  * @endcontext
@@ -24,14 +24,14 @@ import me.pectics.chorus.core.config.model.VerificationConfiguration;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.crypto.TicketCompression;
 import me.pectics.chorus.core.model.AuthType;
-import me.pectics.chorus.core.policy.IdentityPolicy;
+import me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy;
 import me.pectics.chorus.core.policy.IssuancePolicy;
 import me.pectics.chorus.core.policy.IssuerTrustPolicy;
 import tools.jackson.databind.JsonNode;
 
 /** Typed conversion of individual, schema-approved sections; no aggregate configuration object. */
-final class ConfigurationReader {
-    private ConfigurationReader() {}
+final class ConfigurationSectionConverter {
+    private ConfigurationSectionConverter() {}
 
     static NodeConfiguration node(JsonNode value) {
         return new NodeConfiguration(
@@ -61,7 +61,7 @@ final class ConfigurationReader {
                 duration(value.get("max-lifetime")),
                 duration(value.get("clock-skew")),
                 value.get("enforce-transfer-intent").asBoolean(),
-                IdentityPolicy.valueOf(value.get("identity-policy").asString()),
+                BuiltinIdentityResolutionPolicy.valueOf(value.get("identity-policy").asString()),
                 base.resolve(value.get("trusted-issuers-path").asString()));
     }
 

@@ -12,9 +12,10 @@ import java.util.Set;
 import me.pectics.chorus.core.model.IdentityClaim;
 
 /** Sender-controlled identity permissions and permitted destinations. */
-public record IssuancePolicy(IssuerTrustPolicy identityPolicy, Set<String> allowedTargets) {
+public record IssuancePolicy(
+        IssuerTrustPolicy identityAssertionPolicy, Set<String> allowedTargets) {
     public IssuancePolicy {
-        Objects.requireNonNull(identityPolicy, "identityPolicy");
+        Objects.requireNonNull(identityAssertionPolicy, "identityAssertionPolicy");
         allowedTargets = Set.copyOf(allowedTargets);
         if (allowedTargets.isEmpty()
                 || allowedTargets.stream()
@@ -24,6 +25,6 @@ public record IssuancePolicy(IssuerTrustPolicy identityPolicy, Set<String> allow
     }
 
     public boolean permits(IdentityClaim identity, String targetNodeId) {
-        return identityPolicy.permits(identity) && allowedTargets.contains(targetNodeId);
+        return identityAssertionPolicy.permits(identity) && allowedTargets.contains(targetNodeId);
     }
 }

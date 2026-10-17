@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.2 and 3.7
- * related: chorus-core/src/main/java/me/pectics/chorus/core/config/TrustLoader.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/config/TrustedIssuerLoader.java
  * sync: Replace local approvals only after the complete document and every approved key validate.
  * @endcontext
  */

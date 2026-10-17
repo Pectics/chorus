@@ -1,9 +1,9 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.7, 3.8, and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationReader.java;
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationSectionConverter.java;
  *          chorus-core/src/main/java/me/pectics/chorus/core/config/ServerNodeRegistryLoader.java;
- *          chorus-core/src/main/java/me/pectics/chorus/core/config/TrustLoader.java
+ *          chorus-core/src/main/java/me/pectics/chorus/core/config/TrustedIssuerLoader.java
  * sync: Assemble independent sections only after value conversion; load approved keys before opening replay state.
  * @endcontext
  */
@@ -18,7 +18,7 @@ import java.util.HashSet;
 import java.util.Objects;
 import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
-import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.YamlConfigurationLoader.ConfigurationDocumentType;
 import me.pectics.chorus.core.config.model.CryptoConfiguration;
 import me.pectics.chorus.core.config.model.IssuanceConfiguration;
 import me.pectics.chorus.core.config.model.NodeConfiguration;
@@ -54,22 +54,25 @@ public final class CoreBootstrap {
     public static ChorusCoreEngine open(Path configurationFile, Clock clock)
             throws IOException, GeneralSecurityException, SQLException {
         Objects.requireNonNull(clock, "clock");
-        var root = ConfigurationLoader.read(configurationFile, Document.CORE);
-        ConfigurationReader.requireImplementedOptions(root);
+        var root = YamlConfigurationLoader.read(configurationFile, ConfigurationDocumentType.CORE);
+        ConfigurationSectionConverter.requireImplementedOptions(root);
         Path base =
                 Objects.requireNonNull(
                         configurationFile.toAbsolutePath().normalize().getParent(),
                         "Configuration file must have a parent directory");
-        var node = ConfigurationReader.node(root.get("node"));
-        var ticket = ConfigurationReader.ticket(root.get("ticket"));
+        var node = ConfigurationSectionConverter.node(root.get("node"));
+        var ticket = ConfigurationSectionConverter.ticket(root.get("ticket"));
         var issuance =
-                node.role().sender() ? ConfigurationReader.issuance(root.get("issuance")) : null;
-        var verification = ConfigurationReader.verification(root.get("verification"), base);
-        var crypto = ConfigurationReader.crypto(root.get("crypto"), base);
-        var registry = ConfigurationReader.registry(root.get("registry"), base);
+                node.role().sender()
+                        ? ConfigurationSectionConverter.issuance(root.get("issuance"))
+                        : null;
+        var verification =
+                ConfigurationSectionConverter.verification(root.get("verification"), base);
+        var crypto = ConfigurationSectionConverter.crypto(root.get("crypto"), base);
+        var registry = ConfigurationSectionConverter.registry(root.get("registry"), base);
         var replay =
                 node.role().receiver()
-                        ? ConfigurationReader.replayGuard(root.get("replay-guard"), base)
+                        ? ConfigurationSectionConverter.replayGuard(root.get("replay-guard"), base)
                         : null;
         return assemble(node, ticket, issuance, verification, crypto, registry, replay, clock);
     }
@@ -90,7 +93,7 @@ public final class CoreBootstrap {
         SqlServerNodeRegistry sql = null;
         LocalReplayGuard guard = null;
         try {
-            var trust = TrustLoader.read(verification.trustedIssuersPath());
+            var trust = TrustedIssuerLoader.read(verification.trustedIssuersPath());
             ServerNodeRegistrySnapshot snapshot;
             var requiredNodes = new HashSet<String>();
             requiredNodes.add(node.id());
@@ -134,7 +137,7 @@ public final class CoreBootstrap {
                             signer,
                             guard,
                             clock);
-            return sql == null ? engine : new ManagedCoreEngine(engine, sql);
+            return sql == null ? engine : new ResourceOwningChorusCoreEngine(engine, sql);
         } catch (IOException
                 | GeneralSecurityException
                 | SQLException
@@ -182,7 +185,7 @@ public final class CoreBootstrap {
     /** Blocking local trust load. Key paths resolve against the trust file; missing keys fail. */
     public static ConfigTrustedIssuerStore loadTrustedIssuers(Path trustFile)
             throws IOException, GeneralSecurityException {
-        return new ConfigTrustedIssuerStore(TrustLoader.read(trustFile).loadIssuers());
+        return new ConfigTrustedIssuerStore(TrustedIssuerLoader.read(trustFile).loadIssuers());
     }
 
     /**
@@ -191,6 +194,6 @@ public final class CoreBootstrap {
      */
     public static void reloadTrustedIssuers(ConfigTrustedIssuerStore issuers, Path trustFile)
             throws IOException, GeneralSecurityException {
-        issuers.replace(TrustLoader.read(trustFile).loadIssuers());
+        issuers.replace(TrustedIssuerLoader.read(trustFile).loadIssuers());
     }
 }

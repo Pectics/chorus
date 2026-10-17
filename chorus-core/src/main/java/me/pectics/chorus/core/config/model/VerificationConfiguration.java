@@ -10,7 +10,7 @@ package me.pectics.chorus.core.config.model;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Objects;
-import me.pectics.chorus.core.policy.IdentityPolicy;
+import me.pectics.chorus.core.policy.BuiltinIdentityResolutionPolicy;
 
 /**
  * Receiver rules and local trust document path, resolved relative to the main configuration. The
@@ -23,21 +23,21 @@ public record VerificationConfiguration(
         Duration maxLifetime,
         Duration clockSkew,
         boolean enforceTransferIntent,
-        IdentityPolicy identityPolicy,
+        BuiltinIdentityResolutionPolicy identityResolutionPolicy,
         Path trustedIssuersPath) {
     /** Direct Engine assembly injects approvals instead of loading a trust document. */
     public VerificationConfiguration(
             Duration maxLifetime,
             Duration clockSkew,
             boolean enforceTransferIntent,
-            IdentityPolicy identityPolicy) {
-        this(maxLifetime, clockSkew, enforceTransferIntent, identityPolicy, null);
+            BuiltinIdentityResolutionPolicy identityResolutionPolicy) {
+        this(maxLifetime, clockSkew, enforceTransferIntent, identityResolutionPolicy, null);
     }
 
     public VerificationConfiguration {
         Objects.requireNonNull(maxLifetime, "maxLifetime");
         Objects.requireNonNull(clockSkew, "clockSkew");
-        Objects.requireNonNull(identityPolicy, "identityPolicy");
+        Objects.requireNonNull(identityResolutionPolicy, "identityResolutionPolicy");
         if (maxLifetime.isZero()
                 || maxLifetime.isNegative()
                 || maxLifetime.getNano() != 0

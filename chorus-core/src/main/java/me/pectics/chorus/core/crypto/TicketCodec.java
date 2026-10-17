@@ -117,7 +117,7 @@ public final class TicketCodec {
                                 .build(),
                         new Payload(body));
         try {
-            jws.sign(new Signer(signer));
+            jws.sign(new JwsSignerAdapter(signer));
         } catch (com.nimbusds.jose.JOSEException e) {
             throw new IllegalStateException("Ticket signing failed", e);
         }
@@ -183,7 +183,7 @@ public final class TicketCodec {
             var jws = JWSObject.parse(compact);
             boolean verified = false;
             for (var verifier : issuer.verifiers()) {
-                if (jws.verify(new Verifier(verifier))) {
+                if (jws.verify(new JwsVerifierAdapter(verifier))) {
                     verified = true;
                     break;
                 }
@@ -301,12 +301,12 @@ public final class TicketCodec {
         return JSONObjectUtils.parse(json, TicketCompression.MAX_DECOMPRESSED_BYTES);
     }
 
-    private static final class Scope {
+    private static final class JsonContainerScope {
         private final boolean object;
         private final Set<String> keys = new HashSet<>();
         private boolean expectingKey;
 
-        private Scope(boolean object) {
+        private JsonContainerScope(boolean object) {
             this.object = object;
             this.expectingKey = object;
         }
@@ -314,7 +314,7 @@ public final class TicketCodec {
 
     // Bound nesting and reject duplicate names at every object depth before library parsing.
     private static void checkStructure(String json) throws java.text.ParseException {
-        var scopes = new ArrayDeque<Scope>();
+        var scopes = new ArrayDeque<JsonContainerScope>();
         for (int i = 0; i < json.length(); i++) {
             char c = json.charAt(i);
             if (c == '"') {
@@ -340,7 +340,7 @@ public final class TicketCodec {
                     scopes.peek().expectingKey = false;
                 }
             } else if (c == '{' || c == '[') {
-                scopes.push(new Scope(c == '{'));
+                scopes.push(new JsonContainerScope(c == '{'));
                 if (scopes.size() > 8) {
                     throw reject(TicketError.MALFORMED_TICKET);
                 }
@@ -387,10 +387,10 @@ public final class TicketCodec {
         return new TicketRejectedException(code);
     }
 
-    private static final class Signer extends BaseJWSProvider implements JWSSigner {
+    private static final class JwsSignerAdapter extends BaseJWSProvider implements JWSSigner {
         private final TicketSigner signer;
 
-        private Signer(TicketSigner signer) {
+        private JwsSignerAdapter(TicketSigner signer) {
             super(Set.of(new JWSAlgorithm(signer.algorithm().jwsName())));
             this.signer = signer;
         }
@@ -401,10 +401,10 @@ public final class TicketCodec {
         }
     }
 
-    private static final class Verifier extends BaseJWSProvider implements JWSVerifier {
+    private static final class JwsVerifierAdapter extends BaseJWSProvider implements JWSVerifier {
         private final TicketVerifier verifier;
 
-        private Verifier(TicketVerifier verifier) {
+        private JwsVerifierAdapter(TicketVerifier verifier) {
             super(Set.of(new JWSAlgorithm(verifier.algorithm().jwsName())));
             this.verifier = verifier;
         }
