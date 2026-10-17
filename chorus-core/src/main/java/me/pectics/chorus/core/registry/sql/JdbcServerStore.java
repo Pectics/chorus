@@ -27,6 +27,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 import me.pectics.chorus.core.config.model.RegistryConfiguration.Engine;
 import me.pectics.chorus.core.config.model.RegistryConfiguration.Sql;
 import me.pectics.chorus.core.config.model.RegistryConfiguration.TlsMode;
@@ -35,7 +37,7 @@ import me.pectics.chorus.core.registry.ServerNode;
 /**
  * Pooled JDBC reads of the versioned server directory. Opening loads credentials and may block;
  * load and close must run off event loops. Never creates tables or loads issuer keys. Owns its pool
- * and any connection-specific MySQL truststore; no JVM-wide TLS properties are changed.
+ * and any connection-specific truststore; no JVM-wide TLS properties are changed.
  */
 public final class JdbcServerStore implements SqlServerRegistry.Store {
     private final HikariDataSource pool;
@@ -76,14 +78,27 @@ public final class JdbcServerStore implements SqlServerRegistry.Store {
             config.setInitializationFailTimeout(-1);
             config.setReadOnly(true);
             var properties = driverProperties(settings);
-            if (settings.engine() == Engine.MYSQL && settings.tls().caCert() != null) {
+            boolean mysqlCa = settings.engine() == Engine.MYSQL && settings.tls().caCert() != null;
+            boolean mariaDefaultCa =
+                    settings.engine() == Engine.MARIADB
+                            && settings.tls().mode() == TlsMode.VERIFY_FULL
+                            && settings.tls().caCert() == null;
+            if (mysqlCa || mariaDefaultCa) {
                 truststore = Files.createTempFile("chorus-registry-ca-", ".p12");
                 String password = UUID.randomUUID().toString();
                 writeTruststore(settings.tls().caCert(), truststore, password);
-                properties.setProperty(
-                        "trustCertificateKeyStoreUrl", truststore.toUri().toString());
-                properties.setProperty("trustCertificateKeyStoreType", "PKCS12");
-                properties.setProperty("trustCertificateKeyStorePassword", password);
+                if (mysqlCa) {
+                    properties.setProperty(
+                            "trustCertificateKeyStoreUrl", truststore.toUri().toString());
+                    properties.setProperty("trustCertificateKeyStoreType", "PKCS12");
+                    properties.setProperty("trustCertificateKeyStorePassword", password);
+                } else {
+                    // An explicit store prevents MariaDB's password-based zero-configuration
+                    // fallback.
+                    properties.setProperty("trustStore", truststore.toString());
+                    properties.setProperty("trustStoreType", "PKCS12");
+                    properties.setProperty("trustStorePassword", password);
+                }
                 properties.setProperty("fallbackToSystemTrustStore", "false");
             }
             config.setDataSourceProperties(properties);
@@ -151,6 +166,7 @@ public final class JdbcServerStore implements SqlServerRegistry.Store {
                 result.setProperty("socketTimeout", "" + settings.timeouts().socket().toMillis());
                 result.setProperty("sslMode", tls ? "verify-full" : "disable");
                 result.setProperty("allowLocalInfile", "false");
+                result.setProperty("permitRedirect", "false");
                 if (settings.tls().caCert() != null) {
                     result.setProperty("serverSslCert", settings.tls().caCert().toString());
                     result.setProperty("fallbackToSystemTrustStore", "false");
@@ -235,12 +251,26 @@ public final class JdbcServerStore implements SqlServerRegistry.Store {
             throws IOException, GeneralSecurityException {
         var store = KeyStore.getInstance("PKCS12");
         store.load(null, null);
-        try (var input = Files.newInputStream(ca)) {
-            var certificates = CertificateFactory.getInstance("X.509").generateCertificates(input);
-            if (certificates.isEmpty()) throw new GeneralSecurityException("Empty CA bundle");
-            int index = 0;
-            for (var cert : certificates) store.setCertificateEntry("ca-" + index++, cert);
+        int index = 0;
+        if (ca == null) {
+            var managers =
+                    TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            managers.init((KeyStore) null);
+            for (var manager : managers.getTrustManagers()) {
+                if (manager instanceof X509TrustManager trusted) {
+                    for (var cert : trusted.getAcceptedIssuers()) {
+                        store.setCertificateEntry("ca-" + index++, cert);
+                    }
+                }
+            }
+        } else {
+            try (var input = Files.newInputStream(ca)) {
+                var certificates =
+                        CertificateFactory.getInstance("X.509").generateCertificates(input);
+                for (var cert : certificates) store.setCertificateEntry("ca-" + index++, cert);
+            }
         }
+        if (index == 0) throw new GeneralSecurityException("Empty CA bundle");
         try (var file = Files.newOutputStream(output)) {
             store.store(file, password.toCharArray());
         }
