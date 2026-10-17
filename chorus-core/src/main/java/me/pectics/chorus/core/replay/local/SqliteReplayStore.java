@@ -14,6 +14,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.util.Objects;
 import me.pectics.chorus.core.replay.ReplayDecision;
 
 /**
@@ -37,7 +38,9 @@ final class SqliteReplayStore implements AutoCloseable {
         this.capacity = capacity;
         this.clock = clock;
         Path absolute = file.toAbsolutePath().normalize();
-        Files.createDirectories(absolute.getParent());
+        Files.createDirectories(
+                Objects.requireNonNull(
+                        absolute.getParent(), "Replay database must have a parent directory"));
         this.connection =
                 DriverManager.getConnection("jdbc:sqlite:" + absolute.toUri() + "?mode=rwc");
         try {

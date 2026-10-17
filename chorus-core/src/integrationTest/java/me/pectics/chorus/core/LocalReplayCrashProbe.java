@@ -1,7 +1,8 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.6 and 6
- * related: chorus-core/src/integrationTest/java/me/pectics/chorus/core/LocalReplayGuardTest.java
+ * related: chorus-core/src/integrationTest/java/me/pectics/chorus/core/LocalReplayGuardTest.java;
+ *          gradle/spotbugs-exclude.xml
  * sync: Exit with live connections so the parent verifies recovery of committed and uncommitted WAL.
  * @endcontext
  */
@@ -40,10 +41,11 @@ public final class LocalReplayCrashProbe {
             var connection = DriverManager.getConnection("jdbc:sqlite:" + file);
             var statement = connection.createStatement();
             statement.execute("BEGIN IMMEDIATE");
-            statement.execute(
-                    "INSERT INTO chorus_consumed_tickets VALUES ('gateway', 'crash-ticket', "
-                            + TestSupport.NOW.plusSeconds(17).toEpochMilli()
-                            + ")");
+            var insert =
+                    connection.prepareStatement(
+                            "INSERT INTO chorus_consumed_tickets VALUES ('gateway', 'crash-ticket', ?)");
+            insert.setLong(1, TestSupport.NOW.plusSeconds(17).toEpochMilli());
+            insert.executeUpdate();
         }
         Runtime.getRuntime().halt(0);
     }

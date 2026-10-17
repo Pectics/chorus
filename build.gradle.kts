@@ -1,6 +1,6 @@
 /*
  * @context
- * related: gradle/libs.versions.toml; settings.gradle.kts
+ * related: gradle/libs.versions.toml; settings.gradle.kts; gradle/spotbugs-exclude.xml
  * sync: Pin formatter and analyzer versions in the catalog and limit checks to enabled modules.
  * @endcontext
  */
@@ -23,7 +23,12 @@ spotless {
         ktfmt(libs.versions.ktfmt.get()).kotlinlangStyle()
     }
     format("misc") {
-        target(".gitignore", "gradle.properties", "gradle/libs.versions.toml")
+        target(
+            ".gitignore",
+            "gradle.properties",
+            "gradle/libs.versions.toml",
+            "gradle/spotbugs-exclude.xml",
+        )
         trimTrailingWhitespace()
         endWithNewline()
     }
@@ -62,6 +67,7 @@ subprojects {
         effort.set(Effort.MAX)
         reportLevel.set(Confidence.MEDIUM)
         ignoreFailures.set(false)
+        excludeFilter.set(rootProject.layout.projectDirectory.file("gradle/spotbugs-exclude.xml"))
     }
 
     tasks.withType<SpotBugsTask>().configureEach {

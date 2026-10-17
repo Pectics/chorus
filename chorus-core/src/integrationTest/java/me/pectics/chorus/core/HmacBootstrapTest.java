@@ -86,7 +86,7 @@ class HmacBootstrapTest {
 
     private void trust(Path config, String keyPath) throws Exception {
         Files.writeString(
-                config.getParent().resolve("trust/issuers.yml"),
+                config.resolveSibling("trust/issuers.yml"),
                 """
                 gateway:
                   algorithm: HMAC_SHA256
@@ -101,7 +101,7 @@ class HmacBootstrapTest {
     void generatesOnceAndVerifiesOnAnotherNodeAfterCopyingOnlyTheSharedKey() throws Exception {
         Path senderFile = deployment("gateway", "GATEWAY");
         Path receiverFile = deployment("backend", "BACKEND");
-        Path senderSecret = senderFile.getParent().resolve("keys/shared.key");
+        Path senderSecret = senderFile.resolveSibling("keys/shared.key");
         byte[] payload;
         try (var sender = CoreBootstrap.open(senderFile, clock)) {
             payload =
@@ -122,7 +122,7 @@ class HmacBootstrapTest {
             assertThat(sender.getCookieKey()).isEqualTo("chorus:ticket");
         }
         assertThat(Files.readAllBytes(senderSecret)).isEqualTo(original);
-        Path receiverSecret = receiverFile.getParent().resolve("trust/gateway.key");
+        Path receiverSecret = receiverFile.resolveSibling("trust/gateway.key");
         Files.copy(senderSecret, receiverSecret);
         trust(receiverFile, "gateway.key");
         Files.writeString(
@@ -149,7 +149,7 @@ class HmacBootstrapTest {
                                                             .code())
                                             .isEqualTo(TicketError.REPLAYED));
         }
-        assertThat(receiverFile.getParent().resolve("keys")).doesNotExist();
+        assertThat(receiverFile.resolveSibling("keys")).doesNotExist();
     }
 
     @Test
@@ -159,7 +159,7 @@ class HmacBootstrapTest {
         try (var peer = CoreBootstrap.open(file, clock)) {
             assertThat(peer.getServerRegistry().find("backend")).isPresent();
         }
-        assertThat(file.getParent().resolve("keys/shared.key")).exists();
+        assertThat(file.resolveSibling("keys/shared.key")).exists();
     }
 
     @Test
@@ -167,15 +167,15 @@ class HmacBootstrapTest {
         Path file = deployment("backend", "BACKEND");
         trust(file, "missing/shared.key");
         assertThatThrownBy(() -> CoreBootstrap.open(file, clock)).isInstanceOf(IOException.class);
-        assertThat(file.getParent().resolve("keys")).doesNotExist();
-        assertThat(file.getParent().resolve("trust/missing")).doesNotExist();
-        assertThat(file.getParent().resolve("state")).doesNotExist();
-        Path invalid = file.getParent().resolve("trust/broken.key");
+        assertThat(file.resolveSibling("keys")).doesNotExist();
+        assertThat(file.resolveSibling("trust/missing")).doesNotExist();
+        assertThat(file.resolveSibling("state")).doesNotExist();
+        Path invalid = file.resolveSibling("trust/broken.key");
         Files.writeString(invalid, "not a key", StandardCharsets.US_ASCII);
         trust(file, "broken.key");
         assertThatThrownBy(() -> CoreBootstrap.open(file, clock)).isInstanceOf(IOException.class);
         assertThat(Files.readString(invalid)).isEqualTo("not a key");
-        assertThat(file.getParent().resolve("state")).doesNotExist();
+        assertThat(file.resolveSibling("state")).doesNotExist();
     }
 
     @Test
@@ -185,28 +185,26 @@ class HmacBootstrapTest {
                 file, Files.readString(file).replace("busy-timeout: 500ms", "busy-timeout: 0ms"));
         assertThatThrownBy(() -> CoreBootstrap.open(file, clock))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThat(file.getParent().resolve("keys")).doesNotExist();
-        assertThat(file.getParent().resolve("state")).doesNotExist();
+        assertThat(file.resolveSibling("keys")).doesNotExist();
+        assertThat(file.resolveSibling("state")).doesNotExist();
     }
 
     @Test
     void validatesAllSchemasBeforeGeneratingALocalSigningSecret() throws Exception {
         Path file = deployment("gateway", "GATEWAY");
-        Files.writeString(
-                file.getParent().resolve("trust/issuers.yml"), "gateway: {algorithm: HMAC}\n");
+        Files.writeString(file.resolveSibling("trust/issuers.yml"), "gateway: {algorithm: HMAC}\n");
         assertThatThrownBy(() -> CoreBootstrap.open(file, clock))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Schema validation failed");
-        assertThat(file.getParent().resolve("keys")).doesNotExist();
+        assertThat(file.resolveSibling("keys")).doesNotExist();
     }
 
     @Test
     void hmacRotationHonorsKeysPrecedenceAndRetainsApprovalOnInvalidReload() throws Exception {
         Path file = deployment("backend", "BACKEND");
-        Path base = file.getParent();
-        Path trustFile = base.resolve("trust/issuers.yml");
-        Path original = base.resolve("trust/old.key");
-        Path rotated = base.resolve("trust/new.key");
+        Path trustFile = file.resolveSibling("trust/issuers.yml");
+        Path original = file.resolveSibling("trust/old.key");
+        Path rotated = file.resolveSibling("trust/new.key");
         var oldKey = HmacSha256.loadOrCreate(original);
         var newKey = HmacSha256.loadOrCreate(rotated);
         trust(file, "missing.key");

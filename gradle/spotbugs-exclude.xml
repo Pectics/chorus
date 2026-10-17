@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+@context
+refs: AGENTS.md, section 3; ARCHITECTURE.md, sections 3.6 and 3.9
+related: build.gradle.kts
+sync: Keep exclusions limited to a specific bug pattern and reviewed member; remove obsolete matches.
+@endcontext
+-->
+<FindBugsFilter>
+    <!-- The conversion intentionally throws if lifetime plus skew overflows milliseconds. -->
+    <Match>
+        <Class name="me.pectics.chorus.core.config.model.VerificationConfiguration"/>
+        <Method name="&lt;init&gt;"
+                params="java.time.Duration,java.time.Duration,boolean,me.pectics.chorus.core.policy.IdentityPolicy,java.nio.file.Path"
+                returns="void"/>
+        <Bug pattern="RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT"/>
+    </Match>
+    <!-- Stream.toList() returns an unmodifiable list; the sealed verifier implementations are immutable. -->
+    <Match>
+        <Class name="me.pectics.chorus.core.trust.TrustedIssuer"/>
+        <Method name="verifiers" params="" returns="java.util.List"/>
+        <Bug pattern="EI_EXPOSE_REP"/>
+    </Match>
+    <!-- These YAML fixtures deliberately use portable LF, including interpolated YAML fragments. -->
+    <Match>
+        <Class name="me.pectics.chorus.core.CoreBootstrapTest"/>
+        <Method name="configuration"/>
+        <Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/>
+    </Match>
+    <Match>
+        <Class name="me.pectics.chorus.core.HmacBootstrapTest"/>
+        <Or>
+            <Method name="deployment"/>
+            <Method name="trust"/>
+        </Or>
+        <Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/>
+    </Match>
+    <Match>
+        <Class name="me.pectics.chorus.core.registry.sql.SqlRegistryIntegrationTest"/>
+        <Or>
+            <Method name="configuration"/>
+            <Method name="verifyLocalTrustAndConfiguredEngines"/>
+        </Or>
+        <Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/>
+    </Match>
+    <!-- The child halts with live JDBC resources to test recovery of an uncommitted WAL transaction. -->
+    <Match>
+        <Class name="me.pectics.chorus.core.LocalReplayCrashProbe"/>
+        <Method name="main" params="java.lang.String[]" returns="void"/>
+        <Bug pattern="OBL_UNSATISFIED_OBLIGATION,ODR_OPEN_DATABASE_RESOURCE"/>
+    </Match>
+</FindBugsFilter>

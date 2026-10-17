@@ -56,7 +56,10 @@ public final class CoreBootstrap {
         Objects.requireNonNull(clock, "clock");
         var root = ConfigurationLoader.read(configurationFile, Document.CORE);
         ConfigurationReader.requireImplementedOptions(root);
-        Path base = configurationFile.toAbsolutePath().normalize().getParent();
+        Path base =
+                Objects.requireNonNull(
+                        configurationFile.toAbsolutePath().normalize().getParent(),
+                        "Configuration file must have a parent directory");
         var node = ConfigurationReader.node(root.get("node"));
         var ticket = ConfigurationReader.ticket(root.get("ticket"));
         var issuance =

@@ -32,6 +32,7 @@ import javax.crypto.spec.SecretKeySpec;
  */
 public final class HmacSha256 implements TicketSigner {
     private static final int KEY_BYTES = 32;
+    private static final SecureRandom RANDOM = new SecureRandom();
     private final SecretKeySpec key;
 
     public HmacSha256(byte[] bytes) {
@@ -93,11 +94,14 @@ public final class HmacSha256 implements TicketSigner {
             return load(file);
         } catch (NoSuchFileException missing) {
             Path path = file.toAbsolutePath().normalize();
-            Files.createDirectories(path.getParent());
+            Path parent =
+                    Objects.requireNonNull(
+                            path.getParent(), "Key file must have a parent directory");
+            Files.createDirectories(parent);
             byte[] bytes = new byte[KEY_BYTES];
-            new SecureRandom().nextBytes(bytes);
+            RANDOM.nextBytes(bytes);
             FileAttribute<?>[] attributes =
-                    Files.getFileStore(path.getParent()).supportsFileAttributeView("posix")
+                    Files.getFileStore(parent).supportsFileAttributeView("posix")
                             ? new FileAttribute<?>[] {
                                 PosixFilePermissions.asFileAttribute(
                                         PosixFilePermissions.fromString("rw-------"))
