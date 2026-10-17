@@ -31,8 +31,8 @@ import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.config.ConfigServerNodeRegistry;
-import me.pectics.chorus.core.registry.sql.JdbcServerStore;
-import me.pectics.chorus.core.registry.sql.SqlServerRegistry;
+import me.pectics.chorus.core.registry.sql.JdbcServerNodeStore;
+import me.pectics.chorus.core.registry.sql.SqlServerNodeRegistry;
 import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 import me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore;
 
@@ -87,7 +87,7 @@ public final class CoreBootstrap {
         if (node.role().sender() && issuance.ttl().compareTo(verification.maxLifetime()) > 0) {
             throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
         }
-        SqlServerRegistry sql = null;
+        SqlServerNodeRegistry sql = null;
         LocalReplayGuard guard = null;
         try {
             var trust = TrustLoader.read(verification.trustedIssuersPath());
@@ -99,8 +99,8 @@ public final class CoreBootstrap {
                 directory = RegistryLoader.read(registry.config().serversPath(), clock);
             } else {
                 sql =
-                        new SqlServerRegistry(
-                                JdbcServerStore.open(registry.sql()),
+                        new SqlServerNodeRegistry(
+                                JdbcServerNodeStore.open(registry.sql()),
                                 registry.cache(),
                                 requiredNodes,
                                 clock);

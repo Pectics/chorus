@@ -240,6 +240,8 @@ public interface TrustedIssuerStore {
 
 ### 3.3 SQL 服务器目录存储契约
 
+SQL 目录实现命名为 `SqlServerNodeRegistry`，JDBC 读取实现命名为 `JdbcServerNodeStore`，与目录领域对象 `ServerNode` 保持一致。
+
 本轮数据库仅保存服务器目录，不同步任何签发者批准、信任策略、公钥、私钥或 HMAC 密钥。
 `chorus_registry_schema(singleton, version)` 保存结构版本；`chorus_servers(node_id, display_name, host, port)`
 对应 `ServerNode`，节点 ID 保持大小写敏感。表结构版本为 `1`，三种数据库各有完整初始化脚本，位于
@@ -680,7 +682,7 @@ MySQL 的自定义 CA 转换为连接专用临时 PKCS12；MariaDB 未指定 CA 
 `RegistrySnapshot.refreshedAt` 是供展示的墙上时钟时间，刷新失败或系统时间回拨都不延长缓存。
 这些参数保持显式配置，示例不是运维默认值。完整 SQL 配置示例见 README。
 
-`SqlServerRegistry` 通过 `Store` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
+`SqlServerNodeRegistry` 通过 `Store` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
 启动首次读取可阻塞，热路径始终只读内存。关闭会停止定时器、等待已接收的工作并关闭存储；完成回调内关闭不会等待自身。
 `CoreBootstrap.open` 创建的 SQL 连接池与调度器随返回 Engine 关闭，装配失败也释放已创建资源。
 直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。`CoreBootstrap.open` 不自动重载本地信任，文件变更通过重新装配 Engine 生效。

@@ -15,15 +15,15 @@ import me.pectics.chorus.core.api.IssueTicketResult;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.api.VerifyTicketResult;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
-import me.pectics.chorus.core.registry.sql.SqlServerRegistry;
+import me.pectics.chorus.core.registry.sql.SqlServerNodeRegistry;
 
 /** Owns only resources created by SQL bootstrap; closes both even if one close fails. */
 final class ManagedCoreEngine implements ChorusCoreEngine {
     private final ChorusCoreEngine delegate;
-    private final SqlServerRegistry registry;
+    private final SqlServerNodeRegistry registry;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    ManagedCoreEngine(ChorusCoreEngine delegate, SqlServerRegistry registry) {
+    ManagedCoreEngine(ChorusCoreEngine delegate, SqlServerNodeRegistry registry) {
         this.delegate = delegate;
         this.registry = registry;
     }

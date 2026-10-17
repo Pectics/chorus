@@ -25,7 +25,7 @@ import me.pectics.chorus.core.config.model.RegistryConfiguration.Cache;
 import me.pectics.chorus.core.registry.ServerNode;
 import org.junit.jupiter.api.Test;
 
-class SqlServerRegistryTest {
+class SqlServerNodeRegistryTest {
     private final AtomicLong ticker = new AtomicLong();
     private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
     private final Cache cache = new Cache(Duration.ofMinutes(1), Duration.ofMinutes(2));
@@ -122,7 +122,7 @@ class SqlServerRegistryTest {
         var refreshed = new CompletableFuture<String>();
         store.onRefresh = refreshed;
         var settings = new Cache(Duration.ofMillis(20), Duration.ofSeconds(1));
-        try (var registry = new SqlServerRegistry(store, settings, Set.of("backend"), clock)) {
+        try (var registry = new SqlServerNodeRegistry(store, settings, Set.of("backend"), clock)) {
             assertThat(refreshed.get(2, TimeUnit.SECONDS)).isEqualTo("chorus-sql-registry");
             assertThat(registry.find("backend")).isPresent();
         }
@@ -141,11 +141,11 @@ class SqlServerRegistryTest {
         assertThat(missing.closed.get()).isEqualTo(1);
     }
 
-    private SqlServerRegistry registry(FakeStore store) throws SQLException {
-        return new SqlServerRegistry(store, cache, Set.of("backend"), clock, ticker::get);
+    private SqlServerNodeRegistry registry(FakeStore store) throws SQLException {
+        return new SqlServerNodeRegistry(store, cache, Set.of("backend"), clock, ticker::get);
     }
 
-    private static final class FakeStore implements SqlServerRegistry.Store {
+    private static final class FakeStore implements SqlServerNodeRegistry.Store {
         final AtomicInteger loads = new AtomicInteger();
         final AtomicInteger closed = new AtomicInteger();
         volatile Map<String, ServerNode> nodes =

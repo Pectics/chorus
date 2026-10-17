@@ -40,7 +40,7 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.utility.DockerImageName;
 
-class SqlRegistryIntegrationTest {
+class SqlServerNodeRegistryIntegrationTest {
     private static final String RESOURCE = "/me/pectics/chorus/core/registry/sql/";
     private static final String ADMIN_PASSWORD = "sql-integration-admin";
     private static final String PASSWORD = " fixture-password ";
@@ -66,7 +66,7 @@ class SqlRegistryIntegrationTest {
             try (var admin = awaitAdmin(engine, port)) {
                 createUser(admin, engine);
                 try (var missing =
-                        JdbcServerStore.open(
+                        JdbcServerNodeStore.open(
                                 settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"))) {
                     assertThatThrownBy(missing::load).isInstanceOf(SQLException.class);
                 }
@@ -88,25 +88,26 @@ class SqlRegistryIntegrationTest {
 
     private void verifyTls(Engine engine, int port, Path ca) throws Exception {
         try (var valid =
-                JdbcServerStore.open(
+                JdbcServerNodeStore.open(
                         settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"))) {
             var servers = valid.load();
             assertThat(servers).containsKeys("backend", "Backend");
             assertThat(servers.get("backend").displayName()).isEqualTo("生存服");
         }
         try (var wrongHost =
-                JdbcServerStore.open(
+                JdbcServerNodeStore.open(
                         settings(engine, port, TlsMode.VERIFY_FULL, ca, "127.0.0.1"))) {
             assertThatThrownBy(wrongHost::load).isInstanceOf(SQLException.class);
         }
         try (var untrusted =
-                JdbcServerStore.open(
+                JdbcServerNodeStore.open(
                         settings(engine, port, TlsMode.VERIFY_FULL, null, "localhost"))) {
             assertThatThrownBy(untrusted::load).isInstanceOf(SQLException.class);
         }
         // MySQL's caching_sha2_password fast authentication is warmed by the successful TLS login.
         try (var plain =
-                JdbcServerStore.open(settings(engine, port, TlsMode.DISABLED, null, "localhost"))) {
+                JdbcServerNodeStore.open(
+                        settings(engine, port, TlsMode.DISABLED, null, "localhost"))) {
             assertThat(plain.load()).hasSize(3);
         }
     }
@@ -116,8 +117,8 @@ class SqlRegistryIntegrationTest {
         var ticker = new AtomicLong();
         var cache = new Cache(Duration.ofMinutes(1), Duration.ofMinutes(2));
         try (var registry =
-                new SqlServerRegistry(
-                        JdbcServerStore.open(
+                new SqlServerNodeRegistry(
+                        JdbcServerNodeStore.open(
                                 settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost")),
                         cache,
                         Set.of("gateway", "backend"),
@@ -205,8 +206,8 @@ class SqlRegistryIntegrationTest {
                 Files.writeString(
                         directory.resolve("trusted-issuers.yml"),
                         "invalid: [local-trust-is-not-reloaded]");
-                refresh((SqlServerRegistry) sender.getServerRegistry());
-                refresh((SqlServerRegistry) receiver.getServerRegistry());
+                refresh((SqlServerNodeRegistry) sender.getServerRegistry());
+                refresh((SqlServerNodeRegistry) receiver.getServerRegistry());
 
                 if (algorithm.equals("HMAC_SHA256")) {
                     execute(admin, "DROP TABLE chorus_servers");
@@ -416,11 +417,11 @@ class SqlRegistryIntegrationTest {
         }
     }
 
-    private static void refresh(SqlServerRegistry registry) throws Exception {
+    private static void refresh(SqlServerNodeRegistry registry) throws Exception {
         registry.refresh().toCompletableFuture().get(10, TimeUnit.SECONDS);
     }
 
-    private static void assertRefreshFailure(SqlServerRegistry registry) {
+    private static void assertRefreshFailure(SqlServerNodeRegistry registry) {
         assertThatThrownBy(() -> refresh(registry))
                 .hasRootCauseMessage("SQL server directory refresh failed");
     }

@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.3, and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/registry/sql/JdbcServerStore.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/registry/sql/JdbcServerNodeStore.java
  * sync: Publish complete routing snapshots; SQL refresh must never modify local issuer approvals.
  * @endcontext
  */
@@ -32,7 +32,7 @@ import me.pectics.chorus.core.registry.ServerNodeRegistry;
  * argument validation; a failed initial load also closes the store. Close outside event loops.
  * Local issuer trust is a separate resource.
  */
-public final class SqlServerRegistry implements ServerNodeRegistry, AutoCloseable {
+public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoCloseable {
     /** Blocking database boundary, called only during startup or on the registry worker. */
     public interface Store extends AutoCloseable {
         Map<String, ServerNode> load() throws SQLException;
@@ -58,12 +58,12 @@ public final class SqlServerRegistry implements ServerNodeRegistry, AutoCloseabl
     private volatile RuntimeException closeFailure;
     private CompletableFuture<Void> pending;
 
-    public SqlServerRegistry(Store store, Cache cache, Set<String> requiredNodes, Clock clock)
+    public SqlServerNodeRegistry(Store store, Cache cache, Set<String> requiredNodes, Clock clock)
             throws SQLException {
         this(store, cache, requiredNodes, clock, System::nanoTime);
     }
 
-    SqlServerRegistry(
+    SqlServerNodeRegistry(
             Store store, Cache cache, Set<String> requiredNodes, Clock clock, LongSupplier ticker)
             throws SQLException {
         this.store = Objects.requireNonNull(store, "store");

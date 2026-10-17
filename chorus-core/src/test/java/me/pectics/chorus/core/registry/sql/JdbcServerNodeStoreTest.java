@@ -10,15 +10,15 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-class JdbcServerStoreTest {
+class JdbcServerNodeStoreTest {
     @ParameterizedTest
     @EnumSource(Engine.class)
     void normalizesTlsAndTimeoutUnitsWithoutPuttingCredentialsInUrls(Engine engine) {
         var settings = settings(engine, "2001:db8::1", "chorus?user=other&password=hidden");
-        var url = JdbcServerStore.jdbcUrl(settings);
+        var url = JdbcServerNodeStore.jdbcUrl(settings);
         assertThat(url).contains("[2001:db8::1]:5432/chorus%3Fuser%3Dother%26password%3Dhidden");
         assertThat(url).doesNotContain("secret-user");
-        var properties = JdbcServerStore.driverProperties(settings);
+        var properties = JdbcServerNodeStore.driverProperties(settings);
         if (engine == Engine.POSTGRESQL) {
             assertThat(properties.getProperty("connectTimeout")).isEqualTo("2");
             assertThat(properties.getProperty("socketTimeout")).isEqualTo("3");
@@ -36,7 +36,8 @@ class JdbcServerStoreTest {
     @ParameterizedTest
     @ValueSource(strings = {"host?sslMode=DISABLED", "user@host", "host/path", "host#fragment"})
     void rejectsHostnamesContainingConnectionParameters(String host) {
-        assertThatThrownBy(() -> JdbcServerStore.jdbcUrl(settings(Engine.MYSQL, host, "chorus")))
+        assertThatThrownBy(
+                        () -> JdbcServerNodeStore.jdbcUrl(settings(Engine.MYSQL, host, "chorus")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid SQL hostname");
     }

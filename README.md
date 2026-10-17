@@ -316,7 +316,7 @@ SQL 与缓存时长须为整毫秒且不超过 2147483647ms；驱动只支持秒
 `max-stale` 从最后一次完整成功刷新开始计算，到期拒绝依赖目录的操作；使用单调时钟，不受系统时间回拨影响。
 成功读到相同目录仍更新成功时间。过期只影响路由，本地信任仍可验票；SQL 刷新不重读本地信任和密钥，SQL 模式的信任变更通过重新打开 Engine 生效。
 
-Java 的 `SqlServerRegistry.refresh()` 可显式异步刷新，返回 `CompletionStage`；并发调用共用当前刷新尝试。
+Java 的 `SqlServerNodeRegistry.refresh()` 可显式异步刷新，返回 `CompletionStage`；并发调用共用当前刷新尝试。
 失败异常不携带驱动原始诊断，防止输出凭据；`snapshot().stale()` 在刷新失败或超过刷新间隔时为真，超过 `max-stale` 则抛出不可用异常。
 直接构造 `DefaultChorusCoreEngine` 时，SQL 协作者仍由调用方关闭；通过 `CoreBootstrap.open` 创建时自动随 Engine 关闭。
 

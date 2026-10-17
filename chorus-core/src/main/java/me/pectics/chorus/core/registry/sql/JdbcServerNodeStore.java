@@ -39,13 +39,13 @@ import me.pectics.chorus.core.registry.ServerNode;
  * load and close must run off event loops. Never creates tables or loads issuer keys. Owns its pool
  * and any connection-specific truststore; no JVM-wide TLS properties are changed.
  */
-public final class JdbcServerStore implements SqlServerRegistry.Store {
+public final class JdbcServerNodeStore implements SqlServerNodeRegistry.Store {
     private final HikariDataSource pool;
     private final Engine engine;
     private final int querySeconds;
     private final Path truststore;
 
-    private JdbcServerStore(HikariDataSource pool, Sql settings, Path truststore) {
+    private JdbcServerNodeStore(HikariDataSource pool, Sql settings, Path truststore) {
         this.pool = pool;
         this.engine = settings.engine();
         this.querySeconds = seconds(settings.timeouts().query());
@@ -55,7 +55,7 @@ public final class JdbcServerStore implements SqlServerRegistry.Store {
     /**
      * Reads one UTF-8 password file; removes one terminal LF/CRLF, preserving all other whitespace.
      */
-    public static JdbcServerStore open(Sql settings) throws IOException {
+    public static JdbcServerNodeStore open(Sql settings) throws IOException {
         Path truststore = null;
         try {
             var config = new HikariConfig();
@@ -102,7 +102,7 @@ public final class JdbcServerStore implements SqlServerRegistry.Store {
                 properties.setProperty("fallbackToSystemTrustStore", "false");
             }
             config.setDataSourceProperties(properties);
-            return new JdbcServerStore(new HikariDataSource(config), settings, truststore);
+            return new JdbcServerNodeStore(new HikariDataSource(config), settings, truststore);
         } catch (IOException | GeneralSecurityException | RuntimeException failure) {
             if (truststore != null) Files.deleteIfExists(truststore);
             // Driver/configuration exceptions may contain secrets; never attach their diagnostics.
