@@ -98,9 +98,14 @@ public final class JdbcServerStore implements SqlServerRegistry.Store {
 
     static String jdbcUrl(Sql settings) {
         try {
-            String authority =
-                    new URI("sql", null, settings.host(), settings.port(), null, null, null)
-                            .getRawAuthority();
+            var endpoint = new URI("sql", null, settings.host(), settings.port(), null, null, null);
+            if (endpoint.getPort() != settings.port()
+                    || endpoint.getRawQuery() != null
+                    || endpoint.getRawFragment() != null
+                    || endpoint.getRawPath() != null && !endpoint.getRawPath().isEmpty()) {
+                throw new IllegalArgumentException("Invalid SQL hostname");
+            }
+            String authority = endpoint.getRawAuthority();
             String database =
                     URLEncoder.encode(settings.database(), StandardCharsets.UTF_8)
                             .replace("+", "%20");
