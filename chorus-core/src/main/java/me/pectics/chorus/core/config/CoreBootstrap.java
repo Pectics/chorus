@@ -23,6 +23,11 @@ import java.util.Set;
 import me.pectics.chorus.core.api.ChorusCoreEngine;
 import me.pectics.chorus.core.api.DefaultChorusCoreEngine;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.model.IssuanceConfiguration;
+import me.pectics.chorus.core.config.model.NodeConfiguration;
+import me.pectics.chorus.core.config.model.NodeRole;
+import me.pectics.chorus.core.config.model.TicketConfiguration;
+import me.pectics.chorus.core.config.model.VerificationConfiguration;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
@@ -66,38 +71,51 @@ public final class CoreBootstrap {
         var crypto = root.get("crypto");
         var ticket = root.get("ticket");
         var verification = root.get("verification");
-        var configuration =
-                new CoreConfiguration(
+        var node =
+                new NodeConfiguration(
                         root.at("/node/id").asString(),
-                        role,
+                        root.at("/node").has("display-name")
+                                ? root.at("/node/display-name").asString()
+                                : null,
+                        role);
+        var ticketConfiguration =
+                new TicketConfiguration(
                         ticket.get("cookie-key").asString(),
-                        role.sender() ? duration(root.at("/issuance/ttl")) : null,
-                        duration(verification.get("max-lifetime")),
-                        duration(verification.get("clock-skew")),
                         ticket.get("max-payload-bytes").asInt(),
                         ticket.get("max-property-bytes").asInt(),
                         ticket.has("compression")
                                 ? TicketCompression.valueOf(ticket.get("compression").asString())
-                                : TicketCompression.ZSTD,
+                                : TicketCompression.ZSTD);
+        var verificationConfiguration =
+                new VerificationConfiguration(
+                        duration(verification.get("max-lifetime")),
+                        duration(verification.get("clock-skew")),
                         verification.get("enforce-transfer-intent").asBoolean(),
-                        IdentityPolicy.valueOf(verification.get("identity-policy").asString()),
-                        role.sender()
-                                ? new IssuancePolicy(
+                        IdentityPolicy.valueOf(verification.get("identity-policy").asString()));
+        var issuance =
+                role.sender()
+                        ? new IssuanceConfiguration(
+                                duration(root.at("/issuance/ttl")),
+                                new IssuancePolicy(
                                         policy(root.get("issuance")),
-                                        strings(root.at("/issuance/allowed-targets")))
-                                : null);
+                                        strings(root.at("/issuance/allowed-targets"))))
+                        : null;
+        if (role.sender()
+                && issuance.ttl().compareTo(verificationConfiguration.maxLifetime()) > 0) {
+            throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
+        }
         var files = root.at("/registry/config");
         Path serversFile = base.resolve(files.get("servers-path").asString());
         Path trustFile = base.resolve(files.get("issuers-path").asString());
         var directory =
                 readDirectory(ConfigurationLoader.read(serversFile, Document.SERVERS), clock);
         var trust = ConfigurationLoader.read(trustFile, Document.TRUSTED_ISSUERS);
-        if (!directory.servers().containsKey(configuration.nodeId())
+        if (!directory.servers().containsKey(node.id())
                 || role.sender()
                         && !directory
                                 .servers()
                                 .keySet()
-                                .containsAll(configuration.issuancePolicy().allowedTargets())) {
+                                .containsAll(issuance.policy().allowedTargets())) {
             throw new IllegalArgumentException(
                     "Node and issuance targets must exist in the directory");
         }
@@ -109,15 +127,23 @@ public final class CoreBootstrap {
             guard =
                     new SqliteReplayGuard(
                             base.resolve(replay.get("path").asString()),
-                            configuration.nodeId(),
-                            configuration.clockSkew(),
+                            node.id(),
+                            verificationConfiguration.clockSkew(),
                             replay.get("max-entries").asInt(),
                             duration(replay.get("busy-timeout")),
                             clock);
         }
         try {
             return new DefaultChorusCoreEngine(
-                    configuration, registries, registries, signer, guard, clock);
+                    node,
+                    ticketConfiguration,
+                    issuance,
+                    verificationConfiguration,
+                    registries,
+                    registries,
+                    signer,
+                    guard,
+                    clock);
         } catch (RuntimeException failure) {
             if (guard != null) {
                 guard.close();

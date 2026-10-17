@@ -22,7 +22,7 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
-import me.pectics.chorus.core.config.NodeRole;
+import me.pectics.chorus.core.config.model.TicketConfiguration;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.crypto.TicketCompression;
@@ -30,7 +30,6 @@ import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.model.IdentityClaim;
 import me.pectics.chorus.core.model.ProfileProperty;
 import me.pectics.chorus.core.model.TicketClaims;
-import me.pectics.chorus.core.policy.IdentityPolicy;
 import me.pectics.chorus.core.registry.TrustedIssuer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -75,10 +74,7 @@ class TicketCompressionTest {
                 .isEqualTo(
                         new TicketCodec(5120, 2048, TicketCompression.ZSTD)
                                 .encode(TestSupport.claims(), signer));
-        assertThat(
-                        CoreEngineTest.configuration(
-                                        "gateway", NodeRole.GATEWAY, IdentityPolicy.ADOPT_UPSTREAM)
-                                .compression())
+        assertThat(new TicketConfiguration("chorus:ticket", 4096, 2048).compression())
                 .isEqualTo(TicketCompression.ZSTD);
     }
 

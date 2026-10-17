@@ -5,7 +5,7 @@
  * sync: Keep role operations aligned with schema requirements for signing and replay protection.
  * @endcontext
  */
-package me.pectics.chorus.core.config;
+package me.pectics.chorus.core.config.model;
 
 /** Fixed sender and receiver operations for each deployment role. */
 public enum NodeRole {

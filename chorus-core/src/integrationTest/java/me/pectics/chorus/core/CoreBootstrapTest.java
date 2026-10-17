@@ -22,7 +22,7 @@ import me.pectics.chorus.core.api.IssueTicketRequest;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.config.CoreBootstrap;
-import me.pectics.chorus.core.config.NodeRole;
+import me.pectics.chorus.core.config.model.NodeRole;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;

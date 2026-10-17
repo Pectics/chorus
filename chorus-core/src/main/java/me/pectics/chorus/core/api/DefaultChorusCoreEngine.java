@@ -16,7 +16,10 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
-import me.pectics.chorus.core.config.CoreConfiguration;
+import me.pectics.chorus.core.config.model.IssuanceConfiguration;
+import me.pectics.chorus.core.config.model.NodeConfiguration;
+import me.pectics.chorus.core.config.model.TicketConfiguration;
+import me.pectics.chorus.core.config.model.VerificationConfiguration;
 import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.model.AuthType;
@@ -35,7 +38,10 @@ import me.pectics.chorus.core.state.ReplayGuard;
  * this engine's lifetime; trusted verification snapshots can still be replaced independently.
  */
 public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
-    private final CoreConfiguration configuration;
+    private final NodeConfiguration node;
+    private final TicketConfiguration ticket;
+    private final IssuanceConfiguration issuance;
+    private final VerificationConfiguration verification;
     private final ServerNodeRegistry servers;
     private final TrustedIssuerRegistry issuers;
     private final TicketSigner signer;
@@ -44,14 +50,27 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
     private final TicketCodec codec;
     private final AtomicBoolean closed = new AtomicBoolean();
 
+    /**
+     * Accepts independent runtime sections and already assembled collaborators, without file I/O.
+     * Sender roles require issuance settings and a signer; their TTL must not exceed verification's
+     * maximum lifetime. Receiver roles require a replay guard. Missing required arguments throw
+     * NullPointerException; an excessive TTL throws IllegalArgumentException. Issuance may be null
+     * for receiver-only nodes. Replay ownership transfers only after construction succeeds.
+     */
     public DefaultChorusCoreEngine(
-            CoreConfiguration configuration,
+            NodeConfiguration node,
+            TicketConfiguration ticket,
+            IssuanceConfiguration issuance,
+            VerificationConfiguration verification,
             ServerNodeRegistry servers,
             TrustedIssuerRegistry issuers,
             TicketSigner signer,
             ReplayGuard replay,
             Clock clock) {
-        this.configuration = Objects.requireNonNull(configuration, "configuration");
+        this.node = Objects.requireNonNull(node, "node");
+        this.ticket = Objects.requireNonNull(ticket, "ticket");
+        this.issuance = issuance;
+        this.verification = Objects.requireNonNull(verification, "verification");
         this.servers = Objects.requireNonNull(servers, "servers");
         this.issuers = Objects.requireNonNull(issuers, "issuers");
         this.signer = signer;
@@ -59,13 +78,15 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.codec =
                 new TicketCodec(
-                        configuration.maxPayloadBytes(),
-                        configuration.maxPropertyBytes(),
-                        configuration.compression());
-        if (configuration.role().sender()) {
+                        ticket.maxPayloadBytes(), ticket.maxPropertyBytes(), ticket.compression());
+        if (node.role().sender()) {
+            Objects.requireNonNull(issuance, "Sender requires issuance settings");
+            if (issuance.ttl().compareTo(verification.maxLifetime()) > 0) {
+                throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
+            }
             Objects.requireNonNull(signer, "Sender requires a ticket signer");
         }
-        if (configuration.role().receiver()) {
+        if (node.role().receiver()) {
             Objects.requireNonNull(replay, "Receiver requires a replay guard");
         }
     }
@@ -77,7 +98,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
 
     @Override
     public String getCookieKey() {
-        return configuration.cookieKey();
+        return ticket.cookieKey();
     }
 
     @Override
@@ -85,12 +106,12 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         Objects.requireNonNull(request, "request");
         try {
             requireOpen();
-            if (!configuration.role().sender()) {
+            if (!node.role().sender()) {
                 throw reject(TicketError.CAPABILITY_DISABLED);
             }
             var identity = request.identity().claim();
             if (!supported(identity.authType())
-                    || !configuration.issuancePolicy().permits(identity, request.targetNodeId())) {
+                    || !issuance.policy().permits(identity, request.targetNodeId())) {
                 throw reject(TicketError.ISSUER_POLICY_DENIED);
             }
             if (!request.extensions().isEmpty()) {
@@ -109,17 +130,17 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                     new TicketClaims(
                             1,
                             UUID.randomUUID().toString(),
-                            configuration.nodeId(),
+                            node.id(),
                             request.targetNodeId(),
                             issuedAt,
                             issuedAt,
-                            issuedAt.plus(configuration.issuanceTtl()),
+                            issuedAt.plus(issuance.ttl()),
                             identity,
                             request.extensions());
             return CompletableFuture.completedFuture(
                     new IssueTicketResult(
                             target,
-                            configuration.cookieKey(),
+                            ticket.cookieKey(),
                             codec.encode(claims, signer),
                             claims.jti(),
                             claims.expiresAt()));
@@ -133,17 +154,17 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         Objects.requireNonNull(request, "request");
         try {
             requireOpen();
-            if (!configuration.role().receiver()) {
+            if (!node.role().receiver()) {
                 throw reject(TicketError.CAPABILITY_DISABLED);
             }
             var decoded = codec.decode(request.cookiePayload(), issuers);
             TicketClaims claims = decoded.claims();
-            if (!configuration.nodeId().equals(claims.targetNodeId())) {
+            if (!node.id().equals(claims.targetNodeId())) {
                 throw reject(TicketError.TARGET_MISMATCH);
             }
             validateTimes(claims);
             ReceiverLoginContext login = request.loginContext();
-            if (configuration.enforceTransferIntent() && !login.transferred()) {
+            if (verification.enforceTransferIntent() && !login.transferred()) {
                 throw reject(TicketError.TRANSFER_REQUIRED);
             }
             if (!claims.identity().username().equals(login.loginUsername())) {
@@ -153,7 +174,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                     || !decoded.issuer().policy().permits(claims.identity())) {
                 throw reject(TicketError.ISSUER_POLICY_DENIED);
             }
-            if (configuration.identityPolicy() == IdentityPolicy.STRICT_ONLINE_MATCH) {
+            if (verification.identityPolicy() == IdentityPolicy.STRICT_ONLINE_MATCH) {
                 var verified = login.independentlyVerified();
                 var identity = claims.identity();
                 if (verified == null
@@ -166,14 +187,14 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
             }
             ResolvedPlayerProfile profile;
             try {
-                profile = configuration.identityPolicy().resolve(claims.identity());
+                profile = verification.identityPolicy().resolve(claims.identity());
             } catch (RuntimeException resolutionFailure) {
                 throw reject(TicketError.PROFILE_RESOLUTION_FAILED);
             }
             var result =
                     new VerifyTicketResult(
                             profile,
-                            new AuthenticatedIdentity(claims.identity(), configuration.nodeId()),
+                            new AuthenticatedIdentity(claims.identity(), node.id()),
                             claims.jti());
             return replay.consume(
                             claims.issuerNodeId(),
@@ -201,11 +222,11 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
 
     private void validateTimes(TicketClaims claims) {
         Instant now = clock.instant();
-        Duration skew = configuration.clockSkew();
+        Duration skew = verification.clockSkew();
         Duration lifetime = Duration.between(claims.issuedAt(), claims.expiresAt());
         if (lifetime.isNegative()
                 || lifetime.isZero()
-                || lifetime.compareTo(configuration.maxLifetime()) > 0
+                || lifetime.compareTo(verification.maxLifetime()) > 0
                 || claims.notBefore().isBefore(claims.issuedAt())
                 || !claims.notBefore().isBefore(claims.expiresAt())) {
             throw reject(TicketError.INVALID_LIFETIME);

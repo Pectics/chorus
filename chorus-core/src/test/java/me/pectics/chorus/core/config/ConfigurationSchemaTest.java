@@ -18,6 +18,7 @@ import com.networknt.schema.SpecificationVersion;
 import java.math.BigDecimal;
 import java.util.List;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
+import me.pectics.chorus.core.config.model.NodeRole;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.crypto.TicketCompression;
 import org.junit.jupiter.api.Test;

@@ -19,8 +19,11 @@ import me.pectics.chorus.core.api.IssueTicketRequest;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.api.VerifyTicketRequest;
-import me.pectics.chorus.core.config.CoreConfiguration;
-import me.pectics.chorus.core.config.NodeRole;
+import me.pectics.chorus.core.config.model.IssuanceConfiguration;
+import me.pectics.chorus.core.config.model.NodeConfiguration;
+import me.pectics.chorus.core.config.model.NodeRole;
+import me.pectics.chorus.core.config.model.TicketConfiguration;
+import me.pectics.chorus.core.config.model.VerificationConfiguration;
 import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.model.AuthType;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
@@ -40,30 +43,64 @@ class CoreEngineTest {
     private final RecordingGuard replay = new RecordingGuard();
     private final ReceiverLoginContext login = new ReceiverLoginContext("Notch", true, null);
 
-    public static CoreConfiguration configuration(String id, NodeRole role, IdentityPolicy policy) {
-        return new CoreConfiguration(
-                id,
-                role,
-                "chorus:ticket",
-                role.sender() ? Duration.ofSeconds(15) : null,
-                Duration.ofSeconds(15),
-                Duration.ofSeconds(2),
-                4096,
-                2048,
-                true,
-                policy,
-                role.sender() ? TestSupport.issuancePolicy() : null);
-    }
-
     private DefaultChorusCoreEngine engine(String id, NodeRole role, IdentityPolicy policy) {
         var registry = TestSupport.registries(pair);
         return new DefaultChorusCoreEngine(
-                configuration(id, role, policy),
+                new NodeConfiguration(id, role),
+                new TicketConfiguration("chorus:ticket", 4096, 2048),
+                role.sender()
+                        ? new IssuanceConfiguration(
+                                Duration.ofSeconds(15), TestSupport.issuancePolicy())
+                        : null,
+                new VerificationConfiguration(
+                        Duration.ofSeconds(15), Duration.ofSeconds(2), true, policy),
                 registry,
                 registry,
                 role.sender() ? TestSupport.signer(pair) : null,
                 role.receiver() ? replay : null,
                 Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
+    }
+
+    @Test
+    void independentSectionsStillEnforceSenderRequirementsBeforeTakingReplayOwnership() {
+        var registry = TestSupport.registries(pair);
+        var node = new NodeConfiguration("gateway", NodeRole.PEER);
+        var ticket = new TicketConfiguration("chorus:ticket", 4096, 2048);
+        var verification =
+                new VerificationConfiguration(
+                        Duration.ofSeconds(15),
+                        Duration.ofSeconds(2),
+                        true,
+                        IdentityPolicy.ADOPT_UPSTREAM);
+        assertThatThrownBy(
+                        () ->
+                                new DefaultChorusCoreEngine(
+                                        node,
+                                        ticket,
+                                        null,
+                                        verification,
+                                        registry,
+                                        registry,
+                                        TestSupport.signer(pair),
+                                        replay,
+                                        Clock.systemUTC()))
+                .isInstanceOf(NullPointerException.class);
+        var issuance =
+                new IssuanceConfiguration(Duration.ofSeconds(16), TestSupport.issuancePolicy());
+        assertThatThrownBy(
+                        () ->
+                                new DefaultChorusCoreEngine(
+                                        node,
+                                        ticket,
+                                        issuance,
+                                        verification,
+                                        registry,
+                                        registry,
+                                        TestSupport.signer(pair),
+                                        replay,
+                                        Clock.systemUTC()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(replay.closes).isZero();
     }
 
     private VerifyTicketRequest request(TicketClaims claims, ReceiverLoginContext context) {
