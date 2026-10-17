@@ -35,6 +35,7 @@ class MinifiedSchemaReader(reader: Reader) :
 }
 
 tasks.processResources {
+    inputs.property("schemaResourceFormat", "minified-without-comments")
     filteringCharset = "UTF-8"
     filesMatching("me/pectics/chorus/core/config/schema/**/*.schema.json") {
         filter<MinifiedSchemaReader>()
