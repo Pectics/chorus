@@ -89,6 +89,10 @@ feat(core): Add the verification pipeline
 - `type` 与可选 `scope` 使用小写；说明文案使用**英语，首字母大写**。正文与 footer 的说明文字也使用英语。
 - 常用类型为 `feat`、`fix`、`docs`、`refactor`、`test`、`build`、`ci`、`style`、`perf`、`chore`、`revert`；按变更意图选择。
 - 描述具体动作与结果，例如 `docs: Define the local Git draft workflow`，不要用 `Update`、`Fix bugs` 这类缺少上下文的笼统标题。
+- 正文包含多项改动或验证内容时，使用 `- ` 无序列表，每项围绕一个动作或主题；不要把多个独立事项挤进长句或段落。
+  紧密相关的细节可同项描述，单一事项可用简短段落，也不强制补写正文。
+- 标题、正文与 footer 之间保留空行。`BREAKING CHANGE:` 保留为独立 footer；包含多项迁移要求时，
+  在其摘要后的续行中使用列表，与普通正文分开。
 
 ## 4. 实现约束
 
