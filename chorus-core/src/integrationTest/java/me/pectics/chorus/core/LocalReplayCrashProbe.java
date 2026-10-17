@@ -17,6 +17,7 @@ import me.pectics.chorus.core.replay.ReplayDecision;
 import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 
 /** Child process intentionally exits without resource cleanup to exercise WAL recovery. */
+@SuppressWarnings("resource")
 public final class LocalReplayCrashProbe {
     private LocalReplayCrashProbe() {}
 

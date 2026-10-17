@@ -40,6 +40,7 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.utility.DockerImageName;
 
+@SuppressWarnings("resource")
 class SqlServerNodeRegistryIntegrationTest {
     private static final String RESOURCE = "/me/pectics/chorus/core/registry/sql/";
     private static final String ADMIN_PASSWORD = "sql-integration-admin";
