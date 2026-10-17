@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
 import me.pectics.chorus.core.config.model.NodeRole;
+import me.pectics.chorus.core.config.model.RegistryConfiguration.Provider;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.crypto.TicketCompression;
 import org.junit.jupiter.api.Test;
@@ -151,6 +152,38 @@ class ConfigurationSchemaTest {
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isEmpty();
         issuer.put("algorithm", "HS512");
         assertThat(contract(Document.TRUSTED_ISSUERS).validate(trust)).isNotEmpty();
+    }
+
+    @Test
+    void configDirectoryRequiresItsOwnFileSettings() {
+        var core = (ObjectNode) fixture(Document.CORE);
+        var registry = (ObjectNode) core.get("registry");
+        registry.remove("config");
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        registry.set("config", JSON.createObjectNode());
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+    }
+
+    @ParameterizedTest
+    @EnumSource(Provider.class)
+    void trustPathBelongsOnlyToVerificationForBothDirectoryProviders(Provider provider) {
+        var core = (ObjectNode) fixture(Document.CORE);
+        if (provider == Provider.SQL) {
+            core.set("registry", JSON.readTree(SqlConfigurationTest.REGISTRY));
+        }
+        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        var registry = (ObjectNode) core.get("registry");
+        var files = JSON.createObjectNode().put("servers-path", "servers.yml");
+        registry.set("config", files);
+        assertThat(contract(Document.CORE).validate(core)).isEmpty();
+        files.put("issuers-path", "trusted-issuers.yml");
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        files.remove("issuers-path");
+        var verification = (ObjectNode) core.get("verification");
+        verification.remove("trusted-issuers-path");
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
+        verification.put("trusted-issuers-path", " ");
+        assertThat(contract(Document.CORE).validate(core)).isNotEmpty();
     }
 
     @Test

@@ -24,6 +24,8 @@ import me.pectics.chorus.core.api.VerifyTicketRequest;
 import me.pectics.chorus.core.config.CoreBootstrap;
 import me.pectics.chorus.core.config.model.NodeRole;
 import me.pectics.chorus.core.crypto.Ed25519;
+import me.pectics.chorus.core.crypto.SignatureAlgorithm;
+import me.pectics.chorus.core.crypto.TicketCodec;
 import me.pectics.chorus.core.model.AuthenticatedIdentity;
 import me.pectics.chorus.core.model.ReceiverLoginContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -253,6 +255,92 @@ class CoreBootstrapTest {
     }
 
     @Test
+    void trustCanBeLoadedAndReloadedWithoutAnyServerDirectoryOrSigningKey() throws Exception {
+        Path trust = directory.resolve("trusted-issuers.yml");
+        Files.delete(directory.resolve("servers.yml"));
+        Files.delete(directory.resolve("private.der"));
+        var issuers = CoreBootstrap.loadTrustedIssuers(trust);
+        var approved = issuers.findByIssuer("gateway").orElseThrow();
+        assertThat(approved.algorithm()).isEqualTo(SignatureAlgorithm.ED25519);
+        Files.writeString(
+                trust, Files.readString(trust).replace("  keys:", "  enabled: false\n  keys:"));
+        CoreBootstrap.reloadTrustedIssuers(issuers, trust);
+        assertThat(issuers.findByIssuer("gateway").orElseThrow().enabled()).isFalse();
+        assertThat(approved.enabled()).isTrue();
+        assertThat(directory.resolve("servers.yml")).doesNotExist();
+        assertThat(directory.resolve("private.der")).doesNotExist();
+    }
+
+    @Test
+    void directoryMembershipDoesNotApproveAnIssuerOrConsumeItsTicket() throws Exception {
+        Path senderFile = write("gateway.yml", configuration("gateway", NodeRole.GATEWAY));
+        Path receiverFile = write("backend.yml", configuration("backend", NodeRole.BACKEND));
+        byte[] payload;
+        try (var sender = CoreBootstrap.open(senderFile, clock)) {
+            payload =
+                    sender.issueTicket(
+                                    new IssueTicketRequest(
+                                            "backend",
+                                            new AuthenticatedIdentity(
+                                                    TestSupport.identity(), "gateway"),
+                                            Map.of()))
+                            .toCompletableFuture()
+                            .get(5, TimeUnit.SECONDS)
+                            .cookiePayload();
+        }
+        Path trust = directory.resolve("trusted-issuers.yml");
+        String approvals = Files.readString(trust);
+        Files.writeString(trust, "{}\n");
+        var request =
+                new VerifyTicketRequest(payload, new ReceiverLoginContext("Notch", true, null));
+        try (var receiver = CoreBootstrap.open(receiverFile, clock)) {
+            assertThat(receiver.getServerRegistry().find("gateway")).isPresent();
+            assertThatThrownBy(
+                            () -> receiver.verifyAndResolve(request).toCompletableFuture().join())
+                    .hasRootCauseMessage("UNKNOWN_ISSUER");
+        }
+        Files.writeString(trust, approvals);
+        try (var receiver = CoreBootstrap.open(receiverFile, clock)) {
+            assertThat(
+                            receiver.verifyAndResolve(request)
+                                    .toCompletableFuture()
+                                    .get(5, TimeUnit.SECONDS)
+                                    .resolvedProfile()
+                                    .finalUuid())
+                    .isEqualTo(TestSupport.UUID_MOJANG);
+        }
+    }
+
+    @Test
+    void hmacLocalConfigurationDoesNotChangeOmittedEd25519TrustAlgorithm() throws Exception {
+        byte[] payload =
+                new TicketCodec(4096, 2048)
+                        .encode(
+                                TestSupport.claims(),
+                                Ed25519.loadSigner(
+                                        directory.resolve("private.der"),
+                                        directory.resolve("public.der")));
+        Path receiverFile =
+                write(
+                        "backend.yml",
+                        configuration("backend", NodeRole.BACKEND)
+                                .replace(
+                                        "algorithm: ED25519\n  private-key: private.der\n  public-key: public.der",
+                                        "algorithm: HMAC_SHA256"));
+        Files.delete(directory.resolve("private.der"));
+        try (var receiver = CoreBootstrap.open(receiverFile, clock)) {
+            var result =
+                    receiver.verifyAndResolve(
+                                    new VerifyTicketRequest(
+                                            payload, new ReceiverLoginContext("Notch", true, null)))
+                            .toCompletableFuture()
+                            .get(5, TimeUnit.SECONDS);
+            assertThat(result.resolvedProfile().finalUuid()).isEqualTo(TestSupport.UUID_MOJANG);
+        }
+        assertThat(directory.resolve("keys")).doesNotExist();
+    }
+
+    @Test
     void rejectsInvalidLimitsMissingIssuanceUnsupportedModesAndUnknownFieldsBeforeOpeningState()
             throws Exception {
         String base = configuration("backend", NodeRole.PEER);
@@ -435,7 +523,6 @@ class CoreBootstrapTest {
 
     @Test
     void keysOverrideSingleKeyWithoutReadingItOrFallingBackOnLoadFailure() throws Exception {
-        Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         Path preferredFile = directory.resolve("preferred.der");
         var preferred = TestSupport.keyPair();
@@ -461,7 +548,6 @@ class CoreBootstrapTest {
     @Test
     void loadsMultipleIssuerKeysAndRejectsDuplicatePublicKeysWithoutReplacingApprovals()
             throws Exception {
-        Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
         Files.write(
                 directory.resolve("rotated.der"), TestSupport.keyPair().getPublic().getEncoded());

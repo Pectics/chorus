@@ -79,10 +79,13 @@ Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置�
 `verification`、`crypto`、`registry`、`replay-guard` 七组分别组织，没有统一的根配置对象。
 `CoreBootstrap.open` 的文件入口保持不变；直接构造 `DefaultChorusCoreEngine` 时，分别传入
 `NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`，
-随后传入节点目录、签发者目录、签发器、防重放对象与时钟。仅接收角色的签发配置和签发器可为 `null`；
+随后传入节点目录、独立的本地签发者信任对象、签发器、防重放对象与时钟。仅接收角色的签发配置和签发器可为 `null`；
 签发角色的 TTL 仍不得超过验票最大寿命。
 原有平铺的 `CoreConfiguration` 已移除，`NodeRole` 迁入 `config.model`，Java 调用方需更新构造方式与 imports。
 配置模型不执行 I/O；密钥、目录与防重放配置由启动装配层消费。
+
+Registry 只负责服务器目录；本地批准记录位于独立的 `me.pectics.chorus.core.trust` 包。
+服务器出现在目录中不会自动获得签发者信任，目录刷新也不修改本地批准。Chorus 不自动分发信任策略、公钥、私钥或 HMAC 密钥。
 
 三个配置文件各有一个完整、独立的 Schema，格式契约位于 `schema/v1/`，每个文档带有自己的版本化 `$id`：
 
@@ -104,7 +107,8 @@ Core 支持 `CONFIG` / `SQL` 目录、`LOCAL` SQLite 防重放、`ADOPT_UPSTREAM
 `STRICT_ONLINE_MATCH`。认证类型支持 `MOJANG`、`OFFLINE_AUTH`、`OFFLINE_RAW`；Yggdrasil、Floodgate、
 SQL 核销、通用属性与非空扩展尚未实现；Ticket 支持 Ed25519、HMAC-SHA256 及 ZSTD / GZIP 压缩。`STRICT_ONLINE_MATCH` 要求平台提供真实独立认证结果。
 
-下面是 Receiver 的 `chorus.yml`。**UNDECIDED（架构 §7.2）：寿命、时钟容差、字节限额、容量和锁等待时间均为示例，
+下面是同一管理者互信集群中使用 HMAC 的 Receiver `chorus.yml`。算法在示例中显式指定，`crypto.algorithm` 仍为必填。
+**UNDECIDED（架构 §7.2）：寿命、时钟容差、字节限额、容量和锁等待时间均为示例，
 没有隐式运维默认值。** 发送端的 `issuance.ttl`、`verification.max-lifetime` 与 `verification.clock-skew` 要求整秒；TTL 为正且不超过最大寿命，Cookie 限额不能超过 5120。
 
 ```yaml
@@ -117,13 +121,13 @@ ticket:
   max-property-bytes: 2048
   compression: ZSTD
 crypto:
-  algorithm: ED25519
+  algorithm: HMAC_SHA256
 registry:
   provider: CONFIG
   config:
     servers-path: servers.yml
-    issuers-path: trusted-issuers.yml
 verification:
+  trusted-issuers-path: trusted-issuers.yml
   max-lifetime: 15s
   clock-skew: 2s
   enforce-transfer-intent: true
@@ -150,13 +154,14 @@ backend:
 
 ```yaml
 gateway:
-  key: keys/gateway.pub
+  algorithm: HMAC_SHA256
+  key: keys/gateway.key
   allowed-auth-schemes: [MOJANG]
   allowed-providers: [mojang]
 ```
 
 配置 Gateway 时，把节点 ID 改为 `gateway`，将 `role` 改为 `GATEWAY`；在 `crypto` 中
-加入 `private-key: keys/gateway.key` 和 `public-key: keys/gateway.pub`，
+加入 `key: keys/gateway.key`，
 并在 `verification` 前加入签发权限（接收端仍独立裁定）：
 
 ```yaml
@@ -176,42 +181,42 @@ issuance:
 `REGISTRY` 的设计语义为复用 `registry` 数据库，不能与 `registry.provider: CONFIG` 组合，该约束由 Schema 校验。
 `LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
 
-Ed25519 密钥由管理员提供：私钥使用 PKCS#8，公钥使用 X.509 SPKI，均支持 DER 或 PEM；加载失败不启用无签名模式。
-主配置内的路径相对 `chorus.yml`；目录文件路径在 `registry.config` 中配置，信任密钥路径相对 `trusted-issuers.yml`。
-`CoreBootstrap.loadRegistries` / `reloadRegistries` 提供 `registry.config.ConfigRegistries` 的显式加载与快照替换；加载失败保留旧快照，不自动监视文件。
+主配置内的路径相对 `chorus.yml`；目录文件为 `registry.config.servers-path`，信任文件为 `verification.trusted-issuers-path`，批准的密钥路径相对信任文件。
+`CoreBootstrap.loadServerRegistry` / `reloadServerRegistry` 加载和替换 `registry.config.ConfigServerNodeRegistry` 的目录快照；
+`loadTrustedIssuers` / `reloadTrustedIssuers` 独立加载和替换 `trust.config.ConfigTrustedIssuerStore` 的本地批准记录。
+重载各自完整校验后原子替换，失败保留该对象原快照；这些文件 I/O 入口须在平台事件线程之外调用，不自动监视文件。
+直接装配 Engine 时可重载所注入的对象；`CoreBootstrap.open` 创建的本地信任变更通过重新打开 Engine 生效。
+迁移旧主配置时，把 `registry.config.issuers-path` 移到 `verification.trusted-issuers-path`；旧位置由 Schema 拒绝，SQL 模式可删除整个 `registry.config`。
+Java 调用方把 `registry.TrustedIssuer / TrustedIssuerRegistry` 改为 `trust.TrustedIssuer / TrustedIssuerStore`；
+原 `ConfigRegistries` 和 `loadRegistries / reloadRegistries` 联合入口已移除，改为分别管理目录与信任。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
 主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时目录显示名来自所选目录；`CONFIG` 未配置时使用节点 ID，SQL 表要求显式显示名。
-单把验签密钥可用 `key: keys/gateway.pub`，等价于 `keys: [keys/gateway.pub]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
+单把验签密钥可用 `key: keys/gateway.key`，等价于 `keys: [keys/gateway.key]`；`key` 与 `keys` 至少提供一个，同时提供时只加载 `keys`。
 `keys` 是密钥路径字符串列表，可保留多把同算法密钥支持轮换；接收端依次尝试这些密钥。
 签发者级 `enabled: false` 会禁用其全部密钥；撤销单把密钥时从列表移除。配置变更在快照替换后生效。
 
-互信服务器也可以选择 **HMAC-SHA256**，只需同步一个共享 `.key` 文件。签发端将 `crypto` 改为：
+上述 HMAC Gateway 首次启动时，若 `crypto.key` 文件不存在，Core 自动创建父目录并生成 32 字节随机二进制密钥；支持 POSIX 权限时新文件设为 `0600`。
+后续启动复用原文件。已有文件为空、长度错误或无法读取时启动失败，不会覆盖或重新生成；写入中断遗留的无效文件需管理员修复。
+管理员将生成的文件原样复制到接收节点信任条目所引用的 `keys/gateway.key`，然后按上述本地配置批准。
+接收专用节点的 `crypto` 可只保留 `algorithm: HMAC_SHA256`；它从信任条目读取文件，不生成本地签发密钥，批准的密钥缺失时拒绝启动。
+`crypto.algorithm` 选择本节点的签发算法，各信任条目的 `algorithm` 独立决定验签算法；同一接收节点可信任不同算法的不同签发者。
+信任文件内容无需因路径迁移改变；条目省略 `algorithm` 时仍沿用 `ED25519`，HMAC 必须显式指定。
+同一签发者的 `key` / `keys` 使用同一算法，优先级和轮换规则与 Ed25519 相同。
+持有某签发者 HMAC 密钥的验票节点也具备生成其有效票据的能力，`BACKEND` 角色不提供密码学上的签发权限隔离。
+
+需要分离签发与验签权限时，使用 **Ed25519**。签发端改为：
 
 ```yaml
 crypto:
-  algorithm: HMAC_SHA256
-  key: keys/shared.key
+  algorithm: ED25519
+  private-key: keys/gateway-private.der
+  public-key: keys/gateway.pub
 ```
 
-首次启动时，若文件不存在，Core 自动创建父目录并生成 32 字节随机二进制密钥；支持 POSIX 权限时新文件设为 `0600`。
-后续启动复用原文件。已有文件为空、长度错误或无法读取时启动失败，不会覆盖或重新生成；写入中断遗留的无效文件需管理员修复。
-将生成的文件原样复制到接收节点，再在接收节点的 `trusted-issuers.yml` 中批准：
-
-```yaml
-gateway:
-  algorithm: HMAC_SHA256
-  key: keys/shared.key
-  allowed-auth-schemes: [MOJANG]
-  allowed-providers: [mojang]
-```
-
-上述接收端路径相对 `trusted-issuers.yml`。接收专用节点的 `crypto` 可只保留 `algorithm: HMAC_SHA256`；
-它从信任条目加载同步的文件，不生成本地签发密钥，信任文件缺失时拒绝启动。
-`crypto.algorithm` 选择本节点的签发算法，各信任条目的 `algorithm` 独立决定验签算法；同一接收节点可信任不同算法的不同签发者。
-信任条目省略 `algorithm` 时沿用 `ED25519`，因此现有 Ed25519 配置继续可用；HMAC 必须显式指定。
-同一签发者的 `key` / `keys` 使用同一算法，优先级和轮换规则与 Ed25519 相同。
-共享该文件的节点均有能力签发对应密钥覆盖的票据，应只在互信节点之间分发。
+管理员提供 PKCS#8 私钥与 X.509 SPKI 公钥（DER 或 PEM），私钥保留在签发端；接收端只部署公钥，
+将本地信任条目显式设为 `algorithm: ED25519`、`key: keys/gateway.pub`，身份权限照常配置。
+公钥本身可以分发，但必须可靠确认所属签发者并由本机批准；Chorus 当前也不自动分发公钥。密钥加载失败不启用无签名模式。
 
 Java API 按实际能力组织，范围固定为 Ed25519 与 HMAC-SHA256：`TicketVerifier` 提供验签，
 `TicketSigner` 继承它并增加签发与验签视图 `verifier()`。Ed25519 使用 `Ed25519.Signer` / `Ed25519.Verifier`，
@@ -253,8 +258,6 @@ SQL 只同步服务器列表；`trusted-issuers.yml`、信任策略与所有密�
 ```yaml
 registry:
   provider: SQL
-  config:
-    issuers-path: trusted-issuers.yml
   sql:
     engine: POSTGRESQL
     host: db.example.net
@@ -277,7 +280,8 @@ registry:
     max-stale: 2m
 ```
 
-`engine` 可选 `POSTGRESQL / MYSQL / MARIADB`，数据库切换不改变配置结构。`SQL` 模式不读取 `servers-path`。
+`engine` 可选 `POSTGRESQL / MYSQL / MARIADB`，数据库切换不改变配置结构。`SQL` 模式无需 `registry.config`，不读取 `servers-path`。
+本地信任仍由 `verification.trusted-issuers-path` 指定，与切换目录来源无关。
 管理员先在选定数据库执行对应的完整初始化脚本，再维护 `chorus_servers`，包括本节点及签发策略允许的所有目标：
 
 | 数据库 | 初始化脚本 |

@@ -16,8 +16,8 @@ import me.pectics.chorus.core.policy.IdentityPolicy;
  * Receiver rules and local trust document path, resolved relative to the main configuration. The
  * path may be null when callers inject an existing trust store directly. Maximum lifetime is
  * positive and skew is nonnegative, both in whole seconds. Invalid values throw
- * IllegalArgumentException, nulls throw NullPointerException, and a lifetime plus skew that cannot
- * be represented in milliseconds throws ArithmeticException.
+ * IllegalArgumentException, null required rules throw NullPointerException, and a lifetime plus
+ * skew that cannot be represented in milliseconds throws ArithmeticException.
  */
 public record VerificationConfiguration(
         Duration maxLifetime,
