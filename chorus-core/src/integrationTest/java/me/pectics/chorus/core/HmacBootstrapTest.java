@@ -157,7 +157,7 @@ class HmacBootstrapTest {
         Path file = deployment("gateway", "PEER");
         trust(file, "../keys/shared.key");
         try (var peer = CoreBootstrap.open(file, clock)) {
-            assertThat(peer.getServerRegistry().find("backend")).isPresent();
+            assertThat(peer.getServerNodeRegistry().find("backend")).isPresent();
         }
         assertThat(file.resolveSibling("keys/shared.key")).exists();
     }

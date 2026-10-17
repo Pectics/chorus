@@ -2,7 +2,7 @@
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.7, 3.8, and 3.9
  * related: chorus-core/src/main/java/me/pectics/chorus/core/config/ConfigurationReader.java;
- *          chorus-core/src/main/java/me/pectics/chorus/core/config/RegistryLoader.java;
+ *          chorus-core/src/main/java/me/pectics/chorus/core/config/ServerNodeRegistryLoader.java;
  *          chorus-core/src/main/java/me/pectics/chorus/core/config/TrustLoader.java
  * sync: Assemble independent sections only after value conversion; load approved keys before opening replay state.
  * @endcontext
@@ -29,7 +29,7 @@ import me.pectics.chorus.core.config.model.VerificationConfiguration;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.TicketSigner;
-import me.pectics.chorus.core.registry.RegistrySnapshot;
+import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 import me.pectics.chorus.core.registry.config.ConfigServerNodeRegistry;
 import me.pectics.chorus.core.registry.sql.JdbcServerNodeStore;
 import me.pectics.chorus.core.registry.sql.SqlServerNodeRegistry;
@@ -91,12 +91,12 @@ public final class CoreBootstrap {
         LocalReplayGuard guard = null;
         try {
             var trust = TrustLoader.read(verification.trustedIssuersPath());
-            RegistrySnapshot snapshot;
+            ServerNodeRegistrySnapshot snapshot;
             var requiredNodes = new HashSet<String>();
             requiredNodes.add(node.id());
             if (node.role().sender()) requiredNodes.addAll(issuance.policy().allowedTargets());
             if (registry.provider() == RegistryConfiguration.Provider.CONFIG) {
-                snapshot = RegistryLoader.read(registry.config().serversPath(), clock);
+                snapshot = ServerNodeRegistryLoader.read(registry.config().serversPath(), clock);
             } else {
                 sql =
                         new SqlServerNodeRegistry(
@@ -168,15 +168,15 @@ public final class CoreBootstrap {
     /**
      * Blocking server list load. Validates servers.yml only; no trust or key files are accessed.
      */
-    public static ConfigServerNodeRegistry loadServerRegistry(Path serversFile, Clock clock)
+    public static ConfigServerNodeRegistry loadServerNodeRegistry(Path serversFile, Clock clock)
             throws IOException {
-        return new ConfigServerNodeRegistry(RegistryLoader.read(serversFile, clock));
+        return new ConfigServerNodeRegistry(ServerNodeRegistryLoader.read(serversFile, clock));
     }
 
     /** Blocking server list reload. Parsing or schema failures leave the old snapshot intact. */
-    public static void reloadServerRegistry(
+    public static void reloadServerNodeRegistry(
             ConfigServerNodeRegistry registry, Path serversFile, Clock clock) throws IOException {
-        registry.replace(RegistryLoader.read(serversFile, clock));
+        registry.replace(ServerNodeRegistryLoader.read(serversFile, clock));
     }
 
     /** Blocking local trust load. Key paths resolve against the trust file; missing keys fail. */

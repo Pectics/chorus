@@ -12,14 +12,14 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.HashMap;
 import me.pectics.chorus.core.config.ConfigurationLoader.Document;
-import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 
 /** Schema-approved local routing snapshots; never loads trust or signing material. */
-final class RegistryLoader {
-    private RegistryLoader() {}
+final class ServerNodeRegistryLoader {
+    private ServerNodeRegistryLoader() {}
 
-    static RegistrySnapshot read(Path serversFile, Clock clock) throws IOException {
+    static ServerNodeRegistrySnapshot read(Path serversFile, Clock clock) throws IOException {
         var serversDocument = ConfigurationLoader.read(serversFile, Document.SERVERS);
         var servers = new HashMap<String, ServerNode>();
         for (var entry : serversDocument.properties()) {
@@ -40,6 +40,6 @@ final class RegistryLoader {
                             host,
                             Integer.parseInt(address.substring(separator + 1))));
         }
-        return new RegistrySnapshot(servers, clock.instant(), false);
+        return new ServerNodeRegistrySnapshot(servers, clock.instant(), false);
     }
 }

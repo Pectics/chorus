@@ -29,8 +29,8 @@ final class ManagedCoreEngine implements ChorusCoreEngine {
     }
 
     @Override
-    public ServerNodeRegistry getServerRegistry() {
-        return delegate.getServerRegistry();
+    public ServerNodeRegistry getServerNodeRegistry() {
+        return delegate.getServerNodeRegistry();
     }
 
     @Override

@@ -39,7 +39,7 @@ import me.pectics.chorus.core.registry.ServerNode;
  * close must run off event loops. Never creates tables or loads issuer keys. Owns its pool and any
  * connection-specific truststore; no JVM-wide TLS properties are changed.
  */
-public final class JdbcServerNodeStore implements SqlServerNodeRegistry.Store {
+public final class JdbcServerNodeStore implements SqlServerNodeRegistry.ServerNodeStore {
     private final HikariDataSource pool;
     private final Engine engine;
     private final int querySeconds;

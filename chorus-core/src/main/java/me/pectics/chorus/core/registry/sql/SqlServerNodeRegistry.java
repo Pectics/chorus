@@ -22,9 +22,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 import me.pectics.chorus.core.config.model.RegistryConfiguration.Cache;
-import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
 import me.pectics.chorus.core.registry.ServerNodeRegistry;
+import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 
 /**
  * SQL routing with bounded, serial background I/O and a hard monotonic cache age. Construction
@@ -34,17 +34,18 @@ import me.pectics.chorus.core.registry.ServerNodeRegistry;
  */
 public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoCloseable {
     /** Blocking database boundary, called only during startup or on the registry worker. */
-    public interface Store extends AutoCloseable {
+    public interface ServerNodeStore extends AutoCloseable {
         Map<String, ServerNode> load() throws SQLException;
 
         @Override
         void close();
     }
 
-    private record State(RegistrySnapshot snapshot, long loadedAt, boolean failed) {}
+    private record ServerNodeRegistryCacheState(
+            ServerNodeRegistrySnapshot snapshot, long loadedAt, boolean failed) {}
 
     private final Object lifecycle = new Object();
-    private final Store store;
+    private final ServerNodeStore store;
     private final Cache cache;
     private final Set<String> requiredNodes;
     private final Clock clock;
@@ -52,19 +53,24 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
     private final ThreadPoolExecutor executor;
     private final ScheduledExecutorService scheduler;
     private final ScheduledFuture<?> periodic;
-    private volatile State state;
+    private volatile ServerNodeRegistryCacheState state;
     private volatile boolean closed;
     private volatile Thread worker;
     private volatile RuntimeException closeFailure;
     private CompletableFuture<Void> pending;
 
-    public SqlServerNodeRegistry(Store store, Cache cache, Set<String> requiredNodes, Clock clock)
+    public SqlServerNodeRegistry(
+            ServerNodeStore store, Cache cache, Set<String> requiredNodes, Clock clock)
             throws SQLException {
         this(store, cache, requiredNodes, clock, System::nanoTime);
     }
 
     SqlServerNodeRegistry(
-            Store store, Cache cache, Set<String> requiredNodes, Clock clock, LongSupplier ticker)
+            ServerNodeStore store,
+            Cache cache,
+            Set<String> requiredNodes,
+            Clock clock,
+            LongSupplier ticker)
             throws SQLException {
         this.store = Objects.requireNonNull(store, "store");
         this.cache = Objects.requireNonNull(cache, "cache");
@@ -127,7 +133,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
     }
 
     @Override
-    public RegistrySnapshot snapshot() {
+    public ServerNodeRegistrySnapshot snapshot() {
         var current = state;
         long age = ticker.getAsLong() - current.loadedAt();
         if (closed || age >= cache.maxStale().toNanos()) {
@@ -135,7 +141,7 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
         }
         var snapshot = current.snapshot();
         if (current.failed() || age >= cache.refreshInterval().toNanos()) {
-            return new RegistrySnapshot(snapshot.servers(), snapshot.refreshedAt(), true);
+            return new ServerNodeRegistrySnapshot(snapshot.servers(), snapshot.refreshedAt(), true);
         }
         return snapshot;
     }
@@ -163,7 +169,9 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
                             }
                         } catch (SQLException | RuntimeException invalid) {
                             var previous = state;
-                            state = new State(previous.snapshot(), previous.loadedAt(), true);
+                            state =
+                                    new ServerNodeRegistryCacheState(
+                                            previous.snapshot(), previous.loadedAt(), true);
                             failure = new IllegalStateException("SQL server list refresh failed");
                         }
                         synchronized (lifecycle) {
@@ -176,14 +184,14 @@ public final class SqlServerNodeRegistry implements ServerNodeRegistry, AutoClos
         }
     }
 
-    private State load() throws SQLException {
+    private ServerNodeRegistryCacheState load() throws SQLException {
         var servers = store.load();
-        var snapshot = new RegistrySnapshot(servers, clock.instant(), false);
+        var snapshot = new ServerNodeRegistrySnapshot(servers, clock.instant(), false);
         if (!snapshot.servers().keySet().containsAll(requiredNodes)) {
             throw new IllegalArgumentException(
                     "Node and issuance targets must exist in the SQL server list");
         }
-        return new State(snapshot, ticker.getAsLong(), false);
+        return new ServerNodeRegistryCacheState(snapshot, ticker.getAsLong(), false);
     }
 
     /**

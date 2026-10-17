@@ -17,7 +17,7 @@ import me.pectics.chorus.core.registry.ServerNodeRegistry;
  * separate exceptions. Never join returned stages on platform I/O threads.
  */
 public interface ChorusCoreEngine extends AutoCloseable {
-    ServerNodeRegistry getServerRegistry();
+    ServerNodeRegistry getServerNodeRegistry();
 
     String getCookieKey();
 

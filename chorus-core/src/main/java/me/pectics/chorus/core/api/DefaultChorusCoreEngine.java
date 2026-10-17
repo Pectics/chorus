@@ -92,7 +92,7 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
     }
 
     @Override
-    public ServerNodeRegistry getServerRegistry() {
+    public ServerNodeRegistry getServerNodeRegistry() {
         return servers;
     }
 

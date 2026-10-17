@@ -192,6 +192,7 @@ Registry 提供两个互斥的**来源模式**：
 ### 3.2 `registry` 与 `trust` API 设计
 
 服务器列表只保存节点 ID、显示名、主机名与端口；分组标签和通用元数据不纳入当前配置及模型。
+`ServerNodeRegistrySnapshot` 明确表示服务器节点列表的快照，不表示整个 Registry 的快照。
 
 ```java
 package me.pectics.chorus.core.registry;
@@ -207,14 +208,14 @@ public record ServerNode(
     int port
 ) {}
 
-public record RegistrySnapshot(
+public record ServerNodeRegistrySnapshot(
     Map<String, ServerNode> servers,
     Instant refreshedAt,
     boolean stale
 ) {}
 
 public interface ServerNodeRegistry {
-    RegistrySnapshot snapshot();         // 热路径读取已验证快照，不做阻塞 SQL
+    ServerNodeRegistrySnapshot snapshot();         // 热路径读取已验证快照，不做阻塞 SQL
     Optional<ServerNode> find(String nodeId);
 }
 ```
@@ -535,7 +536,7 @@ public record VerifyTicketResult(
 ) {}
 
 public interface ChorusCoreEngine extends AutoCloseable {
-    ServerNodeRegistry getServerRegistry();
+    ServerNodeRegistry getServerNodeRegistry();
     String getCookieKey();
     CompletionStage<IssueTicketResult> issueTicket(IssueTicketRequest request);
     CompletionStage<VerifyTicketResult> verifyAndResolve(VerifyTicketRequest request);
@@ -682,14 +683,14 @@ MySQL 的自定义 CA 转换为连接专用临时 PKCS12；MariaDB 未指定 CA 
 `timeouts.connect / query / socket` 分别约束物理连接、单条语句与网络读取，均为 1～2147483647 的整毫秒。
 驱动只支持秒的设置向上取整；这些分段超时不等于一次完整刷新任务的总期限。
 `cache.refresh-interval / max-stale` 使用同一整毫秒范围，后者必须更长；陈旧期限由单调时钟约束，
-`RegistrySnapshot.refreshedAt` 是供展示的墙上时钟时间，刷新失败或系统时间回拨都不延长缓存。
+`ServerNodeRegistrySnapshot.refreshedAt` 是供展示的墙上时钟时间，刷新失败或系统时间回拨都不延长缓存。
 这些参数保持显式配置，示例不是运维默认值。完整 SQL 配置示例见 README。
 
-`SqlServerNodeRegistry` 通过 `Store` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
+`SqlServerNodeRegistry` 通过 `ServerNodeStore` 封装阻塞 SQL I/O，`refresh()` 返回 `CompletionStage`，并发刷新共用当前尝试；
 启动首次读取可阻塞，热路径始终只读内存。关闭会停止定时器、等待已接收的工作并关闭存储；完成回调内关闭不会等待自身。
 `CoreBootstrap.open` 创建的 SQL 连接池与调度器随返回 Engine 关闭，装配失败也释放已创建资源。
 直接构造 `DefaultChorusCoreEngine` 的协作者所有权不变。`CoreBootstrap.open` 不自动重载本地信任，文件变更通过重新装配 Engine 生效。
-直接装配者可用 `loadServerRegistry / reloadServerRegistry` 与 `loadTrustedIssuers / reloadTrustedIssuers` 分别加载和更新所注入的对象，均为阻塞文件 I/O，须在平台事件线程之外调用；旧联合入口移除。
+直接装配者可用 `loadServerNodeRegistry / reloadServerNodeRegistry` 与 `loadTrustedIssuers / reloadTrustedIssuers` 分别加载和更新所注入的对象，均为阻塞文件 I/O，须在平台事件线程之外调用；旧联合入口移除。
 
 Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 `NodeConfiguration`、`TicketConfiguration`、`IssuanceConfiguration`、`VerificationConfiguration`、
@@ -701,7 +702,7 @@ Java 配置按主文件的七个顶级段独立组织在 `config.model`：
 配置模型不可变、无文件或数据库 I/O，不持有加载后的密钥、服务器列表快照或防重放资源。
 
 `ConfigurationLoader` 负责有界 YAML 读取与各文件的 Schema 验证，`ConfigurationReader` 负责主配置各段的类型转换，
-`RegistryLoader` 只读取服务器列表，`TrustLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
+`ServerNodeRegistryLoader` 只读取服务器列表，`TrustLoader` 独立验证本地信任文档并延迟加载批准密钥，`CoreBootstrap` 负责跨组引用检查和资源装配。
 完整装配入口使用七组独立参数；Engine 分别接收 `node / ticket / issuance / verification`，并注入已创建的运行资源。
 `issuance.ttl <= verification.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
 本地防重放设置不另设时钟容差，装配时使用同一份 `verification.clock-skew`。

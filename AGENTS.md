@@ -105,6 +105,8 @@ feat(core): Add the verification pipeline
 
 - 实现收敛到架构已确认的当前阶段；用满足现有契约的最小实现，不主动设计架构范围外的能力。
 - 命名遵循架构 §3.1：`Registry` 指整体，`servers` 数据项称服务器列表或服务器记录；文件系统目录继续使用 `directory`，不得将具体数据项统称为 Registry。
+- 类型名与公开成员名优先完整表达领域对象、作用范围和职责，不因词数或长度省略必要语义；例如服务器节点列表快照使用 `ServerNodeRegistrySnapshot`。
+  当前先保证语义准确，不为缩短名称牺牲职责边界；重命名时同步文件名、调用处、测试、文档、文件头引用及静态分析配置。
 - Java 21，优先 `record` / `sealed interface` / `switch`，禁止 Lombok。
 - 密码学范围固定为 Ed25519 与 HMAC-SHA256；按架构 §3.7 的实际能力组织实现，不为其他算法增加扩展层。
 - 依赖方向为平台 → common → core；Core 不持有 `Player`、`GameProfile`、Netty `Channel` 等平台对象。

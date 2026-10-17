@@ -33,7 +33,7 @@ class SqlServerNodeRegistryTest {
     @Test
     void lookupsUseImmutableMemoryAndExpireByMonotonicAgeEvenWithAFixedWallClock()
             throws Exception {
-        var store = new FakeStore();
+        var store = new FakeServerNodeStore();
         try (var registry = registry(store)) {
             var original = registry.snapshot();
             for (int i = 0; i < 20; i++) assertThat(registry.find("backend")).isPresent();
@@ -53,7 +53,7 @@ class SqlServerNodeRegistryTest {
 
     @Test
     void failedAndInvalidRefreshesNeverExtendTheOldSnapshotAndSuccessRecoversIt() throws Exception {
-        var store = new FakeStore();
+        var store = new FakeServerNodeStore();
         try (var registry = registry(store)) {
             var original = registry.snapshot();
             ticker.set(Duration.ofSeconds(30).toNanos());
@@ -91,7 +91,7 @@ class SqlServerNodeRegistryTest {
     @Test
     void concurrentRefreshesShareOneAttemptAndCloseDrainsItWithoutBlockingItsCallback()
             throws Exception {
-        var store = new FakeStore();
+        var store = new FakeServerNodeStore();
         var registry = registry(store);
         try {
             store.entered = new CountDownLatch(1);
@@ -118,7 +118,7 @@ class SqlServerNodeRegistryTest {
 
     @Test
     void periodicRefreshUsesTheWorkerAndStopsAfterClose() throws Exception {
-        var store = new FakeStore();
+        var store = new FakeServerNodeStore();
         var refreshed = new CompletableFuture<String>();
         store.onRefresh = refreshed;
         var settings = new Cache(Duration.ofMillis(20), Duration.ofSeconds(1));
@@ -131,21 +131,22 @@ class SqlServerNodeRegistryTest {
 
     @Test
     void initializationFailureClosesTheStoreAndNeverPublishesAnEmptyFallback() {
-        var store = new FakeStore();
+        var store = new FakeServerNodeStore();
         store.fail = true;
         assertThatThrownBy(() -> registry(store)).isInstanceOf(SQLException.class);
         assertThat(store.closed.get()).isEqualTo(1);
-        var missing = new FakeStore();
+        var missing = new FakeServerNodeStore();
         missing.nodes = Map.of();
         assertThatThrownBy(() -> registry(missing)).isInstanceOf(IllegalArgumentException.class);
         assertThat(missing.closed.get()).isEqualTo(1);
     }
 
-    private SqlServerNodeRegistry registry(FakeStore store) throws SQLException {
+    private SqlServerNodeRegistry registry(FakeServerNodeStore store) throws SQLException {
         return new SqlServerNodeRegistry(store, cache, Set.of("backend"), clock, ticker::get);
     }
 
-    private static final class FakeStore implements SqlServerNodeRegistry.Store {
+    private static final class FakeServerNodeStore
+            implements SqlServerNodeRegistry.ServerNodeStore {
         final AtomicInteger loads = new AtomicInteger();
         final AtomicInteger closed = new AtomicInteger();
         volatile Map<String, ServerNode> nodes =

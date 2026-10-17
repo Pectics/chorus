@@ -231,14 +231,14 @@ class CoreBootstrapTest {
     void serverListReloadDoesNotReadTrustAndDoesNotAgeOutConfigApproval() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
-        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var registry = CoreBootstrap.loadServerNodeRegistry(servers, clock);
         var issuers = CoreBootstrap.loadTrustedIssuers(trust);
         var previous = registry.snapshot();
         var approval = issuers.findByIssuer("gateway").orElseThrow();
         Files.writeString(servers, Files.readString(servers).replace("25565", "25566"));
         Files.writeString(trust, "gateway: {keys: []}");
         Files.delete(directory.resolve("public.der"));
-        CoreBootstrap.reloadServerRegistry(
+        CoreBootstrap.reloadServerNodeRegistry(
                 registry, servers, Clock.offset(clock, java.time.Duration.ofDays(30)));
         assertThat(registry.find("backend").orElseThrow().port()).isEqualTo(25566);
         assertThat(previous.servers().get("backend").port()).isEqualTo(25565);
@@ -249,7 +249,7 @@ class CoreBootstrapTest {
         assertThat(issuers.findByIssuer("gateway")).containsSame(approval);
         var approved = registry.snapshot();
         Files.writeString(servers, "backend: {address: localhost:70000}");
-        assertThatThrownBy(() -> CoreBootstrap.reloadServerRegistry(registry, servers, clock))
+        assertThatThrownBy(() -> CoreBootstrap.reloadServerNodeRegistry(registry, servers, clock))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(registry.snapshot()).isSameAs(approved);
     }
@@ -294,7 +294,7 @@ class CoreBootstrapTest {
         var request =
                 new VerifyTicketRequest(payload, new ReceiverLoginContext("Notch", true, null));
         try (var receiver = CoreBootstrap.open(receiverFile, clock)) {
-            assertThat(receiver.getServerRegistry().find("gateway")).isPresent();
+            assertThat(receiver.getServerNodeRegistry().find("gateway")).isPresent();
             assertThatThrownBy(
                             () -> receiver.verifyAndResolve(request).toCompletableFuture().join())
                     .hasRootCauseMessage("UNKNOWN_ISSUER");
@@ -395,7 +395,7 @@ class CoreBootstrapTest {
                         .replace(
                                 "address: backend.example.net:25565",
                                 "address: \"[2001:db8::1]:25566\""));
-        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var registry = CoreBootstrap.loadServerNodeRegistry(servers, clock);
         var backend = registry.find("backend").orElseThrow();
         assertThat(backend.host()).isEqualTo("2001:db8::1");
         assertThat(backend.port()).isEqualTo(25566);
@@ -474,7 +474,7 @@ class CoreBootstrapTest {
     void trustSchemaFailureRetainsApprovalsWithoutBlockingServerListReload() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");
-        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var registry = CoreBootstrap.loadServerNodeRegistry(servers, clock);
         var issuers = CoreBootstrap.loadTrustedIssuers(trust);
         var previous = registry.snapshot();
         var approval = issuers.findByIssuer("gateway");
@@ -486,7 +486,7 @@ class CoreBootstrapTest {
                 .hasMessageContaining("allowed-providers (uniqueItems)");
         assertThat(registry.snapshot()).isSameAs(previous);
         assertThat(issuers.findByIssuer("gateway")).isEqualTo(approval);
-        CoreBootstrap.reloadServerRegistry(registry, servers, clock);
+        CoreBootstrap.reloadServerNodeRegistry(registry, servers, clock);
         assertThat(registry.find("backend").orElseThrow().port()).isEqualTo(25566);
         assertThat(issuers.findByIssuer("gateway")).isEqualTo(approval);
     }
@@ -494,7 +494,7 @@ class CoreBootstrapTest {
     @Test
     void rejectsYamlDuplicatesCustomTagsAndAliasesWithoutPublishing() throws Exception {
         Path servers = directory.resolve("servers.yml");
-        var registry = CoreBootstrap.loadServerRegistry(servers, clock);
+        var registry = CoreBootstrap.loadServerNodeRegistry(servers, clock);
         var approved = registry.snapshot();
         for (String invalid :
                 java.util.List.of(
@@ -503,7 +503,8 @@ class CoreBootstrapTest {
                         "gateway: &node {address: localhost:25565}\nbackend: *node\n",
                         "gateway: {address: localhost:70000}\n")) {
             Files.writeString(servers, invalid);
-            assertThatThrownBy(() -> CoreBootstrap.reloadServerRegistry(registry, servers, clock))
+            assertThatThrownBy(
+                            () -> CoreBootstrap.reloadServerNodeRegistry(registry, servers, clock))
                     .isInstanceOf(IllegalArgumentException.class);
             assertThat(registry.snapshot()).isSameAs(approved);
         }

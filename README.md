@@ -88,6 +88,7 @@ Java 配置值类型位于 `me.pectics.chorus.core.config.model`，按主配置�
 配置模型不执行 I/O；密钥、Registry 与防重放配置由启动装配层消费。
 
 Registry 当前提供 `servers` 服务器列表，后续可扩展其他数据项；本地批准记录位于独立的 `me.pectics.chorus.core.trust` 包。
+`ChorusCoreEngine.getServerNodeRegistry()` 返回服务器节点列表接口，`snapshot()` 返回不可变的 `ServerNodeRegistrySnapshot`。
 服务器出现在服务器列表中不会自动获得签发者信任，服务器列表刷新也不修改本地批准。Chorus 不自动分发信任策略、公钥、私钥或 HMAC 密钥。
 
 三个配置文件各有一个完整、独立的 Schema，格式契约位于 `schema/v1/`，每个文档带有自己的版本化 `$id`：
@@ -185,7 +186,7 @@ issuance:
 `LOCAL` 使用 SQLite，参数位于 `replay-guard.local`；`redis` 目前只保留空对象位置，详细配置随实现定义，见架构 §3.9 的实现状态契约。
 
 主配置内的路径相对 `chorus.yml`；服务器列表文件为 `registry.config.servers-path`，信任文件为 `verification.trusted-issuers-path`，批准的密钥路径相对信任文件。
-`CoreBootstrap.loadServerRegistry` / `reloadServerRegistry` 加载和替换 `registry.config.ConfigServerNodeRegistry` 的服务器列表快照；
+`CoreBootstrap.loadServerNodeRegistry` / `reloadServerNodeRegistry` 加载和替换 `registry.config.ConfigServerNodeRegistry` 的服务器列表快照；
 `loadTrustedIssuers` / `reloadTrustedIssuers` 独立加载和替换 `trust.config.ConfigTrustedIssuerStore` 的本地批准记录。
 重载各自完整校验后原子替换，失败保留该对象原快照；这些文件 I/O 入口须在平台事件线程之外调用，不自动监视文件。
 直接装配 Engine 时可重载所注入的对象；`CoreBootstrap.open` 创建的本地信任变更通过重新打开 Engine 生效。

@@ -17,8 +17,8 @@ import me.pectics.chorus.core.model.ProfileProperty;
 import me.pectics.chorus.core.model.TicketClaims;
 import me.pectics.chorus.core.policy.IssuancePolicy;
 import me.pectics.chorus.core.policy.IssuerTrustPolicy;
-import me.pectics.chorus.core.registry.RegistrySnapshot;
 import me.pectics.chorus.core.registry.ServerNode;
+import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 import me.pectics.chorus.core.registry.config.ConfigServerNodeRegistry;
 import me.pectics.chorus.core.trust.TrustedIssuer;
 import me.pectics.chorus.core.trust.config.ConfigTrustedIssuerStore;
@@ -80,7 +80,7 @@ public final class TestSupport {
 
     public static ConfigServerNodeRegistry servers() {
         return new ConfigServerNodeRegistry(
-                new RegistrySnapshot(
+                new ServerNodeRegistrySnapshot(
                         Map.of(
                                 "gateway",
                                 node("gateway"),

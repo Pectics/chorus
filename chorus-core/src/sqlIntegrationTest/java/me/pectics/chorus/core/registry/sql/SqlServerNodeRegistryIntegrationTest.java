@@ -207,15 +207,15 @@ class SqlServerNodeRegistryIntegrationTest {
                 Files.writeString(
                         directory.resolve("trusted-issuers.yml"),
                         "invalid: [local-trust-is-not-reloaded]");
-                refresh((SqlServerNodeRegistry) sender.getServerRegistry());
-                refresh((SqlServerNodeRegistry) receiver.getServerRegistry());
+                refresh((SqlServerNodeRegistry) sender.getServerNodeRegistry());
+                refresh((SqlServerNodeRegistry) receiver.getServerNodeRegistry());
 
                 if (algorithm.equals("HMAC_SHA256")) {
                     execute(admin, "DROP TABLE chorus_servers");
                     long deadline = System.nanoTime() + Duration.ofSeconds(8).toNanos();
                     while (true) {
                         try {
-                            sender.getServerRegistry().snapshot();
+                            sender.getServerNodeRegistry().snapshot();
                         } catch (IllegalStateException expired) {
                             break;
                         }
