@@ -66,7 +66,10 @@ class ConfigurationSchemaTest {
         try (var input =
                 ConfigurationSchemaTest.class.getResourceAsStream(document.schemaResource())) {
             assertThat(input).isNotNull();
-            var schema = JSON.readTree(input);
+            byte[] resource = input.readAllBytes();
+            var schema = JSON.readTree(resource);
+            assertThat(new String(resource, java.nio.charset.StandardCharsets.UTF_8))
+                    .doesNotContain("$comment");
             var meta =
                     REGISTRY.getSchema(
                             SchemaLocation.of("https://json-schema.org/draft/2020-12/schema"));
@@ -156,6 +159,22 @@ class ConfigurationSchemaTest {
         issuer.put("algorithm", "HS512");
         assertThat(contract(ConfigurationDocumentType.TRUSTED_ISSUERS).validate(trust))
                 .isNotEmpty();
+    }
+
+    @Test
+    void everyDocumentRejectsNonObjectRootsAndTheMainFileRejectsAnEmptyMapping() {
+        for (var document : ConfigurationDocumentType.values()) {
+            assertThat(contract(document).validate(JSON.readTree("[]"))).isNotEmpty();
+            assertThat(contract(document).validate(JSON.readTree("null"))).isNotEmpty();
+        }
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(JSON.readTree("{}")))
+                .isNotEmpty();
+        assertThat(contract(ConfigurationDocumentType.SERVERS).validate(JSON.readTree("{}")))
+                .isEmpty();
+        assertThat(
+                        contract(ConfigurationDocumentType.TRUSTED_ISSUERS)
+                                .validate(JSON.readTree("{}")))
+                .isEmpty();
     }
 
     @Test
