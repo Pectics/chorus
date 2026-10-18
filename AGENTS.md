@@ -33,6 +33,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 ./gradlew :chorus-core:test      # Core 快速单测
 ./gradlew :chorus-core:integrationTest # 本地 SQLite 与完整配置集成验证
 ./gradlew :chorus-core:sqlIntegrationTest # 独立三库与 TLS 验证；需本地 Docker
+./gradlew :chorus-core:redisIntegrationTest # 独立 Redis ACL/TLS 验证；需本地 Docker
 ./gradlew :chorus-common:test    # common 测试（有测试后执行）
 ./gradlew spotlessApply         # 应用格式化
 ./gradlew spotlessCheck         # 只检查格式
@@ -45,7 +46,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 
 - Java 21 Toolchain；使用仓库内的 Wrapper，不依赖特定 IDE。
 - 普通单测、本地 SQLite 集成测试与 `check` / `build` 不依赖外部数据库服务；SQLite 使用临时文件。
-  独立 `sqlIntegrationTest` 使用本地 Docker，不纳入普通 `check` / `build`；首次需要拉取数据库与 Testcontainers 镜像，固定镜像版本也从 Version Catalog 读取。
+  独立 `sqlIntegrationTest` 与 `redisIntegrationTest` 使用本地 Docker，不纳入普通 `check` / `build`；首次需要拉取数据库、Redis 与 Testcontainers 镜像，固定镜像版本也从 Version Catalog 读取。
   首次准备 Wrapper、Toolchain 和依赖可能需要下载，缓存齐备后可加 `--offline`。
 - 优先运行改动模块的相关测试；修改共享构建配置时运行 `build` 并核对 `projects`。
   SQL、网络故障与数据库方言验证放独立集成测试任务。脚手架测试通过不等于业务功能通过。
@@ -54,12 +55,12 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
   本地检查点允许先提交再验证，具体流程见 §3.1。
   格式化仅覆盖当前启用模块与显式列出的手写构建/配置文件，不扫描被忽略的平台、生成文件或 Markdown 文档。
 - SpotBugs 分析当前启用模块的生产代码与测试代码，使用最大分析深度和中/高置信度告警；发现告警时使 `check` / `build` 失败。
-  `spotbugs` 仅编译并分析各 source set，包含 SQL 集成测试源码但不启动数据库或执行测试；HTML / XML 报告位于各模块 `build/reports/spotbugs/`。
+  `spotbugs` 仅编译并分析各 source set，包含 SQL / Redis 集成测试源码但不启动外部服务或执行测试；HTML / XML 报告位于各模块 `build/reports/spotbugs/`。
   先修复实际问题；确认为误报或有意契约时，在 `gradle/spotbugs-exclude.xml` 中仅对具体告警和成员排除并写明理由，不用全量 baseline 或忽略失败绕过检查。
 - 编译器 / IDE 告警（含 `@SuppressWarnings`）也须先排查真实问题；仅对确认的误报或有意契约作最小范围抑制，并在附近用英语说明理由。
   测试资源须在断言失败时仍能释放，优先使用 `try-with-resources` / `finally`；所有权转移和崩溃探针等故意不关闭的场景须明确记录，不能用整类抑制掩盖泄漏。
 - `:chorus-core:pitest` 运行 PIT 变异测试，覆盖单元与本地集成测试，输出 `build/reports/pitest/` 并按 90% 变异/行覆盖率阈值失败。
-  该任务按需执行，不纳入 `check` / `build`；`JdbcServerNodeStore` 因每个变异体都需真实数据库而排除，其行为由 `sqlIntegrationTest` 验证。
+  该任务按需执行，不纳入 `check` / `build`；JDBC / Jedis 存储与 SQL 初始化器因每个变异体都需真实服务而排除，其行为由 `sqlIntegrationTest` / `redisIntegrationTest` 验证。
   新增或修改测试后应复核存活变异体；无覆盖、等价或仅能由外部服务验证的变异体须在结论中说明，不能通过放宽阈值掩盖。
 - 依赖、平台与插件版本从 `gradle/libs.versions.toml` 读取，模块脚本不硬编码版本；
   foojay-resolver 例外写在 `settings.gradle.kts`，因为其 `plugins {}` 无法读取 catalog。

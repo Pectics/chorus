@@ -96,10 +96,10 @@ chorus/
 │       │   ├── config/                 # 本地批准文件与信任策略的加载实现
 │       │   └── file/                   # 配置文件来源的可信签发者存储
 │       └── replay/                     # ReplayGuard 与防重放配置
-│           ├── config/                 # 防重放配置加载与已实现选项检查
-│           ├── local/                  # 本地持久化消费记录；当前使用 SQLite
-│           ├── registry/               # 复用 Registry 数据库的核销后端；尚未实现
-│           └── redis/                  # 仅预留未来扩展，不进入 MVP
+│           ├── config/                 # 防重放配置加载
+│           ├── local/                  # 本地 SQLite 消费记录
+│           ├── registry/               # 复用 Registry 数据库的共享核销后端
+│           └── redis/                  # 单节点 Redis 共享核销后端
 │
 ├── chorus-common/                       # 平台无关的 Minecraft 生命周期支撑
 │   └── src/main/java/me/pectics/chorus/common/
@@ -275,22 +275,23 @@ public interface TrustedIssuerStore {
 
 SQL 服务器节点注册表实现命名为 `SqlServerNodeRegistry`，JDBC 读取实现命名为 `JdbcServerNodeStore`，与服务器节点对象 `ServerNode` 保持一致。
 
-本轮数据库仅保存服务器节点记录，不同步任何签发者批准、信任策略、公钥、私钥或 HMAC 密钥。
-`chorus_registry_schema(singleton, version)` 保存结构版本；`chorus_servers(node_id, display_name, host, port)`
-对应 `ServerNode`，节点 ID 保持大小写敏感。表结构版本为 `1`，三种数据库各有完整初始化脚本，位于
-`chorus-core/src/main/resources/me/pectics/chorus/core/registry/sql/v1/`。
+本轮数据库保存服务器节点记录与共享防重放登记；不同步任何签发者批准、信任策略、公钥、私钥或 HMAC 密钥。
+`chorus_schema(singleton, version)` 保存统一结构版本；`chorus_servers(node_id, display_name, host, port)` 对应 `ServerNode`；
+`chorus_replay_registrations(issuer_node_id, jti, target_node_id, retain_until_ms)` 以 `(issuer_node_id, jti)` 为主键。
+节点 ID 保持大小写敏感，表结构版本为 `1`。
 
-管理员先执行对应脚本再维护服务器节点注册表；节点运行时不自动建表或迁移，不注册自身、不修改服务器节点注册表。
+启动时使用配置的读写账号自动、幂等地创建上述表并校验版本；不再提供管理员手工初始化脚本。
+账号必须具备建表与读写权限。注册表读取使用 `readOnly=true` 连接池，防重放写入使用独立读写池；两者共用同一端点与凭据。
 SQL 使用固定表名，PostgreSQL 本轮固定使用 `public`；TODO（§7.2）：自定义 `sql.schema` 尚未引入。
-TODO（§7.2）：未来管理或核销写操作所需的账号隔离及凭据配置可能调整，当前连接字段不承诺为最终权限模型。
 
 SQL 读取在后台工作线程完成，完整服务器节点注册表快照通过模型与本节点/签发目标引用检查后才原子发布。
 数据库结构版本错误、服务器节点记录无效、必需目标丢失或读取失败均保留旧快照，不刷新其成功时间。
 启动没有可用首个服务器节点注册表快照时拒绝初始化；后续缓存到期只影响依赖服务器节点注册表的操作，本地信任验票不因服务器节点注册表不可用而被禁止。
 数据库错误不回退 `servers.yml`，以免在故障时悄悄更换权威来源。
 
-心跳、共享信任表和 SQL 票据核销均不在本轮创建或实现。`REGISTRY` 防重放仍为 TODO 并由启动装配拒绝；
-未来实现核销时需独立定义原子消费及提交结果未知的语义，不把服务器节点注册表兼容性视为核销兼容性。
+`REGISTRY` 防重放复用同一数据库：Sender 在签发前插入登记行，Receiver 在同一事务中清理过期行并按 `(issuer, jti)` 删除登记行；
+影响行数为 1 表示消费成功，0 表示未登记或已消费。数据库不可用或提交结果未知时拒绝，不得退回其他后端。
+心跳与共享信任表不在本轮实现。
 
 ### 3.4 `identity` 与 `ticket`：玩家身份与 Ticket
 
@@ -462,16 +463,25 @@ public interface IdentityResolutionPolicy {
 package me.pectics.chorus.core.replay;
 
 import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 public enum ReplayDecision {
     ACCEPTED,
     REPLAYED,
-    UNAVAILABLE,
-    CAPACITY_EXCEEDED
+    UNAVAILABLE
 }
 
 public interface ReplayGuard {
+    default CompletionStage<Void> register(
+        String issuerNodeId,
+        String jti,
+        String targetNodeId,
+        Instant expiresAt
+    ) {
+        return CompletableFuture.completedFuture(null);
+    }
+
     CompletionStage<ReplayDecision> consume(
         String issuerNodeId,
         String jti,
@@ -481,16 +491,16 @@ public interface ReplayGuard {
 }
 ```
 
-**本地后端 `LOCAL`（SQLite）**：`aud` 指向一个接收节点及其持久数据库。Receiver 完成其他校验后，以唯一约束原子插入已消费记录；Sender 无须预登记。采用 WAL 与 `synchronous=FULL`，确认事务持久化提交后才成功完成 `CompletionStage`，无需逐票等待 checkpoint。记录至少保留到 `exp + clockSkew`，容量不足不能驱逐仍可能有效的记录。数据库 I/O 在专用执行器上执行。本地状态绑定节点 ID 与清理使用的时钟容差，发现不匹配则拒绝启用。正常进程重启复用原数据库，不需要启动隔离窗口；数据库及 WAL 必须保存在持久本地存储，删除、回滚旧备份或换空路径不属于普通重启保证。已有数据库损坏、提交失败或结果未知时拒绝，不自动重建或降级内存。
+**本地后端 `LOCAL`（SQLite）**：`aud` 指向一个接收节点及其持久数据库。Receiver 完成其他校验后，以唯一约束原子插入已消费记录；Sender 不预登记。采用 WAL 与 `synchronous=FULL`，确认事务持久化提交后才成功完成 `CompletionStage`，无需逐票等待 checkpoint。记录至少保留到 `exp + 30 秒`，不设容量上限。数据库 I/O 在专用执行器上执行。本地状态绑定节点 ID，发现不匹配则拒绝启用。正常进程重启复用原数据库，不需要启动隔离窗口；数据库及 WAL 必须保存在持久本地存储，删除、回滚旧备份或换空路径不属于普通重启保证。已有数据库损坏、提交失败或结果未知时拒绝，不自动重建或降级内存。
 
 `LocalReplayGuard` 负责公开输入校验、有界串行调度与关闭协调，包内 `SqliteReplayStore` 负责连接、初始化、完整核销事务及数据库故障状态。
 启动、消费和关闭保证不并发访问同一连接；连接在已接收任务全部结束后关闭。消费完成回调可能在工作线程执行，回调内关闭只发起停止并返回，避免等待自身；从外部调用 Guard 的关闭方法可等待实际终止并获取关闭错误。
 
-**`REGISTRY` 后端（TODO，未实现，最终默认未定）**：该后端复用 `registry` 配置的数据库，不能用于 `CONFIG` 来源；预登记方案中 Sender 在发包前先登记高熵 `jti`，Receiver 进行数据库原子条件消费。SQLite/libSQL 或 PostgreSQL 可使用经验证的 `DELETE ... RETURNING` 方案；MySQL 实现须采用符合自身方言的原子事务/受影响行数方案。数据库不可用时应拒绝，**不得自动退回另一核销后端**。
+**共享后端 `REGISTRY` / `REDIS`（已实现）**：Sender 在签发前登记 `(issuer, jti, target, exp + 30s)`；Receiver 在验签、目标、时间与策略检查后原子消费。`REGISTRY` 复用 `registry` 数据库，不能用于 `CONFIG` 来源；`REDIS` 使用 `replay-guard.redis` 的单节点连接。SQL 以 `DELETE ... WHERE issuer = ? AND jti = ? AND retain_until_ms > now` 的影响行数判定；Redis 以 `SET NX PX` 登记、`DEL` 消费。数据库或 Redis 不可用、超时或提交结果未知时拒绝，**不得自动退回其他核销后端**，也不重试。
+`RegistryReplayGuard` / `RedisReplayGuard` 负责输入校验、有界调度与关闭协调，包内 JDBC / Jedis 存储负责连接与原子操作。预登记失败使签发失败，不返回未登记票据。
 
-**待确认选型**：共享 SQL 对服务器节点注册表是否有用，与 Ticket 是否应注册/核销于 SQL 是两个独立决策。MVP 可以先实现本地 SQLite ReplayGuard 以测试核心协议；这不代表最终产品默认一定选本地核销。
-
-Phase 1 的运维参数保持显式配置（§7.2）；不提供运行中修改时钟容差的热更新。
+共享 SQL 与本地 SQLite 均已实现；最终默认后端仍属于 §7.2 的未决运维选型，不由配置契约推定。
+时钟容差固定为 30 秒，不提供运行中修改。
 
 **Bearer 边界**：签名和 JTI 一次性消费阻止篡改及重复使用，但不会证明“首次提交的人”一定是原玩家。JWE 也不能防止密文 Ticket 被原样复制。Chorus 不要求原版客户端提供不存在的自定义私钥持有者证明；可选传输保护属于未来平台增强。
 
@@ -598,7 +608,7 @@ public interface ChorusCoreEngine extends AutoCloseable {
 
 #### 统一错误码（建议）
 
-`COOKIE_MISSING`、`MALFORMED_TICKET`、`UNSUPPORTED_VERSION`、`UNSUPPORTED_ALGORITHM`、`UNKNOWN_ISSUER`、`UNTRUSTED_KEY`、`INVALID_SIGNATURE`、`EXPIRED`、`NOT_YET_VALID`、`INVALID_LIFETIME`、`TARGET_MISMATCH`、`TRANSFER_REQUIRED`、`USERNAME_MISMATCH`、`ISSUER_POLICY_DENIED`、`EXTERNAL_IDENTITY_MISMATCH`、`PROFILE_RESOLUTION_FAILED`、`REPLAYED`、`REPLAY_UNAVAILABLE`、`TICKET_TOO_LARGE`、`UNKNOWN_TARGET`、`REGISTRY_UNAVAILABLE`。
+`COOKIE_MISSING`、`MALFORMED_TICKET`、`UNSUPPORTED_VERSION`、`UNSUPPORTED_ALGORITHM`、`UNKNOWN_ISSUER`、`UNTRUSTED_KEY`、`INVALID_SIGNATURE`、`EXPIRED`、`NOT_YET_VALID`、`INVALID_LIFETIME`、`TARGET_MISMATCH`、`TRANSFER_REQUIRED`、`USERNAME_MISMATCH`、`ISSUER_POLICY_DENIED`、`EXTERNAL_IDENTITY_MISMATCH`、`PROFILE_RESOLUTION_FAILED`、`REPLAYED`、`REPLAY_UNAVAILABLE`、`REPLAY_REGISTRATION_FAILED`、`TICKET_TOO_LARGE`、`UNKNOWN_TARGET`、`REGISTRY_UNAVAILABLE`。
 
 预期验证失败使用可区分的业务拒绝结果/异常；密钥损坏、数据库初始化失败等基础设施错误另作报告。日志不得记录完整 Cookie、私钥、共享密钥或数据库凭据。
 
@@ -616,6 +626,7 @@ ticket:
   cookie-key: chorus:ticket
   max-payload-bytes: 4096
   max-property-bytes: 2048
+  max-lifetime: 15s
   compression: ZSTD
 
 crypto:
@@ -635,8 +646,6 @@ issuance:
 
 verification:
   trusted-issuers-path: trusted-issuers.yml
-  max-lifetime: 15s
-  clock-skew: 2s
   enforce-transfer-intent: true
   identity-policy: ADOPT_UPSTREAM
   ip-binding: DISABLED
@@ -645,7 +654,6 @@ replay-guard:
   backend: LOCAL
   local:
     path: state/replay.db
-    max-entries: 10000
     busy-timeout: 1s
 ```
 
@@ -691,16 +699,16 @@ operator-b/peer-01:
 | `ticket.compression: ZSTD / GZIP` | 压缩完整签名 Ticket；省略配置时默认 `ZSTD` | 已实现；版本化帧与有界解压，接收端兼容所有三种编码 |
 | `registry.provider: SQL` | JDBC 读取服务器节点记录并发布注册表快照 | 已实现 PostgreSQL / MySQL / MariaDB；初始化脚本与独立集成测试见 §3.3、§6 |
 | `verification.trusted-issuers-path` | 独立的本地签发者批准文件，两种 Registry 来源均使用 | 已实现；密钥路径相对该文件，信任与密钥不自动分发 |
-| `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / max-entries / busy-timeout` | 已实现 |
-| `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | TODO：SQL 核销尚未实现；启动拒绝 |
-| `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | TODO：连接配置与后端尚未实现；Schema 只保留空对象位置，启动拒绝 |
+| `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / busy-timeout` | 已实现；仅接收端，Sender 不登记 |
+| `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | 已实现；签发前登记、接收端原子删除 |
+| `replay-guard.backend: REDIS` | 使用独立的 `redis` 配置 | 已实现；单节点 `SET NX PX` / `DEL` |
 | `allowed-auth-schemes: YGGDRASIL / FLOODGATE` | 预留的身份来源名称 | TODO：身份流程尚未实现；即使策略允许，Engine 仍拒绝对应身份的签发与接收 |
 
-这些枚举值描述配置契约，不代表对应运行能力均已交付。实现分支与 Schema 中保留可检索的 TODO；未实现选项在服务器节点注册表读取与状态库打开前明确拒绝，`REGISTRY + CONFIG` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
+这些枚举值描述配置契约；三种防重放后端均已交付。未实现的认证来源仍在 Engine 中拒绝，`REGISTRY + CONFIG` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
 `ticket.compression` 可省略，默认 `ZSTD`；Schema 的 `default` 为契约说明，启动装配与无压缩参数的 Java 构造器落实相同默认值。
 旧版接收端仅支持 `NONE`；滚动升级时先升级接收端，发送端在接收端升级前显式保留 `NONE`。
 `ticket.max-payload-bytes` 限制包含 JWS 编码、签名及压缩帧的最终 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
-`issuance.ttl` 仅发送角色需要；`verification.max-lifetime` 与 `clock-skew` 约束接收票据。身份解析通过 `identity` 包的 `BuiltinIdentityResolutionPolicy` / `IdentityResolutionPolicy` 表达。
+`issuance.ttl` 仅发送角色需要；`ticket.max-lifetime` 同时约束签发与接收的票据寿命；接收方验证规则位于 `verification`。时钟容差固定为 30 秒，不再配置。身份解析通过 `identity` 包的 `BuiltinIdentityResolutionPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时服务器节点注册表使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空服务器节点注册表或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
@@ -754,8 +762,8 @@ Registry 的 `config / sql / cache` 与防重放的 `local` 参数是各自所�
 本地签发材料装配完成后才加载其批准密钥；`trust.config.IssuerTrustPolicyConfigurationLoader` 统一转换签发权限与可信签发者共用的身份权限。
 `ChorusCoreBootstrap` 组合独立加载器，负责跨组引用检查、密钥装配与持久资源打开顺序。
 完整装配入口使用七组独立参数；Engine 分别接收 `node / ticket / issuance / verification`，并注入已创建的运行资源。
-`issuance.ttl <= verification.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
-本地防重放设置不另设时钟容差，装配时使用同一份 `verification.clock-skew`。
+`issuance.ttl <= ticket.max-lifetime` 等跨组约束由消费这些组的入口检查，直接用 Java 创建 Engine 也不得绕过。
+时钟容差固定为 30 秒，所有防重放后端与验票路径共用。
 所有当前角色会消费的配置值先完成转换和数值校验，再加载密钥或打开状态库；已出现但不启用的配置段仍接受完整 Schema 验证。
 
 每种配置文件使用**独立、完整、可单独验证的 JSON Schema** 作为格式契约。当前契约版本为 `v1`，采用 JSON Schema Draft 2020-12：
@@ -794,7 +802,7 @@ Sender                             原版客户端                         Recei
   |                                     |                                |
   |-- [平台完成可信认证/持有可信会话]     |                                |
   |-- Core 查询已批准目标/签发 JWT      |                                |
-  |-- [若选择 SQL 核销则预先登记 jti]    |                                |
+  |-- [REGISTRY/REDIS: 签发前登记 jti]    |                                |
   |-- StoreCookie(chorus:ticket, jwt) ->|                                |
   |-- Transfer(host,port) ------------>|                                |
   |                                     |---- Transfer Handshake ------->|
@@ -879,16 +887,22 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 1. Gateway 正版身份 → 离线 Backend 仍使用 Mojang UUID。
 2. 正版 → 旧离线 UUID 映射；离线 → 离线；双正版独立验证上下文比较。
 3. 外域不可信签发者、错误 provider/target、密钥替换、过期/未来票据拒绝。
-4. 同一 JTI 并发消费只有一次成功，容量满时 fail-closed，提交完成前不返回成功，重开后继续拒绝重放。
+4. 同一 JTI 并发消费只有一次成功，提交完成前不返回成功，重开后继续拒绝重放。
 5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准密钥签名、HS256 与 Ed25519 算法混淆拒绝。
 6. 静态服务器节点注册表变更、无外部数据库服务运行；共享服务器节点注册表故障缓存过期验证在 Phase 2 完成。
 
 ### Phase 2：SQL 服务器节点注册表实现（已实现）
 
 通过 PostgreSQL、MySQL、MariaDB 实现 `ServerNodeRegistry` 的后台快照同步与故障缓存。
-`trust.TrustedIssuerStore` 与全部密钥保持本地文件加载；本轮不增加信任同步、心跳或 SQL 核销。
-管理写入的权限/凭据配置与 PostgreSQL 自定义 schema 保留 TODO；真实数据库与 TLS 验证使用独立 `sqlIntegrationTest` 任务，不纳入普通 `check/build`。
-已验证 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13：三库初始化、完整刷新、无效数据与版本拒绝、锁等待查询超时、缓存过期/恢复、TLS 证书/主机名校验，以及本地 Ed25519/HMAC 与 SQLite 防重放闭环。此列表是已测矩阵，不据此承诺所有历史版本或 SQL 核销兼容性。
+`trust.TrustedIssuerStore` 与全部密钥保持本地文件加载；本轮不增加信任同步与心跳；共享防重放见 Phase 2.5。
+数据库账号统一为可建表与读写的运行账号；PostgreSQL 自定义 schema 保留 TODO。真实数据库与 TLS 验证使用独立 `sqlIntegrationTest` 任务，不纳入普通 `check/build`。
+已验证 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13：三库启动自动建表、完整刷新、无效数据与版本拒绝、锁等待查询超时、缓存过期/恢复、TLS 证书/主机名校验，以及本地 Ed25519/HMAC、SQLite 与 REGISTRY 防重放闭环。此列表是已测矩阵，不据此承诺所有历史版本兼容性。
+
+### Phase 2.5：共享防重放后端（已实现）
+
+在 `REGISTRY` 与 `REDIS` 上实现“签发前登记、接收端原子消费”。`REGISTRY` 复用注册表数据库并在启动时自动建表；
+`REDIS` 支持单节点 ACL 与 TLS，登记使用 `SET NX PX`，消费使用 `DEL`。两者失败时拒绝，不重试、不降级。
+独立验证使用 `sqlIntegrationTest` 与 `redisIntegrationTest`，均不纳入普通 `check/build`；PIT 排除需要真实服务的适配器。
 
 ### Phase 3：首个平台适配
 
@@ -896,7 +910,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 
 ### Phase 4：扩展场景和其他平台
 
-双正版/双离线/历史 UUID 兼容测试，然后按需补 Yggdrasil、Velocity、Fabric；Floodgate 列为后续候选。SQL 票据核销与受控联盟的原始认证凭据链，应在其真实需求明确后单独排期。
+双正版/双离线/历史 UUID 兼容测试，然后按需补 Yggdrasil、Velocity、Fabric；Floodgate 列为后续候选。受控联盟的原始认证凭据链应在其真实需求明确后单独排期。
 
 ---
 
@@ -918,12 +932,12 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 ### 7.2 未决定，不得擅自当作既定需求
 
 1. **管理员管理方式**：完全静态配置、游戏内管理命令、两者并存及跨节点同步的交付范围；数据库管理员凭据如何安全分发。
-2. **Ticket 核销的最终默认后端**：`LOCAL`、`REGISTRY` 还是 `REDIS`，以及何种规模/可靠性目标才需要 SQL。
+2. **Ticket 核销的最终默认后端**：`LOCAL`、`REGISTRY` 与 `REDIS` 均已实现，但默认选择及何种规模/可靠性目标需要共享存储仍未决定。
 3. **节点心跳**：共享数据库是否提供安全且足够细粒度的写权限，若不能则如何上报。
 4. **受控联盟深度**：是否需要外域不完全可信 Peer 对上游认证结果进行无权伪造的转发；若需要，再设计双层签名 Attestation。
-5. **数据库后续扩展**：本轮服务器节点注册表目标为 PostgreSQL、MySQL、MariaDB；精确验证版本随集成测试记录。Turso/libSQL、其他方言及 SQL 核销单独评估。TODO：PostgreSQL `sql.schema`，以及未来管理/核销写权限可能导致的凭据配置调整。
+5. **数据库后续扩展**：本轮服务器节点注册表与共享核销已验证 PostgreSQL、MySQL、MariaDB；精确版本随集成测试记录。Turso/libSQL 与其他方言单独评估。TODO：PostgreSQL `sql.schema`；统一的读写+建表账号是否需要拆分为管理/核销专用账号仍待评估。
 6. **精确平台版本/API**：各平台的最低支持版本、Profile 改写能力、配置阶段清 Cookie 接口。
-7. **运维参数**：默认 TTL、缓存最大陈旧时间、重放缓存容量、超时策略应在实测后确定。
+7. **运维参数**：默认 TTL、缓存最大陈旧时间、超时策略应在实测后确定；重放不设容量上限。
 
 ---
 
