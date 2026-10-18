@@ -25,7 +25,8 @@ import me.pectics.chorus.core.ticket.TicketTiming;
 
 /**
  * Shared replay backend using standalone Redis. Opening and closing may block; register and consume
- * never perform I/O on the caller. A bounded worker pool drains before the client closes.
+ * never perform I/O on the caller. A bounded worker pool drains before the client closes. Deadlines
+ * are checked before and after storage I/O; queued registration TTLs use the execution time.
  */
 public final class RedisReplayGuard implements ReplayGuard {
     private static final int QUEUE_CAPACITY = 1024;
@@ -113,9 +114,9 @@ public final class RedisReplayGuard implements ReplayGuard {
         Objects.requireNonNull(targetNodeId, "targetNodeId");
         Objects.requireNonNull(expiresAt, "expiresAt");
         long now = clock.millis();
-        long ttl =
-                Math.addExact(expiresAt.toEpochMilli(), TicketTiming.CLOCK_SKEW.toMillis()) - now;
-        if (ttl <= 0) {
+        long retainUntil =
+                Math.addExact(expiresAt.toEpochMilli(), TicketTiming.CLOCK_SKEW.toMillis());
+        if (retainUntil <= now) {
             return CompletableFuture.failedFuture(
                     new IllegalArgumentException("Replay registration is already expired"));
         }
@@ -130,7 +131,16 @@ public final class RedisReplayGuard implements ReplayGuard {
                         () -> {
                             worker.set(true);
                             try {
+                                long ttl = retainUntil - clock.millis();
+                                if (ttl <= 0) {
+                                    throw new IllegalArgumentException(
+                                            "Replay registration is already expired");
+                                }
                                 store.register(issuerNodeId, jti, ttl);
+                                if (retainUntil <= clock.millis()) {
+                                    throw new IllegalStateException(
+                                            "Replay registration expired during storage I/O");
+                                }
                                 result.complete(null);
                             } catch (Throwable failure) {
                                 result.completeExceptionally(failure);
@@ -155,9 +165,9 @@ public final class RedisReplayGuard implements ReplayGuard {
             return CompletableFuture.completedFuture(ReplayDecision.UNAVAILABLE);
         }
         long now = clock.millis();
-        long ttl =
-                Math.addExact(expiresAt.toEpochMilli(), TicketTiming.CLOCK_SKEW.toMillis()) - now;
-        if (ttl <= 0) {
+        long retainUntil =
+                Math.addExact(expiresAt.toEpochMilli(), TicketTiming.CLOCK_SKEW.toMillis());
+        if (retainUntil <= now) {
             return CompletableFuture.completedFuture(ReplayDecision.UNAVAILABLE);
         }
         var result = new CompletableFuture<ReplayDecision>();
@@ -170,7 +180,15 @@ public final class RedisReplayGuard implements ReplayGuard {
                         () -> {
                             worker.set(true);
                             try {
-                                result.complete(store.consume(issuerNodeId, jti));
+                                if (retainUntil <= clock.millis()) {
+                                    result.complete(ReplayDecision.UNAVAILABLE);
+                                    return;
+                                }
+                                var decision = store.consume(issuerNodeId, jti);
+                                result.complete(
+                                        retainUntil <= clock.millis()
+                                                ? ReplayDecision.UNAVAILABLE
+                                                : decision);
                             } catch (RuntimeException failure) {
                                 result.completeExceptionally(failure);
                             } finally {

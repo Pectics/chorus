@@ -82,6 +82,99 @@ class RedisReplayGuardTest {
     }
 
     @Test
+    void queuedRegistrationSubtractsElapsedTimeFromItsRedisTtl() throws Exception {
+        store.block = true;
+        try (var guard = new RedisReplayGuard(store, "backend", clock, 1, 4)) {
+            try {
+                var running =
+                        guard.register("gateway", "running", "backend", NOW.plusSeconds(120))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var queued =
+                        guard.register("gateway", "queued", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                clock.now = NOW.plusSeconds(10);
+                store.release.countDown();
+                running.get(5, TimeUnit.SECONDS);
+                queued.get(5, TimeUnit.SECONDS);
+                assertThat(store.registered).isEqualTo("gateway/queued");
+                assertThat(store.ttlMillis).isEqualTo(35_000);
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void queuedOperationsAtTheRetentionBoundaryNeverTouchStorage() throws Exception {
+        store.block = true;
+        try (var guard = new RedisReplayGuard(store, "backend", clock, 1, 4)) {
+            try {
+                var running =
+                        guard.register("gateway", "running", "backend", NOW.plusSeconds(120))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var registration =
+                        guard.register("gateway", "expired", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                var consumption =
+                        guard.consume("gateway", "expired", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                clock.now = NOW.plusSeconds(45);
+                store.release.countDown();
+                running.get(5, TimeUnit.SECONDS);
+                assertThatThrownBy(() -> registration.get(5, TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(IllegalArgumentException.class);
+                assertThat(consumption.get(5, TimeUnit.SECONDS))
+                        .isEqualTo(ReplayDecision.UNAVAILABLE);
+                assertThat(store.registerCalls.get()).isEqualTo(1);
+                assertThat(store.consumeCalls.get()).isZero();
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void registrationCannotSucceedAfterStorageCrossesTheRetentionBoundary() throws Exception {
+        store.block = true;
+        try (var guard = new RedisReplayGuard(store, "backend", clock, 1, 4)) {
+            try {
+                var pending =
+                        guard.register("gateway", "slow", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                clock.now = NOW.plusSeconds(45);
+                store.release.countDown();
+                assertThatThrownBy(() -> pending.get(5, TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(IllegalStateException.class);
+                assertThat(store.registered).isEqualTo("gateway/slow");
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void consumedTicketIsNotAcceptedWhenStorageCrossesTheRetentionBoundary() throws Exception {
+        store.block = true;
+        try (var guard = new RedisReplayGuard(store, "backend", clock, 1, 4)) {
+            try {
+                var pending =
+                        guard.consume("gateway", "slow", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                clock.now = NOW.plusSeconds(45);
+                store.release.countDown();
+                assertThat(pending.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.UNAVAILABLE);
+                assertThat(store.consumeCalls.get()).isEqualTo(1);
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
     void registrationFailureIsReportedAndConsumptionStaysUnavailable() throws Exception {
         store.failRegister = true;
         try (var guard = new RedisReplayGuard(store, "backend", clock, 2, 4)) {

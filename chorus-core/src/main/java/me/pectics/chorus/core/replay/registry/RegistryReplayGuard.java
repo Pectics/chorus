@@ -26,7 +26,8 @@ import me.pectics.chorus.core.ticket.TicketTiming;
 /**
  * Shared replay backend using the registry database. Opening and closing may block; register and
  * consume never perform I/O on the caller. One bounded worker serializes durable operations and
- * drains before the write pool closes.
+ * drains before the write pool closes. Deadlines are checked before and after storage I/O; expired
+ * work never completes successfully, even if its transaction has already committed.
  */
 public final class RegistryReplayGuard implements ReplayGuard {
     private static final int QUEUE_CAPACITY = 1024;
@@ -127,7 +128,21 @@ public final class RegistryReplayGuard implements ReplayGuard {
                 executor.execute(
                         () -> {
                             try {
-                                store.register(issuerNodeId, jti, targetNodeId, retainUntil, now);
+                                long executionTime = clock.millis();
+                                if (retainUntil <= executionTime) {
+                                    throw new IllegalArgumentException(
+                                            "Replay registration is already expired");
+                                }
+                                store.register(
+                                        issuerNodeId,
+                                        jti,
+                                        targetNodeId,
+                                        retainUntil,
+                                        executionTime);
+                                if (retainUntil <= clock.millis()) {
+                                    throw new IllegalStateException(
+                                            "Replay registration expired during storage I/O");
+                                }
                                 result.complete(null);
                             } catch (Throwable failure) {
                                 result.completeExceptionally(failure);
@@ -164,7 +179,18 @@ public final class RegistryReplayGuard implements ReplayGuard {
                 executor.execute(
                         () -> {
                             try {
-                                result.complete(store.consume(issuerNodeId, jti, retainUntil, now));
+                                long executionTime = clock.millis();
+                                if (retainUntil <= executionTime) {
+                                    result.complete(ReplayDecision.UNAVAILABLE);
+                                    return;
+                                }
+                                var decision =
+                                        store.consume(
+                                                issuerNodeId, jti, retainUntil, executionTime);
+                                result.complete(
+                                        retainUntil <= clock.millis()
+                                                ? ReplayDecision.UNAVAILABLE
+                                                : decision);
                             } catch (RuntimeException failure) {
                                 result.completeExceptionally(failure);
                             }

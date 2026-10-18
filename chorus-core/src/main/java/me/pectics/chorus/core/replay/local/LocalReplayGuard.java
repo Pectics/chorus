@@ -54,7 +54,7 @@ public final class LocalReplayGuard implements ReplayGuard {
             throw new IllegalArgumentException("Invalid local replay configuration");
         }
         this.targetNodeId = targetNodeId;
-        this.store = new SqliteReplayStore(file, targetNodeId, clock);
+        this.store = new SqliteReplayStore(file, targetNodeId, (int) busyTimeout.toMillis(), clock);
         try {
             this.executor =
                     new ThreadPoolExecutor(

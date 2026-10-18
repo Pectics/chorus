@@ -20,7 +20,9 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import me.pectics.chorus.core.replay.ReplayDecision;
 import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 import org.junit.jupiter.api.Test;
@@ -126,10 +128,51 @@ class LocalReplayGuardTest {
             statement.execute("BEGIN IMMEDIATE");
             var pending = consume(guard, "locked");
             assertThat(pending.isDone()).isFalse();
-            assertThat(pending.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.UNAVAILABLE);
+            assertThat(pending.get(2, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.UNAVAILABLE);
             statement.execute("ROLLBACK");
             assertThat(consume(guard, "locked").get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.ACCEPTED);
+        }
+    }
+
+    @Test
+    void configuredBusyTimeoutWaitsForALockReleasedBeforeItsDeadline() throws Exception {
+        Path file = directory.resolve("waiting.db");
+        try (var guard = new LocalReplayGuard(file, "backend", Duration.ofSeconds(2), clock);
+                var blocker = DriverManager.getConnection("jdbc:sqlite:" + file);
+                var statement = blocker.createStatement()) {
+            statement.execute("BEGIN IMMEDIATE");
+            var pending = consume(guard, "waiting");
+            try {
+                assertThatThrownBy(() -> pending.get(750, TimeUnit.MILLISECONDS))
+                        .isInstanceOf(TimeoutException.class);
+            } finally {
+                statement.execute("ROLLBACK");
+            }
+            assertThat(pending.get(2, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
+        }
+    }
+
+    @Test
+    void consumptionThatExpiresWhileWaitingForTheDatabaseCannotReturnSuccess() throws Exception {
+        Path file = directory.resolve("late-commit.db");
+        try (var guard = new LocalReplayGuard(file, "backend", Duration.ofSeconds(2), clock);
+                var blocker = DriverManager.getConnection("jdbc:sqlite:" + file);
+                var statement = blocker.createStatement()) {
+            statement.execute("BEGIN IMMEDIATE");
+            var pending = consume(guard, "late-commit");
+            try {
+                assertThat(clock.read.await(5, TimeUnit.SECONDS)).isTrue();
+                clock.now = TestSupport.NOW.plusSeconds(45);
+            } finally {
+                statement.execute("ROLLBACK");
+            }
+            assertThat(pending.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.UNAVAILABLE);
+            try (var rows =
+                    statement.executeQuery(
+                            "SELECT COUNT(*) FROM chorus_consumed_tickets WHERE jti='late-commit'")) {
+                assertThat(rows.getInt(1)).isEqualTo(1);
+            }
         }
     }
 
@@ -387,6 +430,7 @@ class LocalReplayGuardTest {
     }
 
     private static final class MutableClock extends Clock {
+        private final CountDownLatch read = new CountDownLatch(1);
         private volatile Instant now;
 
         private MutableClock(Instant now) {
@@ -405,7 +449,9 @@ class LocalReplayGuardTest {
 
         @Override
         public Instant instant() {
-            return now;
+            Instant snapshot = now;
+            read.countDown();
+            return snapshot;
         }
     }
 }

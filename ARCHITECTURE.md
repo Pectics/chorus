@@ -499,6 +499,10 @@ public interface ReplayGuard {
 **共享后端 `REGISTRY` / `REDIS`（已实现）**：Sender 在签发前登记 `(issuer, jti, target, exp + 30s)`；Receiver 在验签、目标、时间与策略检查后原子消费。`REGISTRY` 复用 `registry` 数据库，不能用于 `CONFIG` 来源；`REDIS` 使用 `replay-guard.redis` 的单节点连接。SQL 以 `DELETE ... WHERE issuer = ? AND jti = ? AND retain_until_ms > now` 的影响行数判定；Redis 以 `SET NX PX` 登记、`DEL` 消费。数据库或 Redis 不可用、超时或提交结果未知时拒绝，**不得自动退回其他核销后端**，也不重试。
 `RegistryReplayGuard` / `RedisReplayGuard` 负责输入校验、有界调度与关闭协调，包内 JDBC / Jedis 存储负责连接与原子操作。预登记失败使签发失败，不返回未登记票据。
 
+防重放工作进入 worker 后须重新检查 `exp + 30s`，SQL 清理与条件消费使用执行时的当前时间，Redis 的剩余 TTL 从执行时重新计算。
+存储操作返回后再次检查该期限；排队、锁等待或提交确认跨过期限时拒绝成功返回，已经提交的消费仍不恢复。
+LOCAL 的 `busy-timeout` 应用于 SQLite 连接的锁等待，包括启动初始化和消费事务。
+
 共享 SQL 与本地 SQLite 均已实现；最终默认后端仍属于 §7.2 的未决运维选型，不由配置契约推定。
 时钟容差固定为 30 秒，不提供运行中修改。
 

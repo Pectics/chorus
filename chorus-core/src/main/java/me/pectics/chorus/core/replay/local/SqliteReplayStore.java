@@ -26,7 +26,7 @@ final class SqliteReplayStore implements AutoCloseable {
     private final Clock clock;
     private volatile boolean broken;
 
-    SqliteReplayStore(Path file, String targetNodeId, Clock clock)
+    SqliteReplayStore(Path file, String targetNodeId, int busyMillis, Clock clock)
             throws SQLException, IOException {
         this.clock = clock;
         Path absolute = file.toAbsolutePath().normalize();
@@ -36,7 +36,7 @@ final class SqliteReplayStore implements AutoCloseable {
         this.connection =
                 DriverManager.getConnection("jdbc:sqlite:" + absolute.toUri() + "?mode=rwc");
         try {
-            initialize(targetNodeId);
+            initialize(targetNodeId, busyMillis);
         } catch (SQLException | RuntimeException | Error failure) {
             try {
                 connection.close();
@@ -47,8 +47,9 @@ final class SqliteReplayStore implements AutoCloseable {
         }
     }
 
-    private void initialize(String targetNodeId) throws SQLException {
+    private void initialize(String targetNodeId, int busyMillis) throws SQLException {
         try (var statement = connection.createStatement()) {
+            statement.execute("PRAGMA busy_timeout=" + busyMillis);
             try (var result = statement.executeQuery("PRAGMA journal_mode=WAL")) {
                 if (!result.next() || !result.getString(1).equalsIgnoreCase("wal")) {
                     throw new SQLException("Local replay requires WAL mode");
@@ -159,7 +160,9 @@ final class SqliteReplayStore implements AutoCloseable {
                 insert.executeUpdate();
             }
             transaction.execute("COMMIT");
-            return ReplayDecision.ACCEPTED;
+            return retainUntil > clock.millis()
+                    ? ReplayDecision.ACCEPTED
+                    : ReplayDecision.UNAVAILABLE;
         } catch (SQLException e) {
             if (begun) {
                 try (var rollback = connection.createStatement()) {

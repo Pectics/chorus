@@ -89,6 +89,103 @@ class RegistryReplayGuardTest {
     }
 
     @Test
+    void queuedOperationsUseExecutionTimeForCleanupAndConsumption() throws Exception {
+        store.block = true;
+        try (var guard = new RegistryReplayGuard(store, "backend", clock, 4)) {
+            try {
+                var running =
+                        guard.register("gateway", "running", "backend", NOW.plusSeconds(120))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var registration =
+                        guard.register("gateway", "queued", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                var consumption =
+                        guard.consume("gateway", "queued", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                clock.now = NOW.plusSeconds(10);
+                store.release.countDown();
+                running.get(5, TimeUnit.SECONDS);
+                registration.get(5, TimeUnit.SECONDS);
+                assertThat(consumption.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
+                assertThat(store.registrationTime).isEqualTo(clock.millis());
+                assertThat(store.consumptionTime).isEqualTo(clock.millis());
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void queuedOperationsAtTheRetentionBoundaryNeverTouchStorage() throws Exception {
+        store.block = true;
+        try (var guard = new RegistryReplayGuard(store, "backend", clock, 4)) {
+            try {
+                var running =
+                        guard.register("gateway", "running", "backend", NOW.plusSeconds(120))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var registration =
+                        guard.register("gateway", "expired", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                var consumption =
+                        guard.consume("gateway", "expired", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                clock.now = NOW.plusSeconds(45);
+                store.release.countDown();
+                running.get(5, TimeUnit.SECONDS);
+                assertThatThrownBy(() -> registration.get(5, TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(IllegalArgumentException.class);
+                assertThat(consumption.get(5, TimeUnit.SECONDS))
+                        .isEqualTo(ReplayDecision.UNAVAILABLE);
+                assertThat(store.registerCalls.get()).isEqualTo(1);
+                assertThat(store.consumeCalls.get()).isZero();
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void registrationCannotSucceedAfterStorageCrossesTheRetentionBoundary() throws Exception {
+        store.block = true;
+        try (var guard = new RegistryReplayGuard(store, "backend", clock, 4)) {
+            try {
+                var pending =
+                        guard.register("gateway", "slow", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                clock.now = NOW.plusSeconds(45);
+                store.release.countDown();
+                assertThatThrownBy(() -> pending.get(5, TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(IllegalStateException.class);
+                assertThat(store.registered).containsExactly("gateway/slow/backend");
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void consumedTicketIsNotAcceptedWhenStorageCrossesTheRetentionBoundary() throws Exception {
+        store.block = true;
+        try (var guard = new RegistryReplayGuard(store, "backend", clock, 4)) {
+            try {
+                var pending =
+                        guard.consume("gateway", "slow", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                clock.now = NOW.plusSeconds(45);
+                store.release.countDown();
+                assertThat(pending.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.UNAVAILABLE);
+                assertThat(store.consumeCalls.get()).isEqualTo(1);
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
     void storeFailuresBecomeRegistrationFailureAndUnavailableConsumption() throws Exception {
         store.failRegister = true;
         try (var guard = new RegistryReplayGuard(store, "backend", clock, 4)) {
@@ -312,6 +409,8 @@ class RegistryReplayGuardTest {
         private volatile SQLException closeFailure;
         private volatile RuntimeException consumeFailure;
         private volatile ReplayDecision consumeDecision = ReplayDecision.ACCEPTED;
+        private volatile long registrationTime;
+        private volatile long consumptionTime;
         private final AtomicInteger registerCalls = new AtomicInteger();
         private final AtomicInteger consumeCalls = new AtomicInteger();
         private final AtomicInteger closes = new AtomicInteger();
@@ -325,6 +424,7 @@ class RegistryReplayGuardTest {
                 long nowMillis)
                 throws SQLException {
             registerCalls.incrementAndGet();
+            registrationTime = nowMillis;
             entered.countDown();
             await(release);
             if (failRegister) {
@@ -337,6 +437,7 @@ class RegistryReplayGuardTest {
         public ReplayDecision consume(
                 String issuerNodeId, String jti, long retainUntilMillis, long nowMillis) {
             consumeCalls.incrementAndGet();
+            consumptionTime = nowMillis;
             entered.countDown();
             await(release);
             if (consumeFailure != null) {
