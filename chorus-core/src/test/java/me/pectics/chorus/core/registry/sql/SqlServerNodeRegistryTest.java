@@ -123,8 +123,78 @@ class SqlServerNodeRegistryTest {
         store.onRefresh = refreshed;
         var settings = new Cache(Duration.ofMillis(20), Duration.ofSeconds(1));
         try (var registry = new SqlServerNodeRegistry(store, settings, Set.of("backend"), clock)) {
-            assertThat(refreshed.get(2, TimeUnit.SECONDS)).isEqualTo("chorus-sql-registry");
+            assertThat(refreshed.get(2, TimeUnit.SECONDS)).isEqualTo("chorus-sql-registry|true");
             assertThat(registry.find("backend")).isPresent();
+        }
+        assertThat(store.closed.get()).isEqualTo(1);
+    }
+
+    @Test
+    void refreshAndPeriodicWorkersAreDaemonThreads() throws Exception {
+        var store = new FakeServerNodeStore();
+        var refreshed = new CompletableFuture<String>();
+        store.onRefresh = refreshed;
+        var settings = new Cache(Duration.ofMillis(20), Duration.ofSeconds(1));
+        try (var registry = new SqlServerNodeRegistry(store, settings, Set.of("backend"), clock)) {
+            assertThat(refreshed.get(2, TimeUnit.SECONDS)).endsWith("|true");
+            var workers =
+                    Thread.getAllStackTraces().keySet().stream()
+                            .filter(thread -> thread.getName().startsWith("chorus-sql-"))
+                            .toList();
+            assertThat(workers).isNotEmpty();
+            assertThat(workers).allMatch(Thread::isDaemon);
+        }
+    }
+
+    @Test
+    void closeReportsStoreFailuresAfterDrainingAcceptedWork() throws Exception {
+        var store = new FakeServerNodeStore();
+        store.closeFailure = new IllegalStateException("store close failed");
+        var registry = registry(store);
+        assertThatThrownBy(registry::close)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("store close failed");
+        assertThat(store.closed.get()).isEqualTo(1);
+    }
+
+    @Test
+    void interruptedCloseRestoresTheInterruptFlagAndReleasesStorage() throws Exception {
+        var store = new FakeServerNodeStore();
+        var registry = registry(store);
+        try {
+            store.entered = new CountDownLatch(1);
+            store.release = new CountDownLatch(1);
+            var refreshing = registry.refresh();
+            assertThat(store.entered.await(2, TimeUnit.SECONDS)).isTrue();
+
+            var closing = new CountDownLatch(1);
+            var caught = new java.util.concurrent.atomic.AtomicBoolean();
+            var interruptedFlag = new java.util.concurrent.atomic.AtomicBoolean();
+            var closer =
+                    new Thread(
+                            () -> {
+                                closing.countDown();
+                                try {
+                                    registry.close();
+                                } catch (IllegalStateException failure) {
+                                    caught.set(true);
+                                    interruptedFlag.set(Thread.currentThread().isInterrupted());
+                                }
+                            },
+                            "registry-closer");
+            closer.start();
+            assertThat(closing.await(2, TimeUnit.SECONDS)).isTrue();
+            closer.interrupt();
+            closer.join(2_000);
+            assertThat(closer.isAlive()).isFalse();
+            assertThat(caught).isTrue();
+            assertThat(interruptedFlag).isTrue();
+
+            store.release.countDown();
+            refreshing.toCompletableFuture().get(2, TimeUnit.SECONDS);
+        } finally {
+            store.release.countDown();
+            registry.close();
         }
         assertThat(store.closed.get()).isEqualTo(1);
     }
@@ -157,6 +227,7 @@ class SqlServerNodeRegistryTest {
         volatile CountDownLatch entered;
         volatile CountDownLatch release;
         volatile CompletableFuture<String> onRefresh;
+        volatile RuntimeException closeFailure;
 
         @Override
         public Map<String, ServerNode> load() throws SQLException {
@@ -173,13 +244,15 @@ class SqlServerNodeRegistryTest {
                 }
             }
             if (count > 1 && onRefresh != null)
-                onRefresh.complete(Thread.currentThread().getName());
+                onRefresh.complete(
+                        Thread.currentThread().getName() + "|" + Thread.currentThread().isDaemon());
             return nodes;
         }
 
         @Override
         public void close() {
             closed.incrementAndGet();
+            if (closeFailure != null) throw closeFailure;
         }
     }
 }

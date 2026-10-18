@@ -232,6 +232,15 @@ class ChorusCoreBootstrapTest {
     }
 
     @Test
+    void defaultClockOverloadOpensAValidDeployment() throws Exception {
+        Path receiverFile = write("backend.yml", configuration("backend", ServerNodeRole.BACKEND));
+        try (var receiver = ChorusCoreBootstrap.open(receiverFile)) {
+            assertThat(receiver).isNotNull();
+            assertThat(receiver.getCookieKey()).isEqualTo("chorus:ticket");
+        }
+    }
+
+    @Test
     void senderDoesNotOpenReplayStateWhenNoReplaySectionIsConfigured() throws Exception {
         String sender = configuration("gateway", ServerNodeRole.GATEWAY);
         Path senderFile =

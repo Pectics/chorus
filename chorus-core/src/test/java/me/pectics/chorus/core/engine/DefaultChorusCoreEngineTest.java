@@ -733,6 +733,222 @@ class DefaultChorusCoreEngineTest {
     }
 
     @Test
+    void receiverRoleRequiresAReplayGuard() {
+        assertThatNullPointerException()
+                .isThrownBy(
+                        () ->
+                                new DefaultChorusCoreEngine(
+                                        new ServerNodeConfiguration(
+                                                "backend", ServerNodeRole.BACKEND),
+                                        new TicketConfiguration("chorus:ticket", 4096, 2048),
+                                        null,
+                                        new TicketVerificationConfiguration(
+                                                Duration.ofSeconds(15),
+                                                Duration.ofSeconds(2),
+                                                true,
+                                                BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
+                                        TestSupport.serverNodeRegistry(),
+                                        TestSupport.issuers(pair),
+                                        null,
+                                        null,
+                                        Clock.fixed(TestSupport.NOW, ZoneOffset.UTC)));
+    }
+
+    @Test
+    void closedSenderRejectsIssuanceBeforeReadingTheRegistry() {
+        var sender =
+                engine(
+                        "gateway",
+                        ServerNodeRole.GATEWAY,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
+        sender.close();
+        rejects(
+                sender.issueTicket(
+                        new IssueTicketRequest(
+                                "backend",
+                                new AuthenticatedIdentity(TestSupport.identity(), "gateway"),
+                                Map.of())),
+                TicketError.ENGINE_CLOSED);
+    }
+
+    @Test
+    void nullReplayDecisionIsAnUnavailableOutcome() {
+        replay.pending = CompletableFuture.completedFuture(null);
+        try (var receiver =
+                engine(
+                        "backend",
+                        ServerNodeRole.BACKEND,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM)) {
+            rejects(
+                    receiver.verifyAndResolve(request(TestSupport.claims(), login)),
+                    TicketError.REPLAY_UNAVAILABLE);
+        }
+    }
+
+    @Test
+    void strictMatchRejectsNonMojangIdentityEvenWithMatchingExternalValues() {
+        var identity =
+                new IdentityClaim(
+                        "Notch",
+                        AuthenticationSourceType.OFFLINE_AUTH,
+                        "local",
+                        "account",
+                        TestSupport.UUID_MOJANG,
+                        List.of());
+        var claims =
+                claims(
+                        TestSupport.NOW,
+                        TestSupport.NOW,
+                        TestSupport.NOW.plusSeconds(15),
+                        identity,
+                        "backend");
+        try (var receiver =
+                engine(
+                        "backend",
+                        ServerNodeRole.BACKEND,
+                        BuiltinIdentityResolutionPolicy.STRICT_ONLINE_MATCH)) {
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims,
+                                    new ReceiverLoginContext(
+                                            "Notch",
+                                            true,
+                                            new VerifiedExternalIdentity(
+                                                    "local", "account", TestSupport.UUID_MOJANG)))),
+                    TicketError.EXTERNAL_IDENTITY_MISMATCH);
+            assertThat(replay.calls).isZero();
+        }
+    }
+
+    @Test
+    void enforcesExactLifetimeAndClockSkewBoundaries() {
+        try (var receiver =
+                engine(
+                        "backend",
+                        ServerNodeRole.BACKEND,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM)) {
+            receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            "within-skew",
+                                            TestSupport.NOW.plusSeconds(2),
+                                            TestSupport.NOW.plusSeconds(2),
+                                            TestSupport.NOW.plusSeconds(17),
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login))
+                    .toCompletableFuture()
+                    .join();
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            TestSupport.NOW.plusSeconds(3),
+                                            TestSupport.NOW.plusSeconds(3),
+                                            TestSupport.NOW.plusSeconds(18),
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login)),
+                    TicketError.NOT_YET_VALID);
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            TestSupport.NOW,
+                                            TestSupport.NOW.minusSeconds(1),
+                                            TestSupport.NOW.plusSeconds(15),
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login)),
+                    TicketError.INVALID_LIFETIME);
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            TestSupport.NOW,
+                                            TestSupport.NOW.plusSeconds(15),
+                                            TestSupport.NOW.plusSeconds(15),
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login)),
+                    TicketError.INVALID_LIFETIME);
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            TestSupport.NOW,
+                                            TestSupport.NOW,
+                                            TestSupport.NOW,
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login)),
+                    TicketError.INVALID_LIFETIME);
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            TestSupport.NOW,
+                                            TestSupport.NOW,
+                                            TestSupport.NOW.minusSeconds(1),
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login)),
+                    TicketError.INVALID_LIFETIME);
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            TestSupport.NOW,
+                                            TestSupport.NOW.plusSeconds(3),
+                                            TestSupport.NOW.plusSeconds(15),
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login)),
+                    TicketError.NOT_YET_VALID);
+            assertThat(
+                            receiver.verifyAndResolve(
+                                            request(
+                                                    claims(
+                                                            "not-before-boundary",
+                                                            TestSupport.NOW,
+                                                            TestSupport.NOW.plusSeconds(2),
+                                                            TestSupport.NOW.plusSeconds(15),
+                                                            TestSupport.identity(),
+                                                            "backend"),
+                                                    login))
+                                    .toCompletableFuture()
+                                    .join())
+                    .isNotNull();
+            rejects(
+                    receiver.verifyAndResolve(
+                            request(
+                                    claims(
+                                            TestSupport.NOW.minusSeconds(17),
+                                            TestSupport.NOW.minusSeconds(17),
+                                            TestSupport.NOW.minusSeconds(2),
+                                            TestSupport.identity(),
+                                            "backend"),
+                                    login)),
+                    TicketError.EXPIRED);
+            assertThat(
+                            receiver.verifyAndResolve(
+                                            request(
+                                                    claims(
+                                                            "inside-expiry-skew",
+                                                            TestSupport.NOW.minusSeconds(16),
+                                                            TestSupport.NOW.minusSeconds(16),
+                                                            TestSupport.NOW.minusSeconds(1),
+                                                            TestSupport.identity(),
+                                                            "backend"),
+                                                    login))
+                                    .toCompletableFuture()
+                                    .join())
+                    .isNotNull();
+        }
+    }
+
+    @Test
     void verificationRequestRequiresALoginContextBeforeTheEngineIsInvoked() {
         var encoded =
                 new TicketCodec(4096, 2048).encode(TestSupport.claims(), TestSupport.signer(pair));
@@ -742,8 +958,17 @@ class DefaultChorusCoreEngineTest {
 
     private TicketClaims claims(
             Instant issued, Instant nbf, Instant exp, IdentityClaim identity, String target) {
-        return new TicketClaims(
-                1, "ticket", "gateway", target, issued, nbf, exp, identity, Map.of());
+        return claims("ticket", issued, nbf, exp, identity, target);
+    }
+
+    private TicketClaims claims(
+            String jti,
+            Instant issued,
+            Instant nbf,
+            Instant exp,
+            IdentityClaim identity,
+            String target) {
+        return new TicketClaims(1, jti, "gateway", target, issued, nbf, exp, identity, Map.of());
     }
 
     private static final class RecordingGuard implements ReplayGuard {

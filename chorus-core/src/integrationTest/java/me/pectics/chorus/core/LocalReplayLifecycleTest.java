@@ -107,6 +107,43 @@ class LocalReplayLifecycleTest {
     }
 
     @Test
+    void interruptedExternalCloseRestoresTheFlagAndStillDrainsAcceptedWork() throws Exception {
+        var clock = new PausingClock();
+        var guard = open(directory.resolve("replay.db"), 3, clock);
+        try {
+            var running = consume(guard, "interrupted-close");
+            await(clock.entered);
+            var closing = new CountDownLatch(1);
+            var caught = new AtomicBoolean();
+            var interruptedFlag = new AtomicBoolean();
+            var closer =
+                    new Thread(
+                            () -> {
+                                closing.countDown();
+                                try {
+                                    guard.close();
+                                } catch (IllegalStateException failure) {
+                                    caught.set(true);
+                                    interruptedFlag.set(Thread.currentThread().isInterrupted());
+                                }
+                            },
+                            "replay-closer");
+            closer.start();
+            await(closing);
+            closer.interrupt();
+            closer.join(5_000);
+            assertThat(closer.isAlive()).isFalse();
+            assertThat(caught).isTrue();
+            assertThat(interruptedFlag).isTrue();
+            clock.resume();
+            assertThat(running.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
+        } finally {
+            clock.resume();
+            guard.close();
+        }
+    }
+
+    @Test
     void fullQueueRejectsWithoutConsumingTheTicket() throws Exception {
         Path file = directory.resolve("replay.db");
         var clock = new PausingClock();

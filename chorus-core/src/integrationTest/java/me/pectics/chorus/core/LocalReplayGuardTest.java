@@ -180,6 +180,33 @@ class LocalReplayGuardTest {
     }
 
     @Test
+    void rejectsUnsupportedStateVersionsAndUnknownNonemptyDatabases() throws Exception {
+        Path versioned = directory.resolve("versioned.db");
+        try (var guard = open(versioned, 10)) {
+            assertThat(consume(guard, "versioned").get()).isEqualTo(ReplayDecision.ACCEPTED);
+        }
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + versioned);
+                var statement = connection.createStatement()) {
+            statement.execute("PRAGMA user_version=2");
+        }
+        assertThatThrownBy(() -> open(versioned, 10)).isInstanceOf(java.sql.SQLException.class);
+
+        Path unknown = directory.resolve("unknown.db");
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + unknown);
+                var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE unrelated (id INTEGER)");
+        }
+        assertThatThrownBy(() -> open(unknown, 10)).isInstanceOf(java.sql.SQLException.class);
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + unknown);
+                var statement = connection.createStatement();
+                var rows =
+                        statement.executeQuery(
+                                "SELECT name FROM sqlite_schema WHERE name='chorus_consumed_tickets'")) {
+            assertThat(rows.next()).isFalse();
+        }
+    }
+
+    @Test
     void existingStateWithAMissingLedgerIsNotReinitialized() throws Exception {
         Path file = directory.resolve("replay.db");
         try (var guard = open(file, 10)) {
@@ -208,9 +235,11 @@ class LocalReplayGuardTest {
                         {null, "jti"},
                         {"", "jti"},
                         {" ", "jti"},
+                        {"\t", "jti"},
                         {"gateway", null},
                         {"gateway", ""},
-                        {"gateway", " "}
+                        {"gateway", " "},
+                        {"gateway", "\n"}
                     }) {
                 assertThatThrownBy(
                                 () ->
@@ -317,6 +346,7 @@ class LocalReplayGuardTest {
                 java.util.List.of(
                         Duration.ZERO,
                         Duration.ofNanos(1),
+                        Duration.ofMillis(-1),
                         Duration.ofMillis((long) Integer.MAX_VALUE + 1))) {
             assertThatThrownBy(
                             () ->
@@ -330,6 +360,58 @@ class LocalReplayGuardTest {
                     .isInstanceOf(IllegalArgumentException.class);
         }
         assertThat(file).doesNotExist();
+    }
+
+    @Test
+    void workerThreadIsDaemonAndStopsWithTheGuard() throws Exception {
+        try (var guard = open(directory.resolve("replay.db"), 10)) {
+            assertThat(consume(guard, "daemon").get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+            var worker =
+                    Thread.getAllStackTraces().keySet().stream()
+                            .filter(thread -> thread.getName().equals("chorus-local-replay"))
+                            .findFirst()
+                            .orElseThrow();
+            assertThat(worker.isDaemon()).isTrue();
+        }
+    }
+
+    @Test
+    void acceptsMaximumTargetLengthAndZeroClockSkew() throws Exception {
+        String maximumId = "a".repeat(128);
+        try (var guard =
+                new LocalReplayGuard(
+                        directory.resolve("boundary.db"),
+                        maximumId,
+                        Duration.ZERO,
+                        1,
+                        Duration.ofMillis(1),
+                        clock)) {
+            assertThat(
+                            guard.consume("gateway", "boundary", maximumId, TestSupport.NOW)
+                                    .toCompletableFuture()
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.UNAVAILABLE);
+            assertThat(
+                            guard.consume(
+                                            "gateway",
+                                            "boundary",
+                                            maximumId,
+                                            TestSupport.NOW.plusMillis(1))
+                                    .toCompletableFuture()
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+        }
+        assertThatThrownBy(
+                        () ->
+                                new LocalReplayGuard(
+                                        directory.resolve("invalid-target.db"),
+                                        "a".repeat(129),
+                                        Duration.ZERO,
+                                        1,
+                                        Duration.ofMillis(1),
+                                        clock))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
