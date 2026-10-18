@@ -19,14 +19,19 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import me.pectics.chorus.core.replay.ReplayDecision;
 import me.pectics.chorus.core.replay.ReplayGuardConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class RedisReplayGuardTest {
     private static final Instant NOW = Instant.parse("2026-10-16T00:00:00Z");
@@ -236,14 +241,26 @@ class RedisReplayGuardTest {
                 .hasCauseInstanceOf(IllegalStateException.class);
     }
 
-    @Test
-    void closeFromACompletionCallbackDoesNotDeadlock() throws Exception {
-        var guard = new RedisReplayGuard(store, "backend", clock, 1, 4);
-        guard.register("gateway", "ticket", "backend", NOW.plusSeconds(15))
-                .thenRun(guard::close)
-                .toCompletableFuture()
-                .get(5, TimeUnit.SECONDS);
-        assertThat(store.closed.await(5, TimeUnit.SECONDS)).isTrue();
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void closeFromACompletionCallbackDoesNotDeadlock(boolean consume) throws Exception {
+        store.block = true;
+        try (var guard = new RedisReplayGuard(store, "backend", clock, 1, 4)) {
+            try {
+                var pending =
+                        consume
+                                ? guard.consume("gateway", "ticket", "backend", NOW.plusSeconds(15))
+                                : guard.register(
+                                        "gateway", "ticket", "backend", NOW.plusSeconds(15));
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var callback = pending.thenRun(guard::close).toCompletableFuture();
+                store.release.countDown();
+                callback.get(5, TimeUnit.SECONDS);
+                assertThat(store.closed.await(5, TimeUnit.SECONDS)).isTrue();
+            } finally {
+                store.release.countDown();
+            }
+        }
     }
 
     @Test
@@ -275,6 +292,81 @@ class RedisReplayGuardTest {
             store.release.countDown();
             running.get(5, TimeUnit.SECONDS);
             queued.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void externalCloseWaitsAcrossPeriodsAndDrainsQueuedWork() throws Exception {
+        store.block = true;
+        try (var guard = new RedisReplayGuard(store, "backend", clock, 1, 4)) {
+            try {
+                var running =
+                        guard.register("gateway", "running", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var queued =
+                        guard.consume("gateway", "queued", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                var started = new CountDownLatch(1);
+                var closing =
+                        CompletableFuture.runAsync(
+                                () -> {
+                                    started.countDown();
+                                    guard.close();
+                                });
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> closing.get(1_300, TimeUnit.MILLISECONDS))
+                        .isInstanceOf(TimeoutException.class);
+                assertThat(queued).isNotDone();
+                assertThat(store.closes.get()).isZero();
+                store.release.countDown();
+                closing.get(5, TimeUnit.SECONDS);
+                running.get(5, TimeUnit.SECONDS);
+                assertThat(queued.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
+                assertThat(store.closes.get()).isEqualTo(1);
+            } finally {
+                store.release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void interruptedClosePreservesTheFlagAndAcceptedWorkStillDrains() throws Exception {
+        store.block = true;
+        try (var guard = new RedisReplayGuard(store, "backend", clock, 1, 4)) {
+            var caught = new AtomicBoolean();
+            var interrupted = new AtomicBoolean();
+            var started = new CountDownLatch(1);
+            var closer =
+                    new Thread(
+                            () -> {
+                                started.countDown();
+                                try {
+                                    guard.close();
+                                } catch (IllegalStateException expected) {
+                                    caught.set(true);
+                                    interrupted.set(Thread.currentThread().isInterrupted());
+                                }
+                            },
+                            "chorus-test-replay-closer");
+            try {
+                var pending =
+                        guard.register("gateway", "running", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                closer.start();
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                closer.interrupt();
+                closer.join(5_000);
+                assertThat(closer.isAlive()).isFalse();
+                assertThat(caught).isTrue();
+                assertThat(interrupted).isTrue();
+                store.release.countDown();
+                pending.get(5, TimeUnit.SECONDS);
+            } finally {
+                store.release.countDown();
+                closer.join(5_000);
+            }
         }
     }
 

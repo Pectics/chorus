@@ -18,10 +18,19 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import me.pectics.chorus.core.TestSupport;
+import me.pectics.chorus.core.api.IssueTicketRequest;
+import me.pectics.chorus.core.engine.DefaultChorusCoreEngine;
+import me.pectics.chorus.core.identity.AuthenticatedIdentity;
+import me.pectics.chorus.core.node.ServerNodeConfiguration;
+import me.pectics.chorus.core.node.ServerNodeRole;
 import me.pectics.chorus.core.replay.ReplayDecision;
 import me.pectics.chorus.core.replay.ReplayGuardConfiguration;
+import me.pectics.chorus.core.ticket.TicketConfiguration;
+import me.pectics.chorus.core.ticket.TicketIssuanceConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.GenericContainer;
@@ -93,6 +102,183 @@ class RedisReplayGuardIntegrationTest {
                                             Clock.fixed(NOW, ZoneOffset.UTC)))
                     .isInstanceOf(IOException.class)
                     .hasMessageContaining("credential/CA");
+        }
+    }
+
+    @Test
+    void namedAclUserHonorsCommandAndKeyPermissions() throws Exception {
+        try (var redis = start(false)) {
+            writePassword(PASSWORD);
+            assertThat(
+                            command(
+                                    redis,
+                                    "ACL",
+                                    "SETUSER",
+                                    "chorus",
+                                    "on",
+                                    ">" + PASSWORD,
+                                    "~chorus:replay:*",
+                                    "-@all",
+                                    "+ping",
+                                    "+set",
+                                    "+del",
+                                    "+select"))
+                    .isEqualTo("OK");
+            var settings =
+                    settings(
+                            redis.getMappedPort(6379),
+                            ReplayGuardConfiguration.TlsMode.DISABLED,
+                            null,
+                            "chorus");
+            var expiry = NOW.plusSeconds(15);
+            try (var guard =
+                    new RedisReplayGuard(settings, "backend", Clock.fixed(NOW, ZoneOffset.UTC))) {
+                guard.register("gateway", "acl", "backend", expiry)
+                        .toCompletableFuture()
+                        .get(5, TimeUnit.SECONDS);
+                assertThat(command(redis, "ACL", "SETUSER", "chorus", "-del")).isEqualTo("OK");
+                assertThat(
+                                guard.consume("gateway", "acl", "backend", expiry)
+                                        .toCompletableFuture()
+                                        .get(5, TimeUnit.SECONDS))
+                        .isEqualTo(ReplayDecision.UNAVAILABLE);
+                assertThat(command(redis, "EXISTS", ReplayKey.encode("gateway", "acl")))
+                        .isEqualTo("1");
+                assertThat(command(redis, "ACL", "SETUSER", "chorus", "+del")).isEqualTo("OK");
+                assertThat(
+                                guard.consume("gateway", "acl", "backend", expiry)
+                                        .toCompletableFuture()
+                                        .get(5, TimeUnit.SECONDS))
+                        .isEqualTo(ReplayDecision.ACCEPTED);
+
+                assertThat(command(redis, "ACL", "SETUSER", "chorus", "-set")).isEqualTo("OK");
+                assertThatThrownBy(
+                                () ->
+                                        guard.register("gateway", "no-set", "backend", expiry)
+                                                .toCompletableFuture()
+                                                .get(5, TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(RuntimeException.class);
+                assertThat(
+                                command(
+                                        redis,
+                                        "ACL",
+                                        "SETUSER",
+                                        "chorus",
+                                        "+set",
+                                        "resetkeys",
+                                        "~unrelated:*"))
+                        .isEqualTo("OK");
+                assertThatThrownBy(
+                                () ->
+                                        guard.register("gateway", "wrong-prefix", "backend", expiry)
+                                                .toCompletableFuture()
+                                                .get(5, TimeUnit.SECONDS))
+                        .hasCauseInstanceOf(RuntimeException.class);
+                assertThat(command(redis, "EXISTS", ReplayKey.encode("gateway", "wrong-prefix")))
+                        .isEqualTo("0");
+            }
+        }
+    }
+
+    @Test
+    void startupRejectsAnAclUserThatCannotPing() throws Exception {
+        try (var redis = start(false)) {
+            writePassword(PASSWORD);
+            assertThat(
+                            command(
+                                    redis,
+                                    "ACL",
+                                    "SETUSER",
+                                    "chorus",
+                                    "on",
+                                    ">" + PASSWORD,
+                                    "~chorus:replay:*",
+                                    "-@all",
+                                    "+set",
+                                    "+del"))
+                    .isEqualTo("OK");
+            assertThatThrownBy(
+                            () ->
+                                    new RedisReplayGuard(
+                                            settings(
+                                                    redis.getMappedPort(6379),
+                                                    ReplayGuardConfiguration.TlsMode.DISABLED,
+                                                    null,
+                                                    "chorus"),
+                                            "backend",
+                                            Clock.fixed(NOW, ZoneOffset.UTC)))
+                    .isInstanceOf(IOException.class);
+        }
+    }
+
+    @Test
+    void acknowledgedRegistrationWithALostReplyFailsIssuanceWithoutRetry() throws Exception {
+        try (var redis = start(false);
+                var proxy = new RedisReplyDroppingProxy(redis.getMappedPort(6379))) {
+            writePassword(PASSWORD);
+            var clock = Clock.fixed(NOW, ZoneOffset.UTC);
+            var settings = settings(proxy.port(), ReplayGuardConfiguration.TlsMode.DISABLED, null);
+            try (var guard = new RedisReplayGuard(settings, "gateway", clock);
+                    var sender =
+                            new DefaultChorusCoreEngine(
+                                    new ServerNodeConfiguration("gateway", ServerNodeRole.GATEWAY),
+                                    new TicketConfiguration(
+                                            "chorus:ticket", 4096, 2048, Duration.ofSeconds(15)),
+                                    new TicketIssuanceConfiguration(
+                                            Duration.ofSeconds(15), TestSupport.issuancePolicy()),
+                                    null,
+                                    TestSupport.serverNodeRegistry(),
+                                    null,
+                                    TestSupport.signer(TestSupport.keyPair()),
+                                    guard,
+                                    clock)) {
+                proxy.dropNext("SET");
+                assertThatThrownBy(
+                                () ->
+                                        sender.issueTicket(
+                                                        new IssueTicketRequest(
+                                                                "backend",
+                                                                new AuthenticatedIdentity(
+                                                                        TestSupport.identity(),
+                                                                        "gateway"),
+                                                                Map.of()))
+                                                .toCompletableFuture()
+                                                .get(5, TimeUnit.SECONDS))
+                        .hasRootCauseMessage("REPLAY_REGISTRATION_FAILED");
+                assertThat(proxy.setCalls()).isEqualTo(1);
+                assertThat(command(redis, "DBSIZE")).isEqualTo("1");
+            }
+        }
+    }
+
+    @Test
+    void acknowledgedConsumptionWithALostReplyRejectsAndNeverRestoresTheTicket() throws Exception {
+        try (var redis = start(false);
+                var proxy = new RedisReplyDroppingProxy(redis.getMappedPort(6379))) {
+            writePassword(PASSWORD);
+            var settings = settings(proxy.port(), ReplayGuardConfiguration.TlsMode.DISABLED, null);
+            var expiry = NOW.plusSeconds(15);
+            try (var guard =
+                    new RedisReplayGuard(settings, "backend", Clock.fixed(NOW, ZoneOffset.UTC))) {
+                guard.register("gateway", "lost-reply", "backend", expiry)
+                        .toCompletableFuture()
+                        .get(5, TimeUnit.SECONDS);
+                proxy.dropNext("DEL");
+                assertThat(
+                                guard.consume("gateway", "lost-reply", "backend", expiry)
+                                        .toCompletableFuture()
+                                        .get(5, TimeUnit.SECONDS))
+                        .isEqualTo(ReplayDecision.UNAVAILABLE);
+                assertThat(proxy.deleteCalls()).isEqualTo(1);
+                assertThat(command(redis, "EXISTS", ReplayKey.encode("gateway", "lost-reply")))
+                        .isEqualTo("0");
+                assertThat(
+                                guard.consume("gateway", "lost-reply", "backend", expiry)
+                                        .toCompletableFuture()
+                                        .get(5, TimeUnit.SECONDS))
+                        .isEqualTo(ReplayDecision.REPLAYED);
+                assertThat(proxy.deleteCalls()).isEqualTo(2);
+            }
         }
     }
 
@@ -185,6 +371,7 @@ class RedisReplayGuardIntegrationTest {
     }
 
     private GenericContainer<?> start(boolean tls) throws IOException {
+        // Fluent setup preserves this container; the calling test owns and closes the result.
         @SuppressWarnings("resource")
         var container =
                 new GenericContainer<>(
@@ -223,16 +410,31 @@ class RedisReplayGuardIntegrationTest {
 
     private ReplayGuardConfiguration.Redis settings(
             int port, ReplayGuardConfiguration.TlsMode mode, Path ca) {
+        return settings(port, mode, ca, "default");
+    }
+
+    private ReplayGuardConfiguration.Redis settings(
+            int port, ReplayGuardConfiguration.TlsMode mode, Path ca, String username) {
         return new ReplayGuardConfiguration.Redis(
                 "localhost",
                 port,
                 0,
-                "default",
+                username,
                 directory.resolve("password.txt"),
                 new ReplayGuardConfiguration.Tls(mode, ca),
                 new ReplayGuardConfiguration.Timeouts(
                         Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1)),
-                new ReplayGuardConfiguration.Pool(2));
+                new ReplayGuardConfiguration.Pool(1));
+    }
+
+    private String command(GenericContainer<?> redis, String... arguments) throws Exception {
+        var command =
+                new java.util.ArrayList<>(
+                        List.of("redis-cli", "--no-auth-warning", "-a", PASSWORD));
+        command.addAll(List.of(arguments));
+        var result = redis.execInContainer(command.toArray(String[]::new));
+        assertThat(result.getExitCode()).isZero();
+        return result.getStdout().strip();
     }
 
     private void writePassword(String password) throws IOException {
