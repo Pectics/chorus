@@ -27,17 +27,7 @@ class SqliteReplayGuardStoreTest {
             throws Exception {
         try (var storage =
                 new SqliteReplayGuardStore(directory.resolve("replay.db"), "backend", 500)) {
-            ReplayGuardStore store = storage;
-            assertThat(store.consume("gateway", "ticket", NOW_MILLIS - 1, NOW_MILLIS))
-                    .isEqualTo(ReplayDecision.UNAVAILABLE);
-            assertThat(store.consume("gateway", "ticket", NOW_MILLIS, NOW_MILLIS))
-                    .isEqualTo(ReplayDecision.UNAVAILABLE);
-            assertThat(store.consume("gateway", "ticket", NOW_MILLIS + 1, NOW_MILLIS))
-                    .isEqualTo(ReplayDecision.ACCEPTED);
-            assertThat(store.consume("gateway", "ticket", NOW_MILLIS + 1, NOW_MILLIS))
-                    .isEqualTo(ReplayDecision.REPLAYED);
-            assertThat(store.consume("gateway", "ticket", NOW_MILLIS + 2, NOW_MILLIS + 1))
-                    .isEqualTo(ReplayDecision.ACCEPTED);
+            assertCommonStorageRetentionContract(storage);
         }
     }
 
@@ -70,5 +60,18 @@ class SqliteReplayGuardStoreTest {
             assertThat(store.consume("gateway", "next", NOW_MILLIS + 1, NOW_MILLIS))
                     .isEqualTo(ReplayDecision.ACCEPTED);
         }
+    }
+
+    private static void assertCommonStorageRetentionContract(ReplayGuardStore store) {
+        assertThat(store.consume("gateway", "ticket", NOW_MILLIS - 1, NOW_MILLIS))
+                .isEqualTo(ReplayDecision.UNAVAILABLE);
+        assertThat(store.consume("gateway", "ticket", NOW_MILLIS, NOW_MILLIS))
+                .isEqualTo(ReplayDecision.UNAVAILABLE);
+        assertThat(store.consume("gateway", "ticket", NOW_MILLIS + 1, NOW_MILLIS))
+                .isEqualTo(ReplayDecision.ACCEPTED);
+        assertThat(store.consume("gateway", "ticket", NOW_MILLIS + 1, NOW_MILLIS))
+                .isEqualTo(ReplayDecision.REPLAYED);
+        assertThat(store.consume("gateway", "ticket", NOW_MILLIS + 2, NOW_MILLIS + 1))
+                .isEqualTo(ReplayDecision.ACCEPTED);
     }
 }

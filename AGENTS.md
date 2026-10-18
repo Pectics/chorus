@@ -59,6 +59,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
   `spotbugs` 仅编译并分析各 source set，包含 SQL / Redis 集成测试源码但不启动外部服务或执行测试；HTML / XML 报告位于各模块 `build/reports/spotbugs/`。
   先修复实际问题；确认为误报或有意契约时，在 `gradle/spotbugs-exclude.xml` 中仅对具体告警和成员排除并写明理由，不用全量 baseline 或忽略失败绕过检查。
 - 编译器 / IDE 告警（含 `@SuppressWarnings`）也须先排查真实问题；仅对确认的误报或有意契约作最小范围抑制，并在附近用英语说明理由。
+  涉及资源生命周期的 Java 修改，在工具可用时，使用当前 IDE 同源编译器复核受影响文件的资源诊断；Gradle / SpotBugs 通过不能替代这项检查。
   测试资源须在断言失败时仍能释放，优先使用 `try-with-resources` / `finally`；所有权转移和崩溃探针等故意不关闭的场景须明确记录，不能用整类抑制掩盖泄漏。
 - `:chorus-core:pitest` 运行 PIT 变异测试，覆盖单元与本地集成测试，输出 `build/reports/pitest/` 并按 90% 变异/行覆盖率阈值失败。
   该任务按需执行，不纳入 `check` / `build`；JDBC / Jedis 存储与 SQL 初始化器因每个变异体都需真实服务而排除，其行为由 `sqlIntegrationTest` / `redisIntegrationTest` 验证。
