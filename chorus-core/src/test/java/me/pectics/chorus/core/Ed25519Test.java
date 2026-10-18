@@ -3,6 +3,7 @@ package me.pectics.chorus.core;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
@@ -30,6 +31,27 @@ class Ed25519Test {
         Files.write(publicFile, TestSupport.keyPair().getPublic().getEncoded());
         assertThatThrownBy(() -> Ed25519.loadSigner(privateFile, publicFile))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void loadsPemPublicKeysAndNeverCreatesMissingSigningFiles() throws Exception {
+        var pair = TestSupport.keyPair();
+        Path publicPem = directory.resolve("public.pem");
+        Files.writeString(
+                publicPem,
+                "-----BEGIN PUBLIC KEY-----\n"
+                        + Base64.getEncoder().encodeToString(pair.getPublic().getEncoded())
+                        + "\n-----END PUBLIC KEY-----\n");
+        assertThat(Ed25519.loadVerifier(publicPem).publicKey()).isEqualTo(pair.getPublic());
+
+        Path missingPrivate = directory.resolve("missing-private.pem");
+        Path missingPublic = directory.resolve("missing-public.pem");
+        assertThatThrownBy(() -> Ed25519.loadSigner(missingPrivate, missingPublic))
+                .isInstanceOf(IOException.class);
+        assertThatThrownBy(() -> Ed25519.loadVerifier(missingPublic))
+                .isInstanceOf(IOException.class);
+        assertThat(missingPrivate).doesNotExist();
+        assertThat(missingPublic).doesNotExist();
     }
 
     @Test

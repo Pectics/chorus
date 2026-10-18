@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.stream.Stream;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
+import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.crypto.TicketVerifier;
 import me.pectics.chorus.core.trust.TrustedIssuer;
@@ -86,6 +87,19 @@ class TicketCryptoTest {
         assertThat(first.verifier()).isSameAs(first);
         assertThatThrownBy(() -> new HmacSha256(new byte[31]))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void signatureAlgorithmsExposeOnlyTheirExactJwsIdentifiers() {
+        assertThat(SignatureAlgorithm.ED25519.jwsName()).isEqualTo("Ed25519");
+        assertThat(SignatureAlgorithm.HMAC_SHA256.jwsName()).isEqualTo("HS256");
+        for (var algorithm : SignatureAlgorithm.values()) {
+            assertThat(SignatureAlgorithm.fromJwsName(algorithm.jwsName())).isEqualTo(algorithm);
+        }
+        for (String unsupported : List.of("EdDSA", "HS512", "RSA", "", "ed25519")) {
+            assertThatThrownBy(() -> SignatureAlgorithm.fromJwsName(unsupported))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Test
