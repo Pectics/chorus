@@ -1,2 +1,2 @@
-/** Registry data access; currently implements the server node registry and its snapshots. */
+/** Registry contracts for server node discovery and shared ticket registrations. */
 package me.pectics.chorus.core.registry;

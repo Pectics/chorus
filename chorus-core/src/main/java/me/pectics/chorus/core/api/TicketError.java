@@ -32,7 +32,9 @@ public enum TicketError {
     CAPABILITY_DISABLED,
     /** The Registry is available, but the requested server node is absent. */
     UNKNOWN_TARGET,
-    /** The root Registry cannot serve the operation; local issuer trust is independent. */
+    /**
+     * Registry server node data is unavailable; local trust and replay failures are independent.
+     */
     REGISTRY_UNAVAILABLE,
     ENGINE_CLOSED
 }

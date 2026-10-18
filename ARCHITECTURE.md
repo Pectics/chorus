@@ -90,7 +90,7 @@ chorus/
 │       │   └── config/                 # Ticket 各配置段的加载实现
 │       ├── crypto/                     # 签发/验签能力、密钥与密码学配置
 │       │   └── config/                 # 密码学配置加载实现
-│       ├── registry/                   # Registry 契约与配置；当前实现 ServerNodeRegistry
+│       ├── registry/                   # 服务器节点与防重放登记的 Registry 契约和配置
 │       │   ├── config/                 # Registry 配置与节点文件的加载实现
 │       │   ├── file/                   # CONFIG 来源的服务器节点注册表
 │       │   └── sql/                    # PostgreSQL / MySQL / MariaDB 注册表适配
@@ -168,8 +168,9 @@ chorus/
 
 ### 3.1 控制面：谁维护服务器节点注册表？
 
-**Registry（注册表）** 是可继续扩展的根注册表概念；**`ServerNodeRegistry`（服务器节点注册表）** 是当前阶段已实现的领域注册表，
-后续可按实际需求增补其他领域的注册表。当前运行时接口只包含 `ServerNodeRegistry`，不据此把整个 Registry 等同于服务器节点数据。
+**Registry（注册表）** 是可继续扩展的根注册表概念；当前领域契约包括服务器节点注册表 **`ServerNodeRegistry`**
+和共享票据登记注册表 **`ReplayGuardRegistry`**，不把整个 Registry 等同于服务器节点数据。
+`ServerNodeRegistry` 提供不做 I/O 的节点快照访问；`ReplayGuardRegistry` 提供同步的登记与条件消费，由异步防重放 Guard 调用。
 本地签发者信任继续由独立的 `trust` 模块管理。
 
 **Server List（服务器列表）** 属于玩家展示或配置数据的表述，不是 Core 的运行时抽象。
@@ -187,9 +188,11 @@ Registry 提供两个互斥的**来源模式**：
 本地信任不属于 Registry，统一通过 `verification.trusted-issuers-path` 指定，与 Registry 来源无关。Chorus 不自动分发签发者批准、信任策略、公钥、私钥或 HMAC 密钥，管理员负责在各节点部署所需文件。
 防重放由 `replay-guard.backend` 表达；`REGISTRY` 后端复用所选 Registry 数据库。
 
-Core 对外使用 `TicketError.REGISTRY_UNAVAILABLE` 表示根 Registry 无法为当前操作提供可用数据，
-不按当前唯一实现的数据范围拆成服务器列表错误。当前通过 `ServerNodeRegistry` 访问此边界；
+Core 对外使用 `TicketError.REGISTRY_UNAVAILABLE` 表示 Registry 无法为服务器节点查询提供可用数据，
+不将错误命名绑定到服务器列表这一配置或展示表述。此边界通过 `ServerNodeRegistry` 访问；
 注册表可访问但缺少目标节点时使用 `UNKNOWN_TARGET`，独立的本地信任验证不因 Registry 不可用而失效。
+`ReplayGuardRegistry` 的存储故障经防重放 Guard 返回给 Engine，使用 `REPLAY_REGISTRATION_FAILED` 或 `REPLAY_UNAVAILABLE`，
+不套用服务器节点快照的缓存或错误处理。
 
 跨服主联盟中不必要求所有服主共用一个具有写权限的数据库。可为每个管理域维护自己的服务器节点注册表，再在本地明确授权**外域签发者**。本地管理员选择信任哪些外域公钥和身份类型。
 
@@ -202,6 +205,7 @@ Core 对外使用 `TicketError.REGISTRY_UNAVAILABLE` 表示根 Registry 无法�
 #### 注册与信任分离
 
 - **`ServerNodeRegistry`**：节点 ID、显示名和连接地址，解决“往哪里转”。
+- **`ReplayGuardRegistry`**：共享票据的预登记与原子消费，保存防重放状态，不提供服务器节点管理能力。
 - **`trust.TrustedIssuerStore`**：由本机管理员批准的签发者、算法、验签密钥列表与身份来源范围，解决“本机信任谁”，独立于 Registry。
 - 服务器节点注册表包含某节点不代表授予其签发者信任；服务器节点注册表刷新不添加、续期或撤销本地批准。
 - 心跳信息只用于 UI 与路由提示，不是授予身份签发权限的凭据。
@@ -253,6 +257,12 @@ public interface ServerNodeRegistry {
     Optional<ServerNode> find(String nodeId);
 }
 ```
+
+`registry.ReplayGuardRegistry` 是另一种领域数据契约，定义同步的 `register` 与 `consume`，不继承异步 `ReplayGuard`，
+也不与服务器节点快照共用缓存。`replay.registry.RegistryReplayGuardStore` 同时继承它与统一的 `ReplayGuardStore`，
+补充 Guard 所拥有的存储资源生命周期；包内 `JdbcReplayGuardStore` 实现该接口。
+`RegistryReplayGuard` 组合这个 Store，负责异步调度、期限检查与关闭协调。
+`ReplayGuardRegistry` 当前仅由 `REGISTRY` 后端使用；`CONFIG` 不增加登记文件实现，独立的 `REDIS` 后端也不属于 Registry。
 
 信任信息由独立的 `trust` 包管理：
 
@@ -504,7 +514,8 @@ public interface ReplayGuard {
 不返回 Future 或 `CompletionStage`。`retainUntilMillis` 是已经包含时钟容差的排他保留期限，
 `nowMillis` 是 Guard 在 worker 上采样的执行时间；Store 不计算时钟容差或调度任务。
 本地 Store 记录消费，共享 Store 消费已预登记记录；提交或命令确认完成后才返回结果，未知结果拒绝。
-仅 `RegistryReplayGuardStore` 与 `RedisReplayGuardStore` 声明后端所需的同步 `register`，本地 Store 不提供空操作登记。
+`RegistryReplayGuardStore` 通过 `ReplayGuardRegistry` 增加同步 `register`，`RedisReplayGuardStore` 定义按剩余 TTL 登记的同步 `register`；
+本地 Store 不提供空操作登记。
 异步 `ReplayGuard.register` 保留 LOCAL 的即时完成语义，供 Engine 统一签发流程使用。
 
 `LocalReplayGuard` 依赖 `LocalReplayGuardStore`，负责公开输入校验、有界串行调度、I/O 前后期限检查与关闭协调；
@@ -949,7 +960,7 @@ Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立�
 7. 同时面向私人互信集群和受控服主联盟，信任范围要可配置。
 8. 正版 Gateway → 离线 Backend Profile 透传为第一等场景；随后关注双正版、双离线、旧离线 UUID 兼容；Yggdrasil 再后，Floodgate 不作完工保证。
 9. 先完成可独立测试的 Core，再接平台。
-10. Registry 是可扩展的根注册表，当前仅实现服务器节点注册表 `ServerNodeRegistry`，通过服务器节点列表配置文件或共享数据库提供数据；Server List 属于展示或配置表述。本地可信签发者属于独立的 `trust` 模块，Chorus 不自动分发批准关系或密钥。互信集群入门示例显式选择 HMAC，Ed25519 用于分离签发与验签权限。
+10. Registry 是可扩展的根注册表，当前领域契约包括服务器节点注册表 `ServerNodeRegistry` 与共享票据登记注册表 `ReplayGuardRegistry`；前者通过服务器节点列表配置文件或共享数据库提供数据，后者由 `REGISTRY` 防重放存储实现。Server List 属于展示或配置表述。本地可信签发者属于独立的 `trust` 模块，Chorus 不自动分发批准关系或密钥。互信集群入门示例显式选择 HMAC，Ed25519 用于分离签发与验签权限。
 
 ### 7.2 未决定，不得擅自当作既定需求
 

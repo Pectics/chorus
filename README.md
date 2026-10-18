@@ -79,6 +79,10 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 回调不能阻塞工作线程。
 防重放 API 位于 `me.pectics.chorus.core.replay`；本地实现为 `replay.local.LocalReplayGuard`，当前使用 SQLite。
 `local / registry / redis` 子包按核销后端职责命名，分别对应配置枚举 `LOCAL / REGISTRY / REDIS`。
+`ReplayGuardStore` 是仅含 `consume` 的同步存储契约；各后端的 `LocalReplayGuardStore`、`RegistryReplayGuardStore`、
+`RedisReplayGuardStore` 由 `SqliteReplayGuardStore`、`JdbcReplayGuardStore`、`JedisReplayGuardStore` 分别实现。
+共享后端的 Store 增加预登记；Store 操作可能阻塞，供 Guard 的工作线程调用。
+Guard 对外提供 `CompletionStage`，负责校验、调度、I/O 前后期限检查和存储关闭协调。
 
 配置模型由各业务自己定义：节点位于 `node`，Ticket 编码、签发与验证位于 `ticket`，
 密码学位于 `crypto`，Registry 位于 `registry`，防重放位于 `replay`，本地批准配置位于 `trust`。
@@ -93,9 +97,11 @@ Java 调用方需更新上述包路径与完整类型名；节点角色为 `node
 内置身份解析枚举为 `identity.BuiltinIdentityResolutionPolicy`，通过 `TicketVerificationConfiguration.identityResolutionPolicy()` 获取；
 签发权限中的 `TicketIssuancePolicy.identityAssertionPolicy()` 表示允许声明的身份来源，与本地 Profile 解析分工独立。
 
-Registry 是可扩展的根注册表，当前仅实现服务器节点注册表 `ServerNodeRegistry`。
+Registry 是可扩展的根注册表，当前领域契约包括服务器节点注册表 `ServerNodeRegistry` 和共享票据登记注册表 `ReplayGuardRegistry`。
 Server List 是玩家展示或配置数据的表述；运行时通过同一注册表接口访问服务器节点列表配置文件或共享数据库。
 `ChorusCoreEngine.getServerNodeRegistry()` 返回服务器节点注册表接口，`snapshot()` 返回不可变的 `ServerNodeRegistrySnapshot`，其中 `serverNodes()` 提供按节点 ID 索引的记录。
+`registry.ReplayGuardRegistry` 定义同步的票据登记与条件消费，由 `replay.registry.RegistryReplayGuardStore` 继承，
+通过 JDBC 存储实现；`RegistryReplayGuard` 组合该 Store 执行异步防重放。它不提供节点快照或本地信任，独立 Redis 后端也不属于 Registry。
 本地批准记录位于独立的 `me.pectics.chorus.core.trust` 包。
 节点被纳入服务器节点注册表不会自动获得签发者信任，注册表刷新也不修改本地批准。Chorus 不自动分发信任策略、公钥、私钥或 HMAC 密钥。
 

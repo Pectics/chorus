@@ -24,7 +24,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - `chorus-paper`、`chorus-velocity`、`chorus-fabric` 仍是架构规划的一部分；本地可能存在暂存骨架，
   **有意被 Git 忽略且不纳入构建**。不得因为目录存在就自动启用、放行或补全平台实现。
 - Core 已实现 Phase 1：`CONFIG`（YAML 配置文件）服务器节点注册表与信任、Ed25519 / HMAC-SHA256 Ticket、ZSTD（默认）/ GZIP / NONE 编码与有界解压、身份策略、SQLite 持久化防重放与异步 Engine；
-  单测与本地集成测试覆盖核心闭环。Registry 当前实现服务器节点注册表 `ServerNodeRegistry`，SQL 已支持 PostgreSQL / MySQL / MariaDB；共享防重放支持 `REGISTRY` 和单节点 `REDIS`，使用签发前预登记与接收端条件消费。本地可信签发者由独立 `trust` 模块管理，路径位于 `verification.trusted-issuers-path`，不自动分发信任或密钥。Common 仍只有包职责说明，平台接入尚未实现。
+  单测与本地集成测试覆盖核心闭环。Registry 当前定义服务器节点注册表 `ServerNodeRegistry` 与共享票据登记契约 `ReplayGuardRegistry`，SQL 已支持 PostgreSQL / MySQL / MariaDB；共享防重放支持 `REGISTRY` 和单节点 `REDIS`，使用签发前预登记与接收端条件消费。本地可信签发者由独立 `trust` 模块管理，路径位于 `verification.trusted-issuers-path`，不自动分发信任或密钥。Common 仍只有包职责说明，平台接入尚未实现。
 - 实施顺序遵循架构 §6：Core 与 SQL 服务器节点注册表完成验证后，只推进一条
   **正版 Gateway → 离线 Paper Backend** 路线；其他平台与扩展场景按后续阶段推进。
 
@@ -112,8 +112,8 @@ feat(core): Add the verification pipeline
 ## 4. 实现约束
 
 - 实现收敛到架构已确认的当前阶段；用满足现有契约的最小实现，不主动设计架构范围外的能力。
-- 命名遵循架构 §3.1：`Registry` 是可扩展的根注册表，当前代码使用 `ServerNodeRegistry` 表达服务器节点注册表。
-  Server List 仅用于玩家展示、服务器节点列表配置文件或共享数据库的描述，不作为 Core 运行时抽象；Registry 访问不可用统一使用 `REGISTRY_UNAVAILABLE`。
+- 命名遵循架构 §3.1：`Registry` 是可扩展的根注册表，当前使用 `ServerNodeRegistry` 表达服务器节点注册表，`ReplayGuardRegistry` 表达共享票据登记契约。
+  Server List 仅用于玩家展示、服务器节点列表配置文件或共享数据库的描述，不作为 Core 运行时抽象；服务器节点注册表访问不可用统一使用 `REGISTRY_UNAVAILABLE`，共享票据登记与消费使用防重放错误语义。
   文件系统目录继续使用 `directory`；具体注册表、根 Registry 与展示视图的职责边界不得混用。
 - 类型名与公开成员名优先完整表达领域对象、作用范围和职责，不因词数或长度省略必要语义；例如服务器节点注册表快照使用 `ServerNodeRegistrySnapshot`。
   当前先保证语义准确，不为缩短名称牺牲职责边界；重命名时同步文件名、调用处、测试、文档、文件头引用及静态分析配置。
@@ -125,7 +125,8 @@ feat(core): Add the verification pipeline
 - 密码学范围固定为 Ed25519 与 HMAC-SHA256；按架构 §3.7 的实际能力组织实现，不为其他算法增加扩展层。
 - 依赖方向为平台 → common → core；Core 不持有 `Player`、`GameProfile`、Netty `Channel` 等平台对象。
   数据库 I/O 与定时调度通过接口封装。
-- Core 的签发、验证及可能触达 SQL 的对外操作使用 `CompletionStage`；平台层不得在 Netty EventLoop 中 `.join()` 或无超时阻塞。
+- Core 的签发、验证及可能触达 SQL 的对外业务操作使用 `CompletionStage`；同步 Store 与 `ReplayGuardRegistry` 是工作线程调用的存储边界，具体约束见架构 §3.6。
+  平台层不得在 Netty EventLoop 中执行阻塞存储操作、`.join()` 或无超时等待。
 - 公开 API 的输入约束、线程约束与错误语义随接口提交；可变字节数组防御性复制，集合采用不可变快照。
 - 每个配置文件各有独立、完整、版本化的 Schema，位于 `chorus-core/src/main/resources/me/pectics/chorus/core/config/schema/`。
   文件格式规则优先维护在对应 Schema 与契约测试中；Java 负责值转换和运行时逻辑，不重复维护字段白名单或格式规则表。
