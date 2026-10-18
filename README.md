@@ -49,6 +49,7 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 ./gradlew spotlessCheck          # 只检查格式
 ./gradlew spotbugs               # 分析当前启用模块全部 source set，不执行测试
 ./gradlew spotbugsMain           # 仅分析生产代码
+./gradlew :chorus-core:pitest    # PIT 变异测试；可选，不在 build 中执行
 ./gradlew projects              # 查看实际启用的模块
 ```
 

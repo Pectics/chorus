@@ -38,6 +38,7 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 ./gradlew spotlessCheck         # 只检查格式
 ./gradlew spotbugs              # 当前启用模块全部 source set 的静态分析，不执行测试
 ./gradlew spotbugsMain          # 仅分析当前启用模块的生产代码
+./gradlew :chorus-core:pitest   # 变异测试探针（可选，不在 build 中执行）
 ./gradlew build                 # 当前启用模块的格式检查、静态分析、构建与测试
 ./gradlew projects              # 核对实际启用的模块
 ```
@@ -55,6 +56,9 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - SpotBugs 分析当前启用模块的生产代码与测试代码，使用最大分析深度和中/高置信度告警；发现告警时使 `check` / `build` 失败。
   `spotbugs` 仅编译并分析各 source set，包含 SQL 集成测试源码但不启动数据库或执行测试；HTML / XML 报告位于各模块 `build/reports/spotbugs/`。
   先修复实际问题；确认为误报或有意契约时，在 `gradle/spotbugs-exclude.xml` 中仅对具体告警和成员排除并写明理由，不用全量 baseline 或忽略失败绕过检查。
+- `:chorus-core:pitest` 运行 PIT 变异测试，覆盖单元与本地集成测试，输出 `build/reports/pitest/` 并按 90% 变异/行覆盖率阈值失败。
+  该任务按需执行，不纳入 `check` / `build`；`JdbcServerNodeStore` 因每个变异体都需真实数据库而排除，其行为由 `sqlIntegrationTest` 验证。
+  新增或修改测试后应复核存活变异体；无覆盖、等价或仅能由外部服务验证的变异体须在结论中说明，不能通过放宽阈值掩盖。
 - 依赖、平台与插件版本从 `gradle/libs.versions.toml` 读取，模块脚本不硬编码版本；
   foojay-resolver 例外写在 `settings.gradle.kts`，因为其 `plugins {}` 无法读取 catalog。
   项目发布版本目前在 `gradle.properties`，Wrapper 发行包版本在 `gradle/wrapper/gradle-wrapper.properties`，不要在模块中复制。

@@ -15,6 +15,7 @@ plugins {
     java
     alias(libs.plugins.spotless)
     alias(libs.plugins.spotbugs) apply false
+    alias(libs.plugins.pitest) apply false
 }
 
 spotless {

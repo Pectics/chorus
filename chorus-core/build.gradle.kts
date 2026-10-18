@@ -12,6 +12,11 @@ import groovy.json.JsonSlurper
 import java.io.FilterReader
 import java.io.Reader
 import java.io.StringReader
+import java.math.BigDecimal
+
+plugins {
+    alias(libs.plugins.pitest)
+}
 
 buildscript {
     dependencies { classpath(localGroovy()) }
@@ -118,4 +123,34 @@ tasks.register<Test>("sqlIntegrationTest") {
     systemProperty("chorus.sql.mysql.image", "mysql:" + libs.versions.mysql.test.image.get())
     systemProperty("chorus.sql.mariadb.image", "mariadb:" + libs.versions.mariadb.test.image.get())
     shouldRunAfter(integrationTestTask)
+}
+
+val pitestEngineVersion = libs.versions.pitest.engine.get()
+val pitestJunit5PluginVersion = libs.versions.pitest.junit5.plugin.get()
+
+pitest {
+    pitestVersion.set(pitestEngineVersion)
+    junit5PluginVersion.set(pitestJunit5PluginVersion)
+    targetClasses.set(setOf("me.pectics.chorus.core.*"))
+    // The JDBC adapter's observable contract needs live PostgreSQL/MySQL/MariaDB services and is
+    // verified by sqlIntegrationTest; PIT cannot start a database per mutant.
+    excludedClasses.set(setOf("me.pectics.chorus.core.registry.sql.JdbcServerNodeStore"))
+    testSourceSets.set(setOf(sourceSets.test.get(), sourceSets.getByName("integrationTest")))
+    mutators.set(setOf("STRONGER"))
+    outputFormats.set(setOf("HTML", "XML"))
+    timestampedReports.set(false)
+    threads.set(Runtime.getRuntime().availableProcessors().coerceAtMost(8))
+    timeoutConstInMillis.set(10_000)
+    timeoutFactor.set(BigDecimal("2.0"))
+    fullMutationMatrix.set(true)
+    mutationThreshold.set(90)
+    coverageThreshold.set(90)
+    failWhenNoMutations.set(true)
+    verbose.set(false)
+    jvmArgs.set(
+        listOf(
+            "-Dchorus.integration.classpath=" +
+                sourceSets.getByName("integrationTest").runtimeClasspath.asPath,
+        ),
+    )
 }
