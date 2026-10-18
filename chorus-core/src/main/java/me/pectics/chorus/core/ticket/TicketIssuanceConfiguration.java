@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.5, 3.8, and 3.9
- * sync: Consumers must check sender TTL against the separate verification maximum lifetime.
+ * sync: Consumers must check sender TTL against TicketConfiguration.maxLifetime.
  * @endcontext
  */
 package me.pectics.chorus.core.ticket;

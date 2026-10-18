@@ -308,8 +308,7 @@
           "description": "Local issuer approval document relative to chorus.yml, independent of the registry provider. Key paths are relative to this document; trust and key files are never synchronized by Chorus."
         },
         "enforce-transfer-intent": {"type": "boolean"},
-        "identity-policy": {"enum": ["ADOPT_UPSTREAM", "FORCE_OFFLINE_UUID", "STRICT_ONLINE_MATCH"]},
-        "ip-binding": {"const": "DISABLED"}
+        "identity-policy": {"enum": ["ADOPT_UPSTREAM", "FORCE_OFFLINE_UUID", "STRICT_ONLINE_MATCH"]}
       }
     },
     "replay-guard": {

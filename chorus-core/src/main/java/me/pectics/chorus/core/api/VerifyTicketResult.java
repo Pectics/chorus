@@ -4,7 +4,7 @@ import java.util.Objects;
 import me.pectics.chorus.core.identity.AuthenticatedIdentity;
 import me.pectics.chorus.core.identity.ResolvedPlayerProfile;
 
-/** Returned only after durable consumption; later platform failures do not restore the ticket. */
+/** Returned after replay confirmation; later platform failures do not restore the ticket. */
 public record VerifyTicketResult(
         ResolvedPlayerProfile resolvedProfile, AuthenticatedIdentity retainedIdentity, String jti) {
     public VerifyTicketResult {

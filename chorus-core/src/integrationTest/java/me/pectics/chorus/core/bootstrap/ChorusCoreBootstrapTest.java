@@ -101,7 +101,6 @@ class ChorusCoreBootstrapTest {
                   trusted-issuers-path: trusted-issuers.yml
                   enforce-transfer-intent: true
                   identity-policy: ADOPT_UPSTREAM
-                  ip-binding: DISABLED
                 replay-guard:
                   backend: LOCAL
                   local:

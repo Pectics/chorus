@@ -59,6 +59,8 @@ Chorus 利用这些机制构建**无常驻游戏流量中转的跨服互联体�
 
 v1 **不承诺**：统一背包/经济/玩家存档、跨服数据写锁、全局单会话、所有版本的客户端 Mod 兼容、恶意客户端主动分享 Cookie 后不可冒用、全网强一致节点在线状态。
 
+项目当前没有存量用户、已部署配置或运行数据库；开发期间直接演进当前配置与存储契约，不为历史开发快照建立兼容层或迁移流程。正式部署后的升级要求另行确认。
+
 不同 Backend 在本产品边界内可视为不同服务器。游戏数据共享系统有自己的并发和持久化责任；Chorus 的本地转移中状态用于防止重复执行转移动作，不是跨服存档事务。
 
 ---
@@ -176,7 +178,7 @@ chorus/
 Registry 提供两个互斥的**来源模式**：
 
 1. **`CONFIG`**：每台 Chorus 节点读取管理员提供的服务器节点列表配置文件 `servers.yml`。不存在自动同步权威；管理员负责分发与更新文件，可用 Git/配置管理工具辅助。它在技术上可工作，不需要“中央 Proxy”。
-2. **`SQL`**：同一管理域使用服务器节点列表共享数据库，由 `SqlServerNodeRegistry` 提供统一运行时访问。**数据库表由管理员变更**；节点启动不自动插入/批准可信节点。本轮只通过 JDBC 读取服务器节点记录，支持 PostgreSQL、MySQL、MariaDB。签发者批准、信任策略和所有密钥继续由本地文件维护，不读取或创建 SQL 信任表；Turso/libSQL 留待后续适配。
+2. **`SQL`**：同一管理域使用服务器节点列表共享数据库，由 `SqlServerNodeRegistry` 提供统一运行时访问。节点启动自动创建表结构，管理员维护服务器节点记录；节点不自动插入/批准可信节点。服务器节点注册表通过 JDBC 只读访问，`REGISTRY` 防重放通过独立池写入登记与消费，支持 PostgreSQL、MySQL、MariaDB。签发者批准、信任策略和所有密钥继续由本地文件维护，不读取或创建 SQL 信任表；Turso/libSQL 留待后续适配。
 
 两种模式使用相同的服务器节点注册表读取接口；Registry 来源由 `registry.provider` 表达，`CONFIG` 的服务器节点列表配置文件路径为 `registry.config.servers-path`。SQL 连接参数位于 `registry.sql`，当前服务器节点注册表快照策略位于 `registry.cache`，无需 `registry.config`。
 本地信任不属于 Registry，统一通过 `verification.trusted-issuers-path` 指定，与 Registry 来源无关。Chorus 不自动分发签发者批准、信任策略、公钥、私钥或 HMAC 密钥，管理员负责在各节点部署所需文件。
@@ -505,6 +507,9 @@ public interface ReplayGuard {
 存储操作返回后再次检查该期限；排队、锁等待或提交确认跨过期限时拒绝成功返回，已经提交的消费仍不恢复。
 LOCAL 的 `busy-timeout` 应用于 SQLite 连接的锁等待，包括启动初始化和消费事务。
 
+Redis 的命令确认依赖服务端持久化策略；跨崩溃的一次性消费保证要求同时持久化登记 `SET` 和消费 `DEL`，由运维启用 AOF `appendfsync always`。
+使用可能丢失已确认写入的持久化策略或恢复旧快照时，已消费的登记可能重新出现，不属于该保证。Core 不自动修改 Redis 持久化配置。
+
 共享 SQL 与本地 SQLite 均已实现；最终默认后端仍属于 §7.2 的未决运维选型，不由配置契约推定。
 时钟容差固定为 30 秒，不提供运行中修改。
 
@@ -654,7 +659,6 @@ verification:
   trusted-issuers-path: trusted-issuers.yml
   enforce-transfer-intent: true
   identity-policy: ADOPT_UPSTREAM
-  ip-binding: DISABLED
 
 replay-guard:
   backend: LOCAL
@@ -703,7 +707,7 @@ operator-b/peer-01:
 | 信任条目 `algorithm: ED25519 / HMAC_SHA256` | 为该签发者的全部 `key / keys` 绑定验签算法；省略为 `ED25519` | 已实现；信任加载不生成密钥，不跨算法回退 |
 | `ticket.compression: NONE` | 不压缩完整 Ticket 负载 | 已实现 |
 | `ticket.compression: ZSTD / GZIP` | 压缩完整签名 Ticket；省略配置时默认 `ZSTD` | 已实现；版本化帧与有界解压，接收端兼容所有三种编码 |
-| `registry.provider: SQL` | JDBC 读取服务器节点记录并发布注册表快照 | 已实现 PostgreSQL / MySQL / MariaDB；初始化脚本与独立集成测试见 §3.3、§6 |
+| `registry.provider: SQL` | JDBC 读取服务器节点记录并发布注册表快照 | 已实现 PostgreSQL / MySQL / MariaDB；自动建表与独立集成测试见 §3.3、§6 |
 | `verification.trusted-issuers-path` | 独立的本地签发者批准文件，两种 Registry 来源均使用 | 已实现；密钥路径相对该文件，信任与密钥不自动分发 |
 | `replay-guard.backend: LOCAL` | 本地 SQLite，参数位于 `local.path / busy-timeout` | 已实现；仅接收端，Sender 不登记 |
 | `replay-guard.backend: REGISTRY` | 复用 `registry` 配置的数据库；`CONFIG` 时无效 | 已实现；签发前登记、接收端原子删除 |
@@ -712,13 +716,12 @@ operator-b/peer-01:
 
 这些枚举值描述配置契约；三种防重放后端均已交付。未实现的认证来源仍在 Engine 中拒绝，`REGISTRY + CONFIG` 由 Schema 拒绝。不得自动切换到其他压缩方式或核销后端。
 `ticket.compression` 可省略，默认 `ZSTD`；Schema 的 `default` 为契约说明，启动装配与无压缩参数的 Java 构造器落实相同默认值。
-旧版接收端仅支持 `NONE`；滚动升级时先升级接收端，发送端在接收端升级前显式保留 `NONE`。
 `ticket.max-payload-bytes` 限制包含 JWS 编码、签名及压缩帧的最终 Cookie 负载，`max-property-bytes` 限制身份属性 UTF-8 字节数。
 `issuance.ttl` 仅发送角色需要；`ticket.max-lifetime` 同时约束签发与接收的票据寿命；接收方验证规则位于 `verification`。时钟容差固定为 30 秒，不再配置。身份解析通过 `identity` 包的 `BuiltinIdentityResolutionPolicy` / `IdentityResolutionPolicy` 表达。
 主配置 `node.display-name` 当前仅为描述字段，Core 不消费此值；运行时服务器节点注册表使用 `servers.yml` 中的 `display-name`，省略时使用节点 ID。
 文件路径相对主配置，信任密钥路径相对签发者文件。空服务器节点注册表或信任映射写作 `{}`，旧的 `servers` / `trusted-issuers` 包装根键和旧字段名不属于当前文件契约。
 
-主配置必须把旧 `registry.config.issuers-path` 移到 `verification.trusted-issuers-path`；旧位置由 Schema 拒绝，不提供静默兼容或回退。`trusted-issuers.yml` 的文件内容与省略算法语义不变。
+本地信任路径仅位于 `verification.trusted-issuers-path`；`registry.config` 只承载 CONFIG 来源的服务器节点文件路径。`trusted-issuers.yml` 的省略算法语义为 `ED25519`。
 SQL 模式无需 `registry.config`，不读取 `servers-path`；`sql` 与 `cache` 必填。若保留非活动的 `config`，仍须满足服务器节点注册表配置的完整 Schema。
 `sql.engine` 为 `POSTGRESQL / MYSQL / MARIADB`，连接字段为 `host / port / database / username / password-path`。
 `tls.mode` 为 `DISABLED / VERIFY_FULL`；可选 `ca-cert` 是相对主配置的 PEM CA bundle 路径，省略时统一使用 JVM 默认信任库。
@@ -861,8 +864,8 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 |---|---|
 | 共享服务器节点注册表不可用，缓存仍在可信允许窗口内 | 使用缓存中的地址继续转移；验签使用独立的本地批准与密钥 |
 | 共享服务器节点注册表不可用，缓存不存在或超过可用期限 | 拒绝依赖缺失/过期服务器节点注册表信息的新转移 |
-| 本地 ReplayGuard 达容量上限 | 拒绝新票据，不提前删除仍有效记录 |
-| SQL ReplayGuard 不可用 | 拒绝核销，不动态切到本地模式 |
+| 防重放 I/O 队列已满 | 拒绝登记或消费；消费返回 `UNAVAILABLE`，签发返回 `REPLAY_REGISTRATION_FAILED` |
+| SQL / Redis ReplayGuard 不可用或结果未知 | 拒绝登记与核销，不重试或切换后端 |
 | Ticket 已核销，平台后续登录失败 | 本票据作废；重新获取 Ticket |
 | Sender 转移发包失败 | 本地释放转移中状态；如 Ticket 已发行，等待短期过期或按可用机制撤销 |
 | Receiver 或 Sender 崩溃 | 不要求依赖跨服锁释放；共享背包一致性交由外部业务系统 |

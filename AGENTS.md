@@ -19,11 +19,12 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 
 ## 2. 当前开发范围（随项目演进更新）
 
+- 当前没有存量用户、已部署配置文件或运行数据库；按当前契约直接演进，不为历史开发快照增加兼容层、配置迁移或数据库升级过渡逻辑。出现正式部署后再确认升级要求。
 - 当前主要开发并纳入 Git 白名单 / Gradle 的模块只有 `chorus-core` 和 `chorus-common`。
 - `chorus-paper`、`chorus-velocity`、`chorus-fabric` 仍是架构规划的一部分；本地可能存在暂存骨架，
   **有意被 Git 忽略且不纳入构建**。不得因为目录存在就自动启用、放行或补全平台实现。
 - Core 已实现 Phase 1：`CONFIG`（YAML 配置文件）服务器节点注册表与信任、Ed25519 / HMAC-SHA256 Ticket、ZSTD（默认）/ GZIP / NONE 编码与有界解压、身份策略、SQLite 持久化防重放与异步 Engine；
-  单测与本地集成测试覆盖核心闭环。Registry 当前仅实现服务器节点注册表 `ServerNodeRegistry`，SQL 已支持 PostgreSQL / MySQL / MariaDB；本地可信签发者由独立 `trust` 模块管理，路径位于 `verification.trusted-issuers-path`，不自动分发信任或密钥。Common 仍只有包职责说明，平台接入尚未实现。
+  单测与本地集成测试覆盖核心闭环。Registry 当前实现服务器节点注册表 `ServerNodeRegistry`，SQL 已支持 PostgreSQL / MySQL / MariaDB；共享防重放支持 `REGISTRY` 和单节点 `REDIS`，使用签发前预登记与接收端条件消费。本地可信签发者由独立 `trust` 模块管理，路径位于 `verification.trusted-issuers-path`，不自动分发信任或密钥。Common 仍只有包职责说明，平台接入尚未实现。
 - 实施顺序遵循架构 §6：Core 与 SQL 服务器节点注册表完成验证后，只推进一条
   **正版 Gateway → 离线 Paper Backend** 路线；其他平台与扩展场景按后续阶段推进。
 
@@ -136,7 +137,7 @@ feat(core): Add the verification pipeline
 - 防重放实现按后端职责命名：`replay.local.LocalReplayGuard` 对应 `LOCAL`，`replay.registry` 对应 `REGISTRY`，`replay.redis` 对应 `REDIS`。
   本地后端当前使用 SQLite，持久化提交确认后才返回成功；保留原数据库及 WAL，故障时拒绝，不回退内存。
 - 架构 §7.2 的管理方式、核销默认后端、心跳权限、联盟 Attestation、后续数据库扩展、平台最低版本和运维默认参数仍未决定。
-  SQL 运行账号权限与未来写入所需凭据配置、PostgreSQL `sql.schema` 必须保留 TODO；当前仅做服务器节点注册表读取，不借此引入管理写接口或密钥同步。
+  SQL 运行账号固定要求建表与读写权限；注册表读池保持只读，防重放写池使用 `READ COMMITTED`。PostgreSQL `sql.schema` 及将来是否拆分管理/核销账号保留 TODO；本轮自动建表与核销写入不引入管理写接口或密钥同步。
   实现所需临时选择保持可替换，并标注 `UNDECIDED`（未决）及设计出处，不将示例值写成产品承诺。
 
 ## 5. 注释与文件头引用区

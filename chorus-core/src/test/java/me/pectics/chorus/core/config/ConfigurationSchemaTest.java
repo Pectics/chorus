@@ -17,6 +17,7 @@ import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SpecificationVersion;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import me.pectics.chorus.core.config.yaml.YamlConfigurationLoader.ConfigurationDocumentType;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
 import me.pectics.chorus.core.node.ServerNodeRole;
@@ -84,6 +85,19 @@ class ConfigurationSchemaTest {
                     assertThat(contract(document).validate(fixture(other))).isNotEmpty();
                 }
             }
+        }
+    }
+
+    @Test
+    void verificationRejectsRemovedFields() {
+        for (var field :
+                Map.of("ip-binding", "DISABLED", "clock-skew", "2s", "max-lifetime", "15s")
+                        .entrySet()) {
+            var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
+            ((ObjectNode) core.get("verification")).put(field.getKey(), field.getValue());
+            assertThat(contract(ConfigurationDocumentType.CORE).validate(core))
+                    .as("Removed verification field %s", field.getKey())
+                    .isNotEmpty();
         }
     }
 

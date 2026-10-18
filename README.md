@@ -144,7 +144,6 @@ verification:
   trusted-issuers-path: trusted-issuers.yml
   enforce-transfer-intent: true
   identity-policy: ADOPT_UPSTREAM
-  ip-binding: DISABLED
 replay-guard:
   backend: LOCAL
   local:
@@ -185,7 +184,7 @@ issuance:
 
 `ticket.compression` 支持 `ZSTD`（默认）、`GZIP` 和 `NONE`，省略该字段时使用 ZSTD；这是已确认的编码默认值，其他运维限额仍须显式配置。
 先签名，再压缩完整 JWS；Cookie 字节限额包含压缩帧，解压后 JWS 限制为 64 KiB，属性 UTF-8 预算仍独立生效。
-接收端自动识别所有三种编码，本节点的压缩选择只影响签发。`NONE` 保持原有裸 JWS；旧版接收端只支持此格式，滚动升级时先升级接收端，发送端在此之前显式保留 `NONE`。
+接收端自动识别所有三种编码，本节点的压缩选择只影响签发。`NONE` 输出不带压缩帧的 ASCII JWS。
 
 `replay-guard.backend` 可选 `LOCAL | REGISTRY | REDIS`。
 `LOCAL` 使用 SQLite，仅接收端使用；参数位于 `replay-guard.local`。
@@ -209,14 +208,17 @@ replay-guard:
     pool: {size: 4}
 ```
 
-Redis 的 `SET` 确认不等于落盘；需要崩溃持久性时由运维启用 AOF `appendfsync always`。
+Redis 的命令确认依赖服务端持久化策略；跨崩溃的一次性消费保证要求登记 `SET` 和消费 `DEL` 都被持久化，由运维启用 AOF `appendfsync always`。
+恢复到消费前的快照或丢失已确认的 `DEL` 可能让登记重新出现。Core 不自动修改 Redis 持久化配置。
+
+防重放任务进入 worker 时重新检查 `exp + 30s`，Redis 的剩余 TTL 扣除排队时间；存储返回时已跨过期限也拒绝成功返回，已经提交的消费不恢复。
 
 主配置内的路径相对 `chorus.yml`；服务器节点列表配置文件位于 `registry.config.servers-path`，信任文件为 `verification.trusted-issuers-path`，批准的密钥路径相对信任文件。
 `registry.config.ConfigServerNodeRegistryLoader.loadRegistry` / `reloadRegistry` 加载和替换 `registry.file.FileServerNodeRegistry` 的服务器节点注册表快照；
 `trust.config.ConfigTrustedIssuerLoader.loadStore` / `reloadStore` 独立加载和替换 `trust.file.FileTrustedIssuerStore` 的本地批准记录。
 重载各自完整校验后原子替换，失败保留该对象原快照；这些文件 I/O 入口须在平台事件线程之外调用，不自动监视文件。
 直接装配 Engine 时可重载所注入的对象；`ChorusCoreBootstrap.open` 创建的本地信任变更通过重新打开 Engine 生效。
-迁移旧主配置时，把 `registry.config.issuers-path` 移到 `verification.trusted-issuers-path`；旧位置由 Schema 拒绝，SQL 模式可删除整个 `registry.config`。
+本地信任路径仅位于 `verification.trusted-issuers-path`；`registry.config` 只承载 CONFIG 来源的节点文件路径，SQL 模式无需该段。
 `GATEWAY` 仅签发 Ticket，`BACKEND` 仅接收 Ticket，`PEER` 同时支持两种操作。需要接收后继续转服的节点使用 `PEER`，同时配置签发密钥、`issuance` 与 `replay-guard`。
 `issuance.allowed-targets` 限制本节点可以签发的目标；本机签发者文件只配置受信任签发者及其身份权限，验票时检查目标为本机。
 主配置的 `node.display-name` 目前仅为描述字段，Core 不消费此值；运行时服务器显示名来自所选服务器节点注册表；`CONFIG` 未配置时使用节点 ID，SQL 表要求显式显示名。
@@ -310,7 +312,7 @@ registry:
 
 `engine` 可选 `POSTGRESQL / MYSQL / MARIADB`，数据库切换不改变配置结构。`SQL` 模式无需 `registry.config`，不读取 `servers-path`。
 本地信任仍由 `verification.trusted-issuers-path` 指定，与切换 Registry 来源无关。
-启动时使用配置账号自动、幂等地创建 `chorus_schema`、`chorus_servers` 与 `chorus_replay_registrations`，并校验结构版本；
+启动时使用配置账号自动、幂等地创建 `chorus_schema`、`chorus_servers` 与 `chorus_replay_registrations`，并校验结构版本；PostgreSQL 以事务级 advisory lock 协调多节点并发初始化；
 不再需要管理员手工执行初始化脚本。账号必须具备建表与读写权限；注册表读取使用只读连接池，防重放写入使用独立读写池。
 管理员仍需维护 `chorus_servers`，包括本节点及签发策略允许的所有目标。结构版本位于 `chorus_schema`，服务器 ID 区分大小写。
 路由表使用拆分的 `host`、`port`，IPv6 的 `host` 不带方括号：
@@ -321,7 +323,7 @@ VALUES ('gateway', 'Gateway', 'gateway.example.net', 25565),
        ('backend', 'Backend', 'backend.example.net', 25565);
 ```
 
-运行账号必须具备建表与读写权限：启动时自动创建结构，`REGISTRY` 防重放写入登记记录。注册表读取池保持 `readOnly=true`，防重放写入使用独立读写池。
+运行账号必须具备建表与读写权限：启动时自动创建结构，`REGISTRY` 防重放写入登记记录。注册表读取池保持 `readOnly=true`，防重放写入使用独立的 `READ COMMITTED` 读写池。
 **TODO：PostgreSQL 的 `sql.schema` 暂不引入，本轮固定使用 `public`。** 心跳与共享信任/密钥表不在本轮实现。
 
 `password-path` 与 `ca-cert` 相对 `chorus.yml`；密码是上限 64 KiB 的 UTF-8 文件，只去掉末尾一个 LF/CRLF，保留其余空白。

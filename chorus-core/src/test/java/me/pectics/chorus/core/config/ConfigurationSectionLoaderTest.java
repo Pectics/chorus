@@ -142,8 +142,7 @@ class ConfigurationSectionLoaderTest {
                                         """
                                         {"trusted-issuers-path":"trust/issuers.yml",
                                          "enforce-transfer-intent":false,
-                                         "identity-policy":"STRICT_ONLINE_MATCH",
-                                         "ip-binding":"DISABLED"}
+                                         "identity-policy":"STRICT_ONLINE_MATCH"}
                                         """),
                                 directory);
         assertThat(strict.enforceTransferIntent()).isFalse();
@@ -286,14 +285,23 @@ class ConfigurationSectionLoaderTest {
                 """
                 {"backend":"REDIS","redis":{"host":"localhost","port":6379,"database":0,
                  "username":"chorus","password-path":"redis-password.txt",
-                 "tls":{"mode":"VERIFY_FULL"%s},
+                 "tls":{"mode":"VERIFY_FULL"CA_CERT_FIELD},
                  "timeouts":{"connect":"2s","command":"2s","acquire":"500ms"},
                  "pool":{"size":2}}}
                 """;
-        assertThat(loader.load(json(base.formatted("")), directory).redis().tls().caCert())
+        assertThat(
+                        loader.load(json(base.replace("CA_CERT_FIELD", "")), directory)
+                                .redis()
+                                .tls()
+                                .caCert())
                 .isNull();
         assertThat(
-                        loader.load(json(base.formatted(",\"ca-cert\":\"ca.pem\"")), directory)
+                        loader.load(
+                                        json(
+                                                base.replace(
+                                                        "CA_CERT_FIELD",
+                                                        ",\"ca-cert\":\"ca.pem\"")),
+                                        directory)
                                 .redis()
                                 .tls()
                                 .caCert())
