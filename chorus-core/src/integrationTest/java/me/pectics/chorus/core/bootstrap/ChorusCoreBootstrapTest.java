@@ -232,6 +232,62 @@ class ChorusCoreBootstrapTest {
     }
 
     @Test
+    void senderDoesNotOpenReplayStateWhenNoReplaySectionIsConfigured() throws Exception {
+        String sender = configuration("gateway", ServerNodeRole.GATEWAY);
+        Path senderFile =
+                write("gateway.yml", sender.substring(0, sender.indexOf("replay-guard:")));
+        try (var core = ChorusCoreBootstrap.open(senderFile, clock)) {
+            assertThat(core.getCookieKey()).isEqualTo("chorus:ticket");
+            assertThat(core.getServerNodeRegistry().find("backend")).isPresent();
+        }
+        assertThat(directory.resolve("state")).doesNotExist();
+    }
+
+    @Test
+    void receiverDoesNotRequireIssuanceOrLocalSigningMaterial() throws Exception {
+        Path receiverFile = write("backend.yml", configuration("backend", ServerNodeRole.BACKEND));
+        Files.delete(directory.resolve("private.der"));
+        try (var receiver = ChorusCoreBootstrap.open(receiverFile, clock)) {
+            assertThat(receiver.getCookieKey()).isEqualTo("chorus:ticket");
+            assertThat(receiver.getServerNodeRegistry().find("backend")).isPresent();
+        }
+        assertThat(directory.resolve("state/backend.db")).isRegularFile();
+    }
+
+    @Test
+    void rejectsMissingLocalNodeOrIssuanceTargetsBeforeOpeningState() throws Exception {
+        Path servers = directory.resolve("servers.yml");
+        String complete = Files.readString(servers);
+        Path senderFile = write("gateway.yml", configuration("gateway", ServerNodeRole.GATEWAY));
+        for (String missing : java.util.List.of("backend", "gateway")) {
+            Files.writeString(servers, complete.replaceAll("(?m)^" + missing + ":$", "removed:"));
+            assertThat(Files.readString(servers)).contains("removed:");
+            assertThatThrownBy(() -> ChorusCoreBootstrap.open(senderFile, clock))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThat(directory.resolve("state")).doesNotExist();
+        }
+        Files.writeString(servers, complete);
+        try (var sender = ChorusCoreBootstrap.open(senderFile, clock)) {
+            assertThat(sender.getServerNodeRegistry().find("backend")).isPresent();
+        }
+    }
+
+    @Test
+    void acceptsAnOptionalLocalDisplayNameWithoutConsumingIt() throws Exception {
+        Path file =
+                write(
+                        "backend.yml",
+                        configuration("backend", ServerNodeRole.BACKEND)
+                                .replace(
+                                        "  id: backend\n",
+                                        "  id: backend\n  display-name: Backend\n"));
+        try (var receiver = ChorusCoreBootstrap.open(file, clock)) {
+            assertThat(receiver.getServerNodeRegistry().find("backend").orElseThrow().displayName())
+                    .isEqualTo("backend");
+        }
+    }
+
+    @Test
     void serverNodeRegistryReloadDoesNotReadTrustAndDoesNotAgeOutConfigApproval() throws Exception {
         Path servers = directory.resolve("servers.yml");
         Path trust = directory.resolve("trusted-issuers.yml");

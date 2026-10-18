@@ -36,8 +36,12 @@ class LocalReplayGuardTest {
     }
 
     private CompletableFuture<ReplayDecision> consume(LocalReplayGuard guard, String jti) {
-        return guard.consume("gateway", jti, "backend", TestSupport.NOW.plusSeconds(15))
-                .toCompletableFuture();
+        return consume(guard, "gateway", jti, "backend", TestSupport.NOW.plusSeconds(15));
+    }
+
+    private CompletableFuture<ReplayDecision> consume(
+            LocalReplayGuard guard, String issuer, String jti, String target, Instant expiresAt) {
+        return guard.consume(issuer, jti, target, expiresAt).toCompletableFuture();
     }
 
     @Test
@@ -193,6 +197,139 @@ class LocalReplayGuardTest {
                                 "SELECT name FROM sqlite_schema WHERE name='chorus_consumed_tickets'")) {
             assertThat(rows.next()).isFalse();
         }
+    }
+
+    @Test
+    void rejectsMissingIdentifiersAndWrongTargetsWithoutConsuming() throws Exception {
+        Path file = directory.resolve("replay.db");
+        try (var guard = open(file, 10)) {
+            for (String[] ids :
+                    new String[][] {
+                        {null, "jti"},
+                        {"", "jti"},
+                        {" ", "jti"},
+                        {"gateway", null},
+                        {"gateway", ""},
+                        {"gateway", " "}
+                    }) {
+                assertThatThrownBy(
+                                () ->
+                                        guard.consume(
+                                                ids[0],
+                                                ids[1],
+                                                "backend",
+                                                TestSupport.NOW.plusSeconds(15)))
+                        .isInstanceOf(IllegalArgumentException.class);
+            }
+            assertThat(
+                            consume(
+                                            guard,
+                                            "gateway",
+                                            "targeted",
+                                            "another-node",
+                                            TestSupport.NOW.plusSeconds(15))
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.UNAVAILABLE);
+            assertThat(consume(guard, "targeted").get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+        }
+    }
+
+    @Test
+    void expiredRetentionIsRejectedAtTheExactBoundaryAndNeverRecorded() throws Exception {
+        try (var guard = open(directory.resolve("replay.db"), 10)) {
+            assertThat(
+                            consume(
+                                            guard,
+                                            "gateway",
+                                            "expired",
+                                            "backend",
+                                            TestSupport.NOW.minusSeconds(2))
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.UNAVAILABLE);
+            assertThat(consume(guard, "expired").get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+            assertThat(
+                            consume(
+                                            guard,
+                                            "gateway",
+                                            "inside-skew",
+                                            "backend",
+                                            TestSupport.NOW.minusSeconds(1))
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+        }
+    }
+
+    @Test
+    void createsPersistentParentDirectoriesBeforeOpeningStorage() throws Exception {
+        Path file = directory.resolve("nested/state/replay.db");
+        try (var guard = open(file, 10)) {
+            assertThat(consume(guard, "nested").get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+        }
+        assertThat(file).isRegularFile();
+        assertThat(file.getParent()).isDirectory();
+    }
+
+    @Test
+    void constructorRejectsInvalidSettingsBeforeCreatingStorage() throws Exception {
+        Path file = directory.resolve("invalid.db");
+        for (String target : new String[] {null, "", "bad id"}) {
+            assertThatThrownBy(
+                            () ->
+                                    new LocalReplayGuard(
+                                            file,
+                                            target,
+                                            Duration.ofSeconds(2),
+                                            10,
+                                            Duration.ofMillis(500),
+                                            clock))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        for (int capacity : new int[] {0, -1}) {
+            assertThatThrownBy(
+                            () ->
+                                    new LocalReplayGuard(
+                                            file,
+                                            "backend",
+                                            Duration.ofSeconds(2),
+                                            capacity,
+                                            Duration.ofMillis(500),
+                                            clock))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        for (Duration skew :
+                java.util.List.of(
+                        Duration.ofSeconds(-1), Duration.ofMillis(500), Duration.ofNanos(1))) {
+            assertThatThrownBy(
+                            () ->
+                                    new LocalReplayGuard(
+                                            file,
+                                            "backend",
+                                            skew,
+                                            10,
+                                            Duration.ofMillis(500),
+                                            clock))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        for (Duration timeout :
+                java.util.List.of(
+                        Duration.ZERO,
+                        Duration.ofNanos(1),
+                        Duration.ofMillis((long) Integer.MAX_VALUE + 1))) {
+            assertThatThrownBy(
+                            () ->
+                                    new LocalReplayGuard(
+                                            file,
+                                            "backend",
+                                            Duration.ofSeconds(2),
+                                            10,
+                                            timeout,
+                                            clock))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(file).doesNotExist();
     }
 
     @Test
