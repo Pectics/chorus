@@ -9,7 +9,6 @@ package me.pectics.chorus.core.ticket.config;
 
 import java.nio.file.Path;
 import me.pectics.chorus.core.config.ConfigurationSectionLoader;
-import me.pectics.chorus.core.config.ConfigurationValueParser;
 import me.pectics.chorus.core.identity.BuiltinIdentityResolutionPolicy;
 import me.pectics.chorus.core.ticket.TicketVerificationConfiguration;
 import tools.jackson.databind.JsonNode;
@@ -23,8 +22,6 @@ public final class TicketVerificationConfigurationLoader
     @Override
     public TicketVerificationConfiguration load(JsonNode value, Path base) {
         return new TicketVerificationConfiguration(
-                ConfigurationValueParser.duration(value.get("max-lifetime")),
-                ConfigurationValueParser.duration(value.get("clock-skew")),
                 value.get("enforce-transfer-intent").asBoolean(),
                 BuiltinIdentityResolutionPolicy.valueOf(value.get("identity-policy").asString()),
                 base.resolve(value.get("trusted-issuers-path").asString()));

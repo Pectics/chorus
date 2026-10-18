@@ -9,6 +9,7 @@ package me.pectics.chorus.core.ticket.config;
 
 import java.nio.file.Path;
 import me.pectics.chorus.core.config.ConfigurationSectionLoader;
+import me.pectics.chorus.core.config.ConfigurationValueParser;
 import me.pectics.chorus.core.ticket.TicketCompression;
 import me.pectics.chorus.core.ticket.TicketConfiguration;
 import tools.jackson.databind.JsonNode;
@@ -26,6 +27,7 @@ public final class TicketConfigurationLoader
                 value.get("max-property-bytes").asInt(),
                 value.has("compression")
                         ? TicketCompression.valueOf(value.get("compression").asString())
-                        : TicketCompression.ZSTD);
+                        : TicketCompression.ZSTD,
+                ConfigurationValueParser.duration(value.get("max-lifetime")));
     }
 }

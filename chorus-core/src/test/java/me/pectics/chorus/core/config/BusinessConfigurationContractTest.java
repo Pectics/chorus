@@ -49,26 +49,27 @@ class BusinessConfigurationContractTest {
             assertThatThrownBy(
                             () ->
                                     new ReplayGuardConfiguration.Local(
-                                            Path.of("state/replay.db"), 100, timeout))
+                                            Path.of("state/replay.db"), timeout))
                     .isInstanceOf(IllegalArgumentException.class);
         }
-        assertThatThrownBy(
-                        () ->
-                                new ReplayGuardConfiguration.Local(
-                                        Path.of("state/replay.db"), 0, Duration.ofMillis(500)))
-                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void ticketPropertiesCannotExceedTheCompleteCookieBudget() {
-        assertThatThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 4097))
+        assertThatThrownBy(
+                        () ->
+                                new TicketConfiguration(
+                                        "chorus:ticket", 4096, 4097, Duration.ofSeconds(15)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new TicketConfiguration("chorus:ticket", 5121, 2048))
+        assertThatThrownBy(
+                        () ->
+                                new TicketConfiguration(
+                                        "chorus:ticket", 5121, 2048, Duration.ofSeconds(15)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void issuanceAndVerificationEnforceTheirOwnTimeInvariants() {
+    void ticketLifetimeAndIssuanceTtlAreValidated() {
         var policy =
                 new TicketIssuancePolicy(
                         new IssuerTrustPolicy(
@@ -78,30 +79,20 @@ class BusinessConfigurationContractTest {
                 java.util.List.of(Duration.ZERO, Duration.ofSeconds(-1), Duration.ofMillis(500))) {
             assertThatThrownBy(() -> new TicketIssuanceConfiguration(duration, policy))
                     .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(
-                            () ->
-                                    new TicketVerificationConfiguration(
-                                            duration,
-                                            Duration.ZERO,
-                                            true,
-                                            BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM))
+            assertThatThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 2048, duration))
                     .isInstanceOf(IllegalArgumentException.class);
         }
         assertThatThrownBy(
                         () ->
-                                new TicketVerificationConfiguration(
-                                        Duration.ofSeconds(15),
-                                        Duration.ofMillis(500),
-                                        true,
-                                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM))
+                                new TicketConfiguration(
+                                        "chorus:ticket",
+                                        4096,
+                                        2048,
+                                        Duration.ofSeconds(Long.MAX_VALUE / 1000)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(
-                        () ->
-                                new TicketVerificationConfiguration(
-                                        Duration.ofSeconds(Long.MAX_VALUE / 1000),
-                                        Duration.ofSeconds(1),
-                                        true,
-                                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM))
-                .isInstanceOf(ArithmeticException.class);
+        assertThat(
+                        new TicketVerificationConfiguration(
+                                true, BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM))
+                .isNotNull();
     }
 }

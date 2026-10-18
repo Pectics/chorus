@@ -15,6 +15,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +75,9 @@ class TicketCompressionTest {
                 .isEqualTo(
                         new TicketCodec(5120, 2048, TicketCompression.ZSTD)
                                 .encode(TestSupport.claims(), signer));
-        assertThat(new TicketConfiguration("chorus:ticket", 4096, 2048).compression())
+        assertThat(
+                        new TicketConfiguration("chorus:ticket", 4096, 2048, Duration.ofSeconds(15))
+                                .compression())
                 .isEqualTo(TicketCompression.ZSTD);
     }
 
