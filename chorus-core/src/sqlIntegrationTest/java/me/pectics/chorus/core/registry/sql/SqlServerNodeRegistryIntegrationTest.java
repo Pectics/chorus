@@ -22,12 +22,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import me.pectics.chorus.core.TestSupport;
@@ -77,8 +81,12 @@ class SqlServerNodeRegistryIntegrationTest {
                                 settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"))) {
                     assertThatThrownBy(missing::load).isInstanceOf(SQLException.class);
                 }
-                JdbcSchemaInitializer.initialize(
-                        settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"));
+                var settings = settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost");
+                verifyConcurrentInitialization(admin, settings);
+                verifyPoolIntent(settings);
+                if (engine == Engine.POSTGRESQL) {
+                    verifyInitializationLockTimeout(admin, settings);
+                }
                 execute(
                         admin,
                         "INSERT INTO chorus_servers (node_id, display_name, host, port) VALUES "
@@ -87,9 +95,124 @@ class SqlServerNodeRegistryIntegrationTest {
                                 + "('Backend', 'Case-sensitive ID', 'other.example.net', 25566)");
 
                 verifyTls(engine, port, ca);
+                verifyConcurrentReplayRegistrations(settings);
                 verifyRegistryReplay(engine, port, ca);
                 verifyRefreshAndFailures(admin, engine, port, ca);
                 verifyLocalTrustAndConfiguredEngines(admin, engine, port, ca);
+            }
+        }
+    }
+
+    private void verifyConcurrentInitialization(Connection admin, Sql settings) throws Exception {
+        for (int round = 0; round < 3; round++) {
+            execute(admin, "DROP TABLE IF EXISTS chorus_replay_registrations");
+            execute(admin, "DROP TABLE IF EXISTS chorus_servers");
+            execute(admin, "DROP TABLE IF EXISTS chorus_schema");
+            var ready = new CountDownLatch(8);
+            var start = new CountDownLatch(1);
+            try (var workers = Executors.newFixedThreadPool(8)) {
+                try {
+                    var initializations = new ArrayList<Future<?>>();
+                    for (int i = 0; i < 8; i++) {
+                        initializations.add(
+                                workers.submit(
+                                        () -> {
+                                            ready.countDown();
+                                            assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+                                            JdbcSchemaInitializer.initialize(settings);
+                                            return null;
+                                        }));
+                    }
+                    assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+                    start.countDown();
+                    for (var initialization : initializations) {
+                        initialization.get(20, TimeUnit.SECONDS);
+                    }
+                } finally {
+                    start.countDown();
+                }
+            }
+        }
+        JdbcSchemaInitializer.initialize(settings);
+        try (var statement = admin.createStatement();
+                var rows = statement.executeQuery("SELECT version FROM chorus_schema")) {
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getInt(1)).isEqualTo(1);
+            assertThat(rows.next()).isFalse();
+        }
+    }
+
+    private void verifyPoolIntent(Sql settings) throws Exception {
+        try (var write = JdbcPool.open(settings, false);
+                var connection = write.getConnection()) {
+            assertThat(connection.isReadOnly()).isFalse();
+            assertThat(connection.getTransactionIsolation())
+                    .isEqualTo(Connection.TRANSACTION_READ_COMMITTED);
+        }
+        try (var read = JdbcPool.open(settings, true);
+                var connection = read.getConnection()) {
+            assertThat(connection.isReadOnly()).isTrue();
+        }
+    }
+
+    private void verifyInitializationLockTimeout(Connection admin, Sql settings) throws Exception {
+        admin.setAutoCommit(false);
+        try {
+            try (var lock = admin.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)")) {
+                lock.setInt(1, 0x43485253);
+                lock.setInt(2, 0x5343484D);
+                lock.execute();
+            }
+            assertThatThrownBy(() -> JdbcSchemaInitializer.initialize(settings))
+                    .isInstanceOf(SQLException.class)
+                    .extracting(failure -> ((SQLException) failure).getSQLState())
+                    .isEqualTo("57014");
+        } finally {
+            admin.rollback();
+            admin.setAutoCommit(true);
+        }
+        JdbcSchemaInitializer.initialize(settings);
+    }
+
+    private void verifyConcurrentReplayRegistrations(Sql settings) throws Exception {
+        var clock = Clock.fixed(TestSupport.NOW, ZoneOffset.UTC);
+        for (int round = 0; round < 3; round++) {
+            var ready = new CountDownLatch(8);
+            var start = new CountDownLatch(1);
+            try (var workers = Executors.newFixedThreadPool(8)) {
+                try {
+                    var transfers = new ArrayList<Future<ReplayDecision>>();
+                    for (int i = 0; i < 8; i++) {
+                        String jti = "concurrent-" + round + "-" + i;
+                        transfers.add(
+                                workers.submit(
+                                        () -> {
+                                            try (var guard =
+                                                    new RegistryReplayGuard(
+                                                            settings, "backend", clock)) {
+                                                ready.countDown();
+                                                assertThat(start.await(10, TimeUnit.SECONDS))
+                                                        .isTrue();
+                                                var expiry = TestSupport.NOW.plusSeconds(15);
+                                                guard.register("gateway", jti, "backend", expiry)
+                                                        .toCompletableFuture()
+                                                        .get(10, TimeUnit.SECONDS);
+                                                return guard.consume(
+                                                                "gateway", jti, "backend", expiry)
+                                                        .toCompletableFuture()
+                                                        .get(10, TimeUnit.SECONDS);
+                                            }
+                                        }));
+                    }
+                    assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+                    start.countDown();
+                    for (var transfer : transfers) {
+                        assertThat(transfer.get(20, TimeUnit.SECONDS))
+                                .isEqualTo(ReplayDecision.ACCEPTED);
+                    }
+                } finally {
+                    start.countDown();
+                }
             }
         }
     }

@@ -15,21 +15,30 @@ import me.pectics.chorus.core.registry.RegistryConfiguration.Sql;
 
 /**
  * Idempotent creation of the versioned registry and replay tables. Runs once during blocking
- * startup with the configured read-write account before any consumer opens a pool.
+ * startup with the configured read-write account before any consumer opens a pool. PostgreSQL
+ * initializers share a transaction-scoped advisory lock before creating any catalog objects.
  */
 public final class JdbcSchemaInitializer {
+    private static final int LOCK_NAMESPACE = 0x43485253; // CHRS
+    private static final int SCHEMA_LOCK = 0x5343484D; // SCHM
+
     private JdbcSchemaInitializer() {}
 
     public static void initialize(Sql settings) throws IOException, SQLException {
         try (var pool = JdbcPool.open(settings, false);
                 var connection = pool.getConnection()) {
+            int querySeconds =
+                    Math.toIntExact((settings.timeouts().query().toMillis() + 999) / 1000);
             boolean transactional = settings.engine() == Engine.POSTGRESQL;
             if (transactional) {
                 connection.setAutoCommit(false);
             }
             try {
-                createTables(connection, settings.engine());
-                ensureVersion(connection, settings.engine());
+                if (transactional) {
+                    lockPostgresqlSchema(connection, querySeconds);
+                }
+                createTables(connection, settings.engine(), querySeconds);
+                ensureVersion(connection, settings.engine(), querySeconds);
                 if (transactional) {
                     connection.commit();
                 }
@@ -49,17 +58,31 @@ public final class JdbcSchemaInitializer {
         }
     }
 
-    private static void createTables(Connection connection, Engine engine) throws SQLException {
+    private static void lockPostgresqlSchema(Connection connection, int querySeconds)
+            throws SQLException {
+        try (var lock = connection.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)")) {
+            lock.setQueryTimeout(querySeconds);
+            lock.setInt(1, LOCK_NAMESPACE);
+            lock.setInt(2, SCHEMA_LOCK);
+            lock.execute();
+        }
+    }
+
+    private static void createTables(Connection connection, Engine engine, int querySeconds)
+            throws SQLException {
         for (String statement : statements(engine)) {
             try (var create = connection.createStatement()) {
+                create.setQueryTimeout(querySeconds);
                 create.execute(statement);
             }
         }
     }
 
-    private static void ensureVersion(Connection connection, Engine engine) throws SQLException {
+    private static void ensureVersion(Connection connection, Engine engine, int querySeconds)
+            throws SQLException {
         String prefix = prefix(engine);
         try (var insert = connection.createStatement()) {
+            insert.setQueryTimeout(querySeconds);
             insert.execute(
                     engine == Engine.POSTGRESQL
                             ? "INSERT INTO "
@@ -70,14 +93,16 @@ public final class JdbcSchemaInitializer {
                                     + prefix
                                     + "chorus_schema (singleton, version) VALUES (1, 1)");
         }
-        try (var query = connection.createStatement();
-                var result =
-                        query.executeQuery(
-                                "SELECT version FROM "
-                                        + prefix
-                                        + "chorus_schema WHERE singleton = 1")) {
-            if (!result.next() || result.getInt(1) != 1 || result.next()) {
-                throw new SQLException("Unsupported SQL schema version");
+        try (var query = connection.createStatement()) {
+            query.setQueryTimeout(querySeconds);
+            try (var result =
+                    query.executeQuery(
+                            "SELECT version FROM "
+                                    + prefix
+                                    + "chorus_schema WHERE singleton = 1")) {
+                if (!result.next() || result.getInt(1) != 1 || result.next()) {
+                    throw new SQLException("Unsupported SQL schema version");
+                }
             }
         }
     }

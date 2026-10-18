@@ -73,6 +73,10 @@ public final class JdbcPool implements AutoCloseable {
             config.setValidationTimeout(Math.min(1000, acquire / 2));
             config.setInitializationFailTimeout(-1);
             config.setReadOnly(readOnly);
+            if (!readOnly) {
+                // Range cleanup must not hold InnoDB gap locks across replay inserts.
+                config.setTransactionIsolation("TRANSACTION_READ_COMMITTED");
+            }
             var properties = driverProperties(settings);
             boolean mysqlCa = settings.engine() == Engine.MYSQL && settings.tls().caCert() != null;
             boolean mariaDefaultCa =
