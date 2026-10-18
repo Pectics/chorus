@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -35,7 +36,7 @@ class LocalReplayLifecycleTest {
     void externalCloseDrainsRunningAndQueuedConsumptionBeforeReleasingStorage() throws Exception {
         Path file = directory.resolve("replay.db");
         var clock = new PausingClock();
-        try (var guard = open(file, 3, clock)) {
+        try (var guard = open(file, clock)) {
             try {
                 var running = consume(guard, "running");
                 await(clock.entered);
@@ -60,7 +61,7 @@ class LocalReplayLifecycleTest {
                 clock.resume();
             }
         }
-        try (var reopened = open(file, 3, Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
+        try (var reopened = open(file, Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
             assertThat(consume(reopened, "running").get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.REPLAYED);
             assertThat(consume(reopened, "queued").get(5, TimeUnit.SECONDS))
@@ -74,7 +75,7 @@ class LocalReplayLifecycleTest {
         var clock = new PausingClock();
         var callbackClosed = new CountDownLatch(1);
         var releaseCallback = new CountDownLatch(1);
-        try (var guard = open(directory.resolve("replay.db"), 3, clock)) {
+        try (var guard = open(directory.resolve("replay.db"), clock)) {
             try {
                 var first = consume(guard, "first");
                 await(clock.entered);
@@ -109,7 +110,7 @@ class LocalReplayLifecycleTest {
     @Test
     void externalCloseWaitsAcrossTerminationPeriodsUntilConsumptionFinishes() throws Exception {
         var clock = new PausingClock();
-        var guard = open(directory.resolve("replay.db"), 3, clock);
+        var guard = open(directory.resolve("replay.db"), clock);
         try {
             var running = consume(guard, "slow-close");
             await(clock.entered);
@@ -137,7 +138,7 @@ class LocalReplayLifecycleTest {
     @Test
     void interruptedExternalCloseRestoresTheFlagAndStillDrainsAcceptedWork() throws Exception {
         var clock = new PausingClock();
-        var guard = open(directory.resolve("replay.db"), 3, clock);
+        var guard = open(directory.resolve("replay.db"), clock);
         try {
             var running = consume(guard, "interrupted-close");
             await(clock.entered);
@@ -175,22 +176,35 @@ class LocalReplayLifecycleTest {
     void fullQueueRejectsWithoutConsumingTheTicket() throws Exception {
         Path file = directory.resolve("replay.db");
         var clock = new PausingClock();
-        try (var guard = open(file, 1, clock)) {
+        String rejectedJti = null;
+        try (var guard = open(file, clock)) {
             try {
                 var running = consume(guard, "same");
                 await(clock.entered);
                 var queued = consume(guard, "same");
-                assertThat(consume(guard, "overflow").get(5, TimeUnit.SECONDS))
-                        .isEqualTo(ReplayDecision.UNAVAILABLE);
+                var attempts = new ArrayList<CompletableFuture<ReplayDecision>>();
+                var jtis = new ArrayList<String>();
+                for (int i = 0; i < 1200; i++) {
+                    String jti = "overflow-" + i;
+                    attempts.add(consume(guard, jti));
+                    jtis.add(jti);
+                }
                 clock.resume();
-                assertThat(running.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
-                assertThat(queued.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.REPLAYED);
+                assertThat(running.get(10, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
+                assertThat(queued.get(10, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.REPLAYED);
+                for (int i = 0; i < attempts.size(); i++) {
+                    if (attempts.get(i).get(10, TimeUnit.SECONDS) == ReplayDecision.UNAVAILABLE) {
+                        rejectedJti = jtis.get(i);
+                        break;
+                    }
+                }
+                assertThat(rejectedJti).isNotNull();
             } finally {
                 clock.resume();
             }
         }
-        try (var reopened = open(file, 3, Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
-            assertThat(consume(reopened, "overflow").get(5, TimeUnit.SECONDS))
+        try (var reopened = open(file, Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
+            assertThat(consume(reopened, rejectedJti).get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.ACCEPTED);
         }
     }
@@ -198,7 +212,7 @@ class LocalReplayLifecycleTest {
     @Test
     void queuedTicketIsCheckedForExpirationWhenItExecutes() throws Exception {
         var clock = new PausingClock();
-        try (var guard = open(directory.resolve("replay.db"), 3, clock)) {
+        try (var guard = open(directory.resolve("replay.db"), clock)) {
             try {
                 var running =
                         guard.consume(
@@ -209,7 +223,7 @@ class LocalReplayLifecycleTest {
                                 .toCompletableFuture();
                 await(clock.entered);
                 var queued = consume(guard, "expired");
-                clock.now = TestSupport.NOW.plusSeconds(17);
+                clock.now = TestSupport.NOW.plusSeconds(46);
                 clock.resume();
                 assertThat(running.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
                 assertThat(queued.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.UNAVAILABLE);
@@ -228,9 +242,8 @@ class LocalReplayLifecycleTest {
         }
     }
 
-    private static LocalReplayGuard open(Path path, int capacity, Clock clock) throws Exception {
-        return new LocalReplayGuard(
-                path, "backend", Duration.ofSeconds(2), capacity, Duration.ofMillis(500), clock);
+    private static LocalReplayGuard open(Path path, Clock clock) throws Exception {
+        return new LocalReplayGuard(path, "backend", Duration.ofMillis(500), clock);
     }
 
     private static CompletableFuture<ReplayDecision> consume(LocalReplayGuard guard, String jti) {

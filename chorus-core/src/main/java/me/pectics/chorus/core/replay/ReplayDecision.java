@@ -1,9 +1,8 @@
 package me.pectics.chorus.core.replay;
 
-/** Only ACCEPTED permits login; all other outcomes reject it. */
+/** Durable replay outcome. Only ACCEPTED permits login. */
 public enum ReplayDecision {
     ACCEPTED,
     REPLAYED,
-    UNAVAILABLE,
-    CAPACITY_EXCEEDED
+    UNAVAILABLE
 }

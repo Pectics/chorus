@@ -23,52 +23,38 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import me.pectics.chorus.core.replay.ReplayDecision;
 import me.pectics.chorus.core.replay.ReplayGuard;
+import me.pectics.chorus.core.ticket.TicketTiming;
 
 /**
  * One persistent receiver database, one bounded serial I/O worker. Opening and closing may block;
- * consume never performs I/O on the caller. Completion callbacks may run on the I/O worker and must
- * not block it. Preserve the database and its WAL across restarts; a new empty path is new state.
+ * consume never performs I/O on the caller. LOCAL does not pre-register tickets. Completion
+ * callbacks may run on the I/O worker and must not block it. Preserve the database and its WAL
+ * across restarts; a new empty path is new state.
  */
 public final class LocalReplayGuard implements ReplayGuard {
+    private static final int QUEUE_CAPACITY = 1024;
+
     private final Object lifecycle = new Object();
     private final SqliteReplayStore store;
     private final ThreadPoolExecutor executor;
     private final String targetNodeId;
-    private final long skewMillis;
     private volatile boolean closed;
     private volatile Thread worker;
     private volatile SQLException closeFailure;
 
-    public LocalReplayGuard(
-            Path file,
-            String targetNodeId,
-            Duration clockSkew,
-            int capacity,
-            Duration busyTimeout,
-            Clock clock)
+    public LocalReplayGuard(Path file, String targetNodeId, Duration busyTimeout, Clock clock)
             throws SQLException, IOException {
         Objects.requireNonNull(file, "file");
         Objects.requireNonNull(clock, "clock");
         if (targetNodeId == null
                 || !targetNodeId.matches("[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
-                || capacity < 1
-                || clockSkew.isNegative()
-                || clockSkew.getNano() != 0
                 || busyTimeout.isNegative()
                 || busyTimeout.toMillis() < 1
                 || busyTimeout.toMillis() > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Invalid local replay configuration");
         }
         this.targetNodeId = targetNodeId;
-        this.skewMillis = clockSkew.toMillis();
-        this.store =
-                new SqliteReplayStore(
-                        file,
-                        targetNodeId,
-                        skewMillis,
-                        capacity,
-                        (int) busyTimeout.toMillis(),
-                        clock);
+        this.store = new SqliteReplayStore(file, targetNodeId, clock);
         try {
             this.executor =
                     new ThreadPoolExecutor(
@@ -76,7 +62,7 @@ public final class LocalReplayGuard implements ReplayGuard {
                             1,
                             0,
                             TimeUnit.MILLISECONDS,
-                            new ArrayBlockingQueue<>(capacity),
+                            new ArrayBlockingQueue<>(QUEUE_CAPACITY),
                             task -> {
                                 var thread = new Thread(task, "chorus-local-replay");
                                 thread.setDaemon(true);
@@ -108,7 +94,8 @@ public final class LocalReplayGuard implements ReplayGuard {
         if (issuerNodeId == null || issuerNodeId.isBlank() || jti == null || jti.isBlank()) {
             throw new IllegalArgumentException("Issuer and ticket IDs are required");
         }
-        long retainUntil = Math.addExact(expiresAt.toEpochMilli(), skewMillis);
+        long retainUntil =
+                Math.addExact(expiresAt.toEpochMilli(), TicketTiming.CLOCK_SKEW.toMillis());
         var result = new CompletableFuture<ReplayDecision>();
         synchronized (lifecycle) {
             if (closed || store.isBroken() || !this.targetNodeId.equals(targetNodeId)) {

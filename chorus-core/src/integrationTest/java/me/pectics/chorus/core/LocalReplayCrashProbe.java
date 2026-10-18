@@ -28,8 +28,6 @@ public final class LocalReplayCrashProbe {
                 new LocalReplayGuard(
                         file,
                         "backend",
-                        Duration.ofSeconds(2),
-                        10,
                         Duration.ofMillis(500),
                         Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
         if (arguments[1].equals("committed")) {

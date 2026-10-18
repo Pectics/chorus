@@ -68,8 +68,7 @@ class DefaultChorusCoreEngineTest {
                         ? new TicketIssuanceConfiguration(
                                 Duration.ofSeconds(15), TestSupport.issuancePolicy())
                         : null,
-                new TicketVerificationConfiguration(
-                        Duration.ofSeconds(15), Duration.ofSeconds(2), true, policy),
+                new TicketVerificationConfiguration(true, policy),
                 Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
     }
 
@@ -88,8 +87,7 @@ class DefaultChorusCoreEngineTest {
                         ? new TicketIssuanceConfiguration(
                                 Duration.ofSeconds(15), TestSupport.issuancePolicy())
                         : null,
-                new TicketVerificationConfiguration(
-                        Duration.ofSeconds(15), Duration.ofSeconds(2), true, policy),
+                new TicketVerificationConfiguration(true, policy),
                 Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
     }
 
@@ -104,7 +102,7 @@ class DefaultChorusCoreEngineTest {
             Clock clock) {
         return new DefaultChorusCoreEngine(
                 new ServerNodeConfiguration(id, role),
-                new TicketConfiguration("chorus:ticket", 4096, 2048),
+                new TicketConfiguration("chorus:ticket", 4096, 2048, Duration.ofSeconds(15)),
                 issuance,
                 verification,
                 serverNodeRegistry,
@@ -119,13 +117,10 @@ class DefaultChorusCoreEngineTest {
         var registry = TestSupport.serverNodeRegistry();
         var issuers = TestSupport.issuers(pair);
         var node = new ServerNodeConfiguration("gateway", ServerNodeRole.PEER);
-        var ticket = new TicketConfiguration("chorus:ticket", 4096, 2048);
+        var ticket = new TicketConfiguration("chorus:ticket", 4096, 2048, Duration.ofSeconds(15));
         var verification =
                 new TicketVerificationConfiguration(
-                        Duration.ofSeconds(15),
-                        Duration.ofSeconds(2),
-                        true,
-                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
+                        true, BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
         assertThatThrownBy(
                         () ->
                                 new DefaultChorusCoreEngine(
@@ -388,9 +383,9 @@ class DefaultChorusCoreEngineTest {
                     receiver.verifyAndResolve(
                             request(
                                     claims(
-                                            TestSupport.NOW.plusSeconds(3),
-                                            TestSupport.NOW.plusSeconds(3),
-                                            TestSupport.NOW.plusSeconds(18),
+                                            TestSupport.NOW.plusSeconds(31),
+                                            TestSupport.NOW.plusSeconds(31),
+                                            TestSupport.NOW.plusSeconds(46),
                                             TestSupport.identity(),
                                             "backend"),
                                     login)),
@@ -399,9 +394,9 @@ class DefaultChorusCoreEngineTest {
                     receiver.verifyAndResolve(
                             request(
                                     claims(
-                                            TestSupport.NOW.minusSeconds(17),
-                                            TestSupport.NOW.minusSeconds(17),
-                                            TestSupport.NOW.minusSeconds(2),
+                                            TestSupport.NOW.minusSeconds(45),
+                                            TestSupport.NOW.minusSeconds(45),
+                                            TestSupport.NOW.minusSeconds(30),
                                             TestSupport.identity(),
                                             "backend"),
                                     login)),
@@ -493,7 +488,7 @@ class DefaultChorusCoreEngineTest {
     @ParameterizedTest
     @EnumSource(
             value = ReplayDecision.class,
-            names = {"REPLAYED", "UNAVAILABLE", "CAPACITY_EXCEEDED"})
+            names = {"REPLAYED", "UNAVAILABLE"})
     void replayRefusalsNeverReturnAProfile(ReplayDecision decision) {
         replay.pending = CompletableFuture.completedFuture(decision);
         try (var receiver =
@@ -505,8 +500,7 @@ class DefaultChorusCoreEngineTest {
                     switch (decision) {
                         case REPLAYED -> TicketError.REPLAYED;
                         case UNAVAILABLE -> TicketError.REPLAY_UNAVAILABLE;
-                        case CAPACITY_EXCEEDED -> TicketError.REPLAY_CAPACITY_EXCEEDED;
-                        default -> throw new AssertionError();
+                        case ACCEPTED -> throw new AssertionError();
                     };
             rejects(receiver.verifyAndResolve(request(TestSupport.claims(), login)), error);
         }
@@ -583,10 +577,7 @@ class DefaultChorusCoreEngineTest {
         var clock = Clock.fixed(TestSupport.NOW.plusNanos(999_999_999), ZoneOffset.UTC);
         var verification =
                 new TicketVerificationConfiguration(
-                        Duration.ofSeconds(15),
-                        Duration.ofSeconds(2),
-                        true,
-                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
+                        true, BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
         try (var sender =
                 engine(
                         "gateway",
@@ -632,13 +623,56 @@ class DefaultChorusCoreEngineTest {
     }
 
     @Test
+    void issuanceRegistersBeforeReturningAndMapsRegistrationFailures() {
+        replay.registration = new CompletableFuture<>();
+        try (var sender =
+                new DefaultChorusCoreEngine(
+                        new ServerNodeConfiguration("gateway", ServerNodeRole.GATEWAY),
+                        new TicketConfiguration(
+                                "chorus:ticket", 4096, 2048, Duration.ofSeconds(15)),
+                        new TicketIssuanceConfiguration(
+                                Duration.ofSeconds(15), TestSupport.issuancePolicy()),
+                        null,
+                        TestSupport.serverNodeRegistry(),
+                        null,
+                        TestSupport.signer(pair),
+                        replay,
+                        Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
+            var pending =
+                    sender.issueTicket(
+                                    new IssueTicketRequest(
+                                            "backend",
+                                            new AuthenticatedIdentity(
+                                                    TestSupport.identity(), "gateway"),
+                                            Map.of()))
+                            .toCompletableFuture();
+            assertThat(pending.isDone()).isFalse();
+            assertThat(replay.registrations).isEqualTo(1);
+            assertThat(replay.registeredIssuer).isEqualTo("gateway");
+            assertThat(replay.registeredJti).isNotBlank();
+            assertThat(replay.registeredTarget).isEqualTo("backend");
+            assertThat(replay.registeredExpiry).isEqualTo(TestSupport.NOW.plusSeconds(15));
+            replay.registration.complete(null);
+            assertThat(pending.join()).isNotNull();
+
+            replay.registration = null;
+            replay.registrationFailure = new IllegalStateException("unknown commit");
+            rejects(
+                    sender.issueTicket(
+                            new IssueTicketRequest(
+                                    "backend",
+                                    new AuthenticatedIdentity(TestSupport.identity(), "gateway"),
+                                    Map.of())),
+                    TicketError.REPLAY_REGISTRATION_FAILED);
+            assertThat(replay.registrations).isEqualTo(2);
+        }
+    }
+
+    @Test
     void transferIntentEnforcementCanBeDisabledByConfiguration() {
         var verification =
                 new TicketVerificationConfiguration(
-                        Duration.ofSeconds(15),
-                        Duration.ofSeconds(2),
-                        false,
-                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
+                        false, BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
         try (var receiver =
                 engine(
                         "backend",
@@ -691,10 +725,7 @@ class DefaultChorusCoreEngineTest {
                                 Duration.ofSeconds(15),
                                 new TicketIssuancePolicy(permitted, Set.of("backend"))),
                         new TicketVerificationConfiguration(
-                                Duration.ofSeconds(15),
-                                Duration.ofSeconds(2),
-                                true,
-                                BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
+                                true, BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
                         Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
             rejects(
                     sender.issueTicket(
@@ -720,10 +751,7 @@ class DefaultChorusCoreEngineTest {
                         issuers,
                         null,
                         new TicketVerificationConfiguration(
-                                Duration.ofSeconds(15),
-                                Duration.ofSeconds(2),
-                                true,
-                                BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
+                                true, BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
                         Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
             rejects(
                     receiver.verifyAndResolve(request(claims, login)),
@@ -740,11 +768,13 @@ class DefaultChorusCoreEngineTest {
                                 new DefaultChorusCoreEngine(
                                         new ServerNodeConfiguration(
                                                 "backend", ServerNodeRole.BACKEND),
-                                        new TicketConfiguration("chorus:ticket", 4096, 2048),
+                                        new TicketConfiguration(
+                                                "chorus:ticket",
+                                                4096,
+                                                2048,
+                                                Duration.ofSeconds(15)),
                                         null,
                                         new TicketVerificationConfiguration(
-                                                Duration.ofSeconds(15),
-                                                Duration.ofSeconds(2),
                                                 true,
                                                 BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
                                         TestSupport.serverNodeRegistry(),
@@ -832,9 +862,9 @@ class DefaultChorusCoreEngineTest {
                             request(
                                     claims(
                                             "within-skew",
-                                            TestSupport.NOW.plusSeconds(2),
-                                            TestSupport.NOW.plusSeconds(2),
-                                            TestSupport.NOW.plusSeconds(17),
+                                            TestSupport.NOW.plusSeconds(30),
+                                            TestSupport.NOW.plusSeconds(30),
+                                            TestSupport.NOW.plusSeconds(45),
                                             TestSupport.identity(),
                                             "backend"),
                                     login))
@@ -844,9 +874,9 @@ class DefaultChorusCoreEngineTest {
                     receiver.verifyAndResolve(
                             request(
                                     claims(
-                                            TestSupport.NOW.plusSeconds(3),
-                                            TestSupport.NOW.plusSeconds(3),
-                                            TestSupport.NOW.plusSeconds(18),
+                                            TestSupport.NOW.plusSeconds(31),
+                                            TestSupport.NOW.plusSeconds(31),
+                                            TestSupport.NOW.plusSeconds(46),
                                             TestSupport.identity(),
                                             "backend"),
                                     login)),
@@ -899,9 +929,9 @@ class DefaultChorusCoreEngineTest {
                     receiver.verifyAndResolve(
                             request(
                                     claims(
-                                            TestSupport.NOW,
-                                            TestSupport.NOW.plusSeconds(3),
-                                            TestSupport.NOW.plusSeconds(15),
+                                            TestSupport.NOW.plusSeconds(20),
+                                            TestSupport.NOW.plusSeconds(31),
+                                            TestSupport.NOW.plusSeconds(35),
                                             TestSupport.identity(),
                                             "backend"),
                                     login)),
@@ -924,9 +954,9 @@ class DefaultChorusCoreEngineTest {
                     receiver.verifyAndResolve(
                             request(
                                     claims(
-                                            TestSupport.NOW.minusSeconds(17),
-                                            TestSupport.NOW.minusSeconds(17),
-                                            TestSupport.NOW.minusSeconds(2),
+                                            TestSupport.NOW.minusSeconds(45),
+                                            TestSupport.NOW.minusSeconds(45),
+                                            TestSupport.NOW.minusSeconds(30),
                                             TestSupport.identity(),
                                             "backend"),
                                     login)),
@@ -974,12 +1004,33 @@ class DefaultChorusCoreEngineTest {
     private static final class RecordingGuard implements ReplayGuard {
         private int calls;
         private int closes;
+        private int registrations;
         private CompletableFuture<ReplayDecision> pending;
+        private CompletableFuture<Void> registration;
+        private RuntimeException registrationFailure;
         private final Set<String> consumed = new HashSet<>();
         private String issuer;
         private String jti;
         private String target;
         private Instant expiry;
+        private String registeredIssuer;
+        private String registeredJti;
+        private String registeredTarget;
+        private Instant registeredExpiry;
+
+        @Override
+        public CompletionStage<Void> register(
+                String issuer, String jti, String target, Instant expiry) {
+            registrations++;
+            registeredIssuer = issuer;
+            registeredJti = jti;
+            registeredTarget = target;
+            registeredExpiry = expiry;
+            if (registrationFailure != null) {
+                return CompletableFuture.failedFuture(registrationFailure);
+            }
+            return registration != null ? registration : CompletableFuture.completedFuture(null);
+        }
 
         @Override
         public CompletionStage<ReplayDecision> consume(

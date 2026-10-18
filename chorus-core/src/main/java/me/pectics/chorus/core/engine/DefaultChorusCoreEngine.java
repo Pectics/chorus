@@ -37,13 +37,15 @@ import me.pectics.chorus.core.ticket.TicketClaims;
 import me.pectics.chorus.core.ticket.TicketCodec;
 import me.pectics.chorus.core.ticket.TicketConfiguration;
 import me.pectics.chorus.core.ticket.TicketIssuanceConfiguration;
+import me.pectics.chorus.core.ticket.TicketTiming;
 import me.pectics.chorus.core.ticket.TicketVerificationConfiguration;
 import me.pectics.chorus.core.trust.TrustedIssuerStore;
 
 /**
  * Phase-1 engine. Takes ownership of ReplayGuard; other injected collaborators remain caller-owned.
- * Sender roles require a signer; receiver-only nodes may pass null. Signing material is fixed for
- * this engine's lifetime; trusted verification snapshots can still be replaced independently.
+ * Sender roles require a signer and may pass a replay backend to pre-register; receiver-only nodes
+ * may pass null issuance and signer. Signing material is fixed for this engine's lifetime; trusted
+ * verification snapshots can still be replaced independently.
  */
 public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
     private final ServerNodeConfiguration node;
@@ -60,10 +62,11 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
 
     /**
      * Accepts independent runtime sections and already assembled collaborators, without file I/O.
-     * Sender roles require issuance settings and a signer; their TTL must not exceed verification's
-     * maximum lifetime. Receiver roles require a replay guard. Missing required arguments throw
-     * NullPointerException; an excessive TTL throws IllegalArgumentException. Issuance may be null
-     * for receiver-only nodes. Replay ownership transfers only after construction succeeds.
+     * Sender roles require issuance settings and a signer; their TTL must not exceed the ticket's
+     * maximum lifetime. Receiver roles require verification rules, trusted issuers, and a replay
+     * guard. Missing required arguments throw NullPointerException; an excessive TTL throws
+     * IllegalArgumentException. Issuance may be null for receiver-only nodes. Replay ownership
+     * transfers only after construction succeeds.
      */
     public DefaultChorusCoreEngine(
             ServerNodeConfiguration node,
@@ -78,9 +81,9 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
         this.node = Objects.requireNonNull(node, "node");
         this.ticket = Objects.requireNonNull(ticket, "ticket");
         this.issuance = issuance;
-        this.verification = Objects.requireNonNull(verification, "verification");
+        this.verification = verification;
         this.serverNodeRegistry = Objects.requireNonNull(serverNodeRegistry, "serverNodeRegistry");
-        this.issuers = Objects.requireNonNull(issuers, "issuers");
+        this.issuers = issuers;
         this.signer = signer;
         this.replay = replay;
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -89,12 +92,14 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                         ticket.maxPayloadBytes(), ticket.maxPropertyBytes(), ticket.compression());
         if (node.role().sender()) {
             Objects.requireNonNull(issuance, "Sender requires issuance settings");
-            if (issuance.ttl().compareTo(verification.maxLifetime()) > 0) {
+            if (issuance.ttl().compareTo(ticket.maxLifetime()) > 0) {
                 throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
             }
             Objects.requireNonNull(signer, "Sender requires a ticket signer");
         }
         if (node.role().receiver()) {
+            Objects.requireNonNull(verification, "Receiver requires verification rules");
+            Objects.requireNonNull(issuers, "Receiver requires trusted issuers");
             Objects.requireNonNull(replay, "Receiver requires a replay guard");
         }
     }
@@ -146,13 +151,25 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                             issuedAt.plus(issuance.ttl()),
                             identity,
                             request.extensions());
-            return CompletableFuture.completedFuture(
+            var result =
                     new IssueTicketResult(
                             target,
                             ticket.cookieKey(),
                             codec.encode(claims, signer),
                             claims.jti(),
-                            claims.expiresAt()));
+                            claims.expiresAt());
+            if (replay == null) {
+                return CompletableFuture.completedFuture(result);
+            }
+            return replay.register(
+                            node.id(), claims.jti(), claims.targetNodeId(), claims.expiresAt())
+                    .handle(
+                            (ignored, failure) -> {
+                                if (failure != null) {
+                                    throw reject(TicketError.REPLAY_REGISTRATION_FAILED);
+                                }
+                                return result;
+                            });
         } catch (RuntimeException e) {
             return CompletableFuture.failedFuture(e);
         }
@@ -221,8 +238,6 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
                                     case REPLAYED -> throw reject(TicketError.REPLAYED);
                                     case UNAVAILABLE ->
                                             throw reject(TicketError.REPLAY_UNAVAILABLE);
-                                    case CAPACITY_EXCEEDED ->
-                                            throw reject(TicketError.REPLAY_CAPACITY_EXCEEDED);
                                 };
                             });
         } catch (RuntimeException e) {
@@ -232,11 +247,11 @@ public final class DefaultChorusCoreEngine implements ChorusCoreEngine {
 
     private void validateTimes(TicketClaims claims) {
         Instant now = clock.instant();
-        Duration skew = verification.clockSkew();
+        Duration skew = TicketTiming.CLOCK_SKEW;
         Duration lifetime = Duration.between(claims.issuedAt(), claims.expiresAt());
         if (lifetime.isNegative()
                 || lifetime.isZero()
-                || lifetime.compareTo(verification.maxLifetime()) > 0
+                || lifetime.compareTo(ticket.maxLifetime()) > 0
                 || claims.notBefore().isBefore(claims.issuedAt())
                 || !claims.notBefore().isBefore(claims.expiresAt())) {
             throw reject(TicketError.INVALID_LIFETIME);

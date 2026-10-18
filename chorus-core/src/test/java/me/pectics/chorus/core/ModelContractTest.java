@@ -235,26 +235,37 @@ class ModelContractTest {
 
     @Test
     void ticketConfigurationsRejectOutOfRangeOperationalValues() {
-        assertThat(new TicketConfiguration("chorus:ticket", 1, 1).compression())
+        var lifetime = Duration.ofSeconds(15);
+        assertThat(new TicketConfiguration("chorus:ticket", 1, 1, lifetime).compression())
                 .isEqualTo(TicketCompression.ZSTD);
-        assertThat(new TicketConfiguration("a:b/c.d_e-f", 5120, 5120).maxPayloadBytes())
+        assertThat(new TicketConfiguration("a:b/c.d_e-f", 5120, 5120, lifetime).maxPayloadBytes())
                 .isEqualTo(5120);
-        assertThat(new TicketConfiguration("chorus:ticket", 1, 1).maxPropertyBytes()).isEqualTo(1);
+        assertThat(new TicketConfiguration("chorus:ticket", 1, 1, lifetime).maxPropertyBytes())
+                .isEqualTo(1);
         for (String cookie :
                 List.of("", "chorus", "Chorus:ticket", "chorus:", "chorus:Ticket", " ")) {
             assertThatIllegalArgumentException()
-                    .isThrownBy(() -> new TicketConfiguration(cookie, 4096, 2048));
+                    .isThrownBy(() -> new TicketConfiguration(cookie, 4096, 2048, lifetime));
         }
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 0, 1));
+                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 0, 1, lifetime));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 5121, 1));
+                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 5121, 1, lifetime));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 0));
+                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 0, lifetime));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 4097));
+                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 4097, lifetime));
         assertThatNullPointerException()
-                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 2048, null));
+                .isThrownBy(
+                        () -> new TicketConfiguration("chorus:ticket", 4096, 2048, null, lifetime));
+        for (Duration invalid :
+                List.of(Duration.ZERO, Duration.ofSeconds(-1), Duration.ofMillis(500))) {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(
+                            () -> new TicketConfiguration("chorus:ticket", 4096, 2048, invalid));
+        }
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TicketConfiguration("chorus:ticket", 4096, 2048, null, null));
 
         var policy = TestSupport.issuancePolicy();
         assertThat(new TicketIssuanceConfiguration(Duration.ofSeconds(1), policy).ttl())
@@ -269,83 +280,53 @@ class ModelContractTest {
 
         assertThat(
                         new TicketVerificationConfiguration(
-                                        Duration.ofSeconds(15),
-                                        Duration.ZERO,
-                                        true,
-                                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM)
-                                .clockSkew())
-                .isZero();
-        for (Duration invalid :
-                List.of(Duration.ZERO, Duration.ofSeconds(-1), Duration.ofMillis(500))) {
-            assertThatIllegalArgumentException()
-                    .isThrownBy(
-                            () ->
-                                    new TicketVerificationConfiguration(
-                                            invalid,
-                                            Duration.ZERO,
-                                            true,
-                                            BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM));
-        }
-        for (Duration invalid :
-                List.of(Duration.ofSeconds(-1), Duration.ofMillis(500), Duration.ofNanos(1))) {
-            assertThatIllegalArgumentException()
-                    .isThrownBy(
-                            () ->
-                                    new TicketVerificationConfiguration(
-                                            Duration.ofSeconds(15),
-                                            invalid,
-                                            true,
-                                            BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM));
-        }
+                                        true, BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM)
+                                .enforceTransferIntent())
+                .isTrue();
         assertThatNullPointerException()
-                .isThrownBy(
-                        () ->
-                                new TicketVerificationConfiguration(
-                                        Duration.ofSeconds(15), Duration.ZERO, true, null));
+                .isThrownBy(() -> new TicketVerificationConfiguration(true, null));
     }
 
     @Test
-    void replayConfigurationRequiresLocalSettingsOnlyForTheLocalBackend() {
+    void replayConfigurationRequiresSettingsOnlyForTheSelectedBackend() {
         var path = Path.of("state/replay.db");
-        assertThat(new ReplayGuardConfiguration.Local(path, 1, Duration.ofMillis(1)).maxEntries())
-                .isEqualTo(1);
+        assertThat(new ReplayGuardConfiguration.Local(path, Duration.ofMillis(1)).path())
+                .isEqualTo(path);
         assertThat(
                         new ReplayGuardConfiguration.Local(
-                                        path,
-                                        Integer.MAX_VALUE,
-                                        Duration.ofMillis(Integer.MAX_VALUE))
+                                        path, Duration.ofMillis(Integer.MAX_VALUE))
                                 .busyTimeout())
                 .isEqualTo(Duration.ofMillis(Integer.MAX_VALUE));
         assertThat(
                         new ReplayGuardConfiguration(
-                                        ReplayGuardConfiguration.Backend.REGISTRY, null)
+                                        ReplayGuardConfiguration.Backend.REGISTRY, null, null)
                                 .backend())
                 .isEqualTo(ReplayGuardConfiguration.Backend.REGISTRY);
-        for (int capacity : new int[] {0, -1}) {
-            assertThatIllegalArgumentException()
-                    .isThrownBy(
-                            () ->
-                                    new ReplayGuardConfiguration.Local(
-                                            path, capacity, Duration.ofMillis(1)));
-        }
         for (Duration timeout :
                 List.of(Duration.ZERO, Duration.ofNanos(1), Duration.ofMillis(-1))) {
             assertThatIllegalArgumentException()
-                    .isThrownBy(() -> new ReplayGuardConfiguration.Local(path, 1, timeout));
+                    .isThrownBy(() -> new ReplayGuardConfiguration.Local(path, timeout));
         }
         assertThatIllegalArgumentException()
                 .isThrownBy(
                         () ->
                                 new ReplayGuardConfiguration.Local(
-                                        path, 1, Duration.ofMillis((long) Integer.MAX_VALUE + 1)));
+                                        path, Duration.ofMillis((long) Integer.MAX_VALUE + 1)));
         assertThatNullPointerException()
-                .isThrownBy(
-                        () -> new ReplayGuardConfiguration.Local(null, 1, Duration.ofMillis(1)));
+                .isThrownBy(() -> new ReplayGuardConfiguration.Local(null, Duration.ofMillis(1)));
         assertThatNullPointerException()
                 .isThrownBy(
                         () ->
                                 new ReplayGuardConfiguration(
-                                        ReplayGuardConfiguration.Backend.LOCAL, null));
+                                        ReplayGuardConfiguration.Backend.LOCAL, null, null));
+        assertThatThrownBy(
+                        () ->
+                                new ReplayGuardConfiguration(
+                                        ReplayGuardConfiguration.Backend.REGISTRY,
+                                        new ReplayGuardConfiguration.Local(
+                                                path, Duration.ofMillis(1)),
+                                        null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -417,7 +398,8 @@ class ModelContractTest {
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> new AuthenticatedIdentity(TestSupport.identity(), null));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new TicketConfiguration(null, 4096, 2048));
+                .isThrownBy(
+                        () -> new TicketConfiguration(null, 4096, 2048, Duration.ofSeconds(15)));
         assertThatIllegalArgumentException()
                 .isThrownBy(
                         () ->

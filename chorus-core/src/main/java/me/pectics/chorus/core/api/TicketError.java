@@ -27,7 +27,7 @@ public enum TicketError {
     PROFILE_RESOLUTION_FAILED,
     REPLAYED,
     REPLAY_UNAVAILABLE,
-    REPLAY_CAPACITY_EXCEEDED,
+    REPLAY_REGISTRATION_FAILED,
     TICKET_TOO_LARGE,
     CAPABILITY_DISABLED,
     /** The Registry is available, but the requested server node is absent. */

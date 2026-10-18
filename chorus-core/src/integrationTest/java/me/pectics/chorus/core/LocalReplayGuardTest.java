@@ -30,9 +30,8 @@ class LocalReplayGuardTest {
     @TempDir Path directory;
     private final MutableClock clock = new MutableClock(TestSupport.NOW);
 
-    private LocalReplayGuard open(Path path, int capacity) throws Exception {
-        return new LocalReplayGuard(
-                path, "backend", Duration.ofSeconds(2), capacity, Duration.ofMillis(500), clock);
+    private LocalReplayGuard open(Path path) throws Exception {
+        return new LocalReplayGuard(path, "backend", Duration.ofMillis(500), clock);
     }
 
     private CompletableFuture<ReplayDecision> consume(LocalReplayGuard guard, String jti) {
@@ -47,7 +46,7 @@ class LocalReplayGuardTest {
     @Test
     void concurrentConsumptionSucceedsExactlyOnceAndSurvivesReopening() throws Exception {
         Path file = directory.resolve("replay.db");
-        try (var guard = open(file, 200)) {
+        try (var guard = open(file)) {
             var attempts = new ArrayList<CompletableFuture<ReplayDecision>>();
             for (int i = 0; i < 100; i++) {
                 attempts.add(CompletableFuture.supplyAsync(() -> consume(guard, "same").join()));
@@ -61,7 +60,7 @@ class LocalReplayGuardTest {
                     .filteredOn(result -> result == ReplayDecision.REPLAYED)
                     .hasSize(99);
         }
-        try (var reopened = open(file, 200)) {
+        try (var reopened = open(file)) {
             assertThat(consume(reopened, "same").get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.REPLAYED);
         }
@@ -71,7 +70,7 @@ class LocalReplayGuardTest {
     void completionSeesCommittedStateFromAnotherConnectionAndEnforcesDurableSettings()
             throws Exception {
         Path file = directory.resolve("replay.db");
-        try (var guard = open(file, 10)) {
+        try (var guard = open(file)) {
             consume(guard, "committed")
                     .thenAccept(
                             result -> {
@@ -99,14 +98,13 @@ class LocalReplayGuardTest {
     }
 
     @Test
-    void capacityNeverEvictsRecordsStillAcceptedDuringClockSkew() throws Exception {
-        try (var guard = open(directory.resolve("replay.db"), 1)) {
+    void consumptionIsNotCapacityLimited() throws Exception {
+        try (var guard = open(directory.resolve("replay.db"))) {
             assertThat(consume(guard, "first").get()).isEqualTo(ReplayDecision.ACCEPTED);
-            assertThat(consume(guard, "second").get()).isEqualTo(ReplayDecision.CAPACITY_EXCEEDED);
+            assertThat(consume(guard, "second").get()).isEqualTo(ReplayDecision.ACCEPTED);
             clock.now = TestSupport.NOW.plusSeconds(15);
             assertThat(consume(guard, "first").get()).isEqualTo(ReplayDecision.REPLAYED);
-            assertThat(consume(guard, "second").get()).isEqualTo(ReplayDecision.CAPACITY_EXCEEDED);
-            clock.now = TestSupport.NOW.plusSeconds(17);
+            assertThat(consume(guard, "second").get()).isEqualTo(ReplayDecision.REPLAYED);
             assertThat(
                             guard.consume(
                                             "gateway",
@@ -122,7 +120,7 @@ class LocalReplayGuardTest {
     @Test
     void blockedDatabaseDoesNotBlockCallerAndTimeoutDoesNotConsume() throws Exception {
         Path file = directory.resolve("replay.db");
-        try (var guard = open(file, 10);
+        try (var guard = open(file);
                 var blocker = DriverManager.getConnection("jdbc:sqlite:" + file);
                 var statement = blocker.createStatement()) {
             statement.execute("BEGIN IMMEDIATE");
@@ -138,8 +136,8 @@ class LocalReplayGuardTest {
     @Test
     void concurrentIndependentGuardsShareOneAtomicConsumptionBoundary() throws Exception {
         Path file = directory.resolve("replay.db");
-        try (var first = open(file, 10);
-                var second = open(file, 10)) {
+        try (var first = open(file);
+                var second = open(file)) {
             var a = consume(first, "shared");
             var b = consume(second, "shared");
             assertThat(java.util.List.of(a.get(5, TimeUnit.SECONDS), b.get(5, TimeUnit.SECONDS)))
@@ -148,55 +146,37 @@ class LocalReplayGuardTest {
     }
 
     @Test
-    void rejectsWrongOwnerChangedToleranceCorruptionAndClosedGuard() throws Exception {
+    void rejectsWrongOwnerCorruptionAndClosedGuard() throws Exception {
         Path file = directory.resolve("replay.db");
-        var guard = open(file, 10);
+        var guard = open(file);
         guard.close();
         assertThat(consume(guard, "closed").get()).isEqualTo(ReplayDecision.UNAVAILABLE);
-        assertThatThrownBy(
-                        () ->
-                                new LocalReplayGuard(
-                                        file,
-                                        "other",
-                                        Duration.ofSeconds(2),
-                                        10,
-                                        Duration.ofMillis(500),
-                                        clock))
-                .isInstanceOf(java.sql.SQLException.class);
-        assertThatThrownBy(
-                        () ->
-                                new LocalReplayGuard(
-                                        file,
-                                        "backend",
-                                        Duration.ofSeconds(3),
-                                        10,
-                                        Duration.ofMillis(500),
-                                        clock))
+        assertThatThrownBy(() -> new LocalReplayGuard(file, "other", Duration.ofMillis(500), clock))
                 .isInstanceOf(java.sql.SQLException.class);
         Path corrupt = directory.resolve("corrupt.db");
         Files.writeString(corrupt, "corrupt database, do not replace");
-        assertThatThrownBy(() -> open(corrupt, 10)).isInstanceOf(java.sql.SQLException.class);
+        assertThatThrownBy(() -> open(corrupt)).isInstanceOf(java.sql.SQLException.class);
         assertThat(Files.readString(corrupt)).isEqualTo("corrupt database, do not replace");
     }
 
     @Test
     void rejectsUnsupportedStateVersionsAndUnknownNonemptyDatabases() throws Exception {
         Path versioned = directory.resolve("versioned.db");
-        try (var guard = open(versioned, 10)) {
+        try (var guard = open(versioned)) {
             assertThat(consume(guard, "versioned").get()).isEqualTo(ReplayDecision.ACCEPTED);
         }
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + versioned);
                 var statement = connection.createStatement()) {
             statement.execute("PRAGMA user_version=2");
         }
-        assertThatThrownBy(() -> open(versioned, 10)).isInstanceOf(java.sql.SQLException.class);
+        assertThatThrownBy(() -> open(versioned)).isInstanceOf(java.sql.SQLException.class);
 
         Path unknown = directory.resolve("unknown.db");
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + unknown);
                 var statement = connection.createStatement()) {
             statement.execute("CREATE TABLE unrelated (id INTEGER)");
         }
-        assertThatThrownBy(() -> open(unknown, 10)).isInstanceOf(java.sql.SQLException.class);
+        assertThatThrownBy(() -> open(unknown)).isInstanceOf(java.sql.SQLException.class);
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + unknown);
                 var statement = connection.createStatement();
                 var rows =
@@ -209,14 +189,14 @@ class LocalReplayGuardTest {
     @Test
     void existingStateWithAMissingLedgerIsNotReinitialized() throws Exception {
         Path file = directory.resolve("replay.db");
-        try (var guard = open(file, 10)) {
+        try (var guard = open(file)) {
             assertThat(consume(guard, "used").get()).isEqualTo(ReplayDecision.ACCEPTED);
         }
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + file);
                 var statement = connection.createStatement()) {
             statement.execute("DROP TABLE chorus_consumed_tickets");
         }
-        assertThatThrownBy(() -> open(file, 10)).isInstanceOf(java.sql.SQLException.class);
+        assertThatThrownBy(() -> open(file)).isInstanceOf(java.sql.SQLException.class);
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + file);
                 var statement = connection.createStatement();
                 var rows =
@@ -229,7 +209,7 @@ class LocalReplayGuardTest {
     @Test
     void rejectsMissingIdentifiersAndWrongTargetsWithoutConsuming() throws Exception {
         Path file = directory.resolve("replay.db");
-        try (var guard = open(file, 10)) {
+        try (var guard = open(file)) {
             for (String[] ids :
                     new String[][] {
                         {null, "jti"},
@@ -266,14 +246,14 @@ class LocalReplayGuardTest {
 
     @Test
     void expiredRetentionIsRejectedAtTheExactBoundaryAndNeverRecorded() throws Exception {
-        try (var guard = open(directory.resolve("replay.db"), 10)) {
+        try (var guard = open(directory.resolve("replay.db"))) {
             assertThat(
                             consume(
                                             guard,
                                             "gateway",
                                             "expired",
                                             "backend",
-                                            TestSupport.NOW.minusSeconds(2))
+                                            TestSupport.NOW.minusSeconds(30))
                                     .get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.UNAVAILABLE);
             assertThat(consume(guard, "expired").get(5, TimeUnit.SECONDS))
@@ -284,7 +264,7 @@ class LocalReplayGuardTest {
                                             "gateway",
                                             "inside-skew",
                                             "backend",
-                                            TestSupport.NOW.minusSeconds(1))
+                                            TestSupport.NOW.minusSeconds(29))
                                     .get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.ACCEPTED);
         }
@@ -293,7 +273,7 @@ class LocalReplayGuardTest {
     @Test
     void createsPersistentParentDirectoriesBeforeOpeningStorage() throws Exception {
         Path file = directory.resolve("nested/state/replay.db");
-        try (var guard = open(file, 10)) {
+        try (var guard = open(file)) {
             assertThat(consume(guard, "nested").get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.ACCEPTED);
         }
@@ -306,40 +286,7 @@ class LocalReplayGuardTest {
         Path file = directory.resolve("invalid.db");
         for (String target : new String[] {null, "", "bad id"}) {
             assertThatThrownBy(
-                            () ->
-                                    new LocalReplayGuard(
-                                            file,
-                                            target,
-                                            Duration.ofSeconds(2),
-                                            10,
-                                            Duration.ofMillis(500),
-                                            clock))
-                    .isInstanceOf(IllegalArgumentException.class);
-        }
-        for (int capacity : new int[] {0, -1}) {
-            assertThatThrownBy(
-                            () ->
-                                    new LocalReplayGuard(
-                                            file,
-                                            "backend",
-                                            Duration.ofSeconds(2),
-                                            capacity,
-                                            Duration.ofMillis(500),
-                                            clock))
-                    .isInstanceOf(IllegalArgumentException.class);
-        }
-        for (Duration skew :
-                java.util.List.of(
-                        Duration.ofSeconds(-1), Duration.ofMillis(500), Duration.ofNanos(1))) {
-            assertThatThrownBy(
-                            () ->
-                                    new LocalReplayGuard(
-                                            file,
-                                            "backend",
-                                            skew,
-                                            10,
-                                            Duration.ofMillis(500),
-                                            clock))
+                            () -> new LocalReplayGuard(file, target, Duration.ofMillis(500), clock))
                     .isInstanceOf(IllegalArgumentException.class);
         }
         for (Duration timeout :
@@ -348,15 +295,7 @@ class LocalReplayGuardTest {
                         Duration.ofNanos(1),
                         Duration.ofMillis(-1),
                         Duration.ofMillis((long) Integer.MAX_VALUE + 1))) {
-            assertThatThrownBy(
-                            () ->
-                                    new LocalReplayGuard(
-                                            file,
-                                            "backend",
-                                            Duration.ofSeconds(2),
-                                            10,
-                                            timeout,
-                                            clock))
+            assertThatThrownBy(() -> new LocalReplayGuard(file, "backend", timeout, clock))
                     .isInstanceOf(IllegalArgumentException.class);
         }
         assertThat(file).doesNotExist();
@@ -364,7 +303,7 @@ class LocalReplayGuardTest {
 
     @Test
     void workerThreadIsDaemonAndStopsWithTheGuard() throws Exception {
-        try (var guard = open(directory.resolve("replay.db"), 10)) {
+        try (var guard = open(directory.resolve("replay.db"))) {
             assertThat(consume(guard, "daemon").get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.ACCEPTED);
             var worker =
@@ -377,18 +316,17 @@ class LocalReplayGuardTest {
     }
 
     @Test
-    void acceptsMaximumTargetLengthAndZeroClockSkew() throws Exception {
+    void acceptsMaximumTargetLengthAndRejectsOverlongTarget() throws Exception {
         String maximumId = "a".repeat(128);
         try (var guard =
                 new LocalReplayGuard(
-                        directory.resolve("boundary.db"),
-                        maximumId,
-                        Duration.ZERO,
-                        1,
-                        Duration.ofMillis(1),
-                        clock)) {
+                        directory.resolve("boundary.db"), maximumId, Duration.ofMillis(1), clock)) {
             assertThat(
-                            guard.consume("gateway", "boundary", maximumId, TestSupport.NOW)
+                            guard.consume(
+                                            "gateway",
+                                            "boundary",
+                                            maximumId,
+                                            TestSupport.NOW.minusSeconds(31))
                                     .toCompletableFuture()
                                     .get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.UNAVAILABLE);
@@ -407,8 +345,6 @@ class LocalReplayGuardTest {
                                 new LocalReplayGuard(
                                         directory.resolve("invalid-target.db"),
                                         "a".repeat(129),
-                                        Duration.ZERO,
-                                        1,
                                         Duration.ofMillis(1),
                                         clock))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -440,7 +376,7 @@ class LocalReplayGuardTest {
             Path wal = Path.of(file + "-wal");
             assertThat(wal).isRegularFile();
             assertThat(Files.size(wal)).isPositive();
-            try (var guard = open(file, 10)) {
+            try (var guard = open(file)) {
                 assertThat(consume(guard, "crash-ticket").get(5, TimeUnit.SECONDS))
                         .isEqualTo(
                                 mode.equals("committed")

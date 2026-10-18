@@ -23,19 +23,11 @@ import me.pectics.chorus.core.replay.ReplayDecision;
  */
 final class SqliteReplayStore implements AutoCloseable {
     private final Connection connection;
-    private final int capacity;
     private final Clock clock;
     private volatile boolean broken;
 
-    SqliteReplayStore(
-            Path file,
-            String targetNodeId,
-            long skewMillis,
-            int capacity,
-            int busyMillis,
-            Clock clock)
+    SqliteReplayStore(Path file, String targetNodeId, Clock clock)
             throws SQLException, IOException {
-        this.capacity = capacity;
         this.clock = clock;
         Path absolute = file.toAbsolutePath().normalize();
         Files.createDirectories(
@@ -44,7 +36,7 @@ final class SqliteReplayStore implements AutoCloseable {
         this.connection =
                 DriverManager.getConnection("jdbc:sqlite:" + absolute.toUri() + "?mode=rwc");
         try {
-            initialize(targetNodeId, skewMillis, busyMillis);
+            initialize(targetNodeId);
         } catch (SQLException | RuntimeException | Error failure) {
             try {
                 connection.close();
@@ -55,10 +47,8 @@ final class SqliteReplayStore implements AutoCloseable {
         }
     }
 
-    private void initialize(String targetNodeId, long skewMillis, int busyMillis)
-            throws SQLException {
+    private void initialize(String targetNodeId) throws SQLException {
         try (var statement = connection.createStatement()) {
-            statement.execute("PRAGMA busy_timeout=" + busyMillis);
             try (var result = statement.executeQuery("PRAGMA journal_mode=WAL")) {
                 if (!result.next() || !result.getString(1).equalsIgnoreCase("wal")) {
                     throw new SQLException("Local replay requires WAL mode");
@@ -88,8 +78,7 @@ final class SqliteReplayStore implements AutoCloseable {
                         """
                         CREATE TABLE chorus_replay_meta (
                             id INTEGER PRIMARY KEY CHECK (id = 1),
-                            node_id TEXT NOT NULL,
-                            skew_ms INTEGER NOT NULL
+                            node_id TEXT NOT NULL
                         )
                         """);
                 statement.execute(
@@ -106,9 +95,8 @@ final class SqliteReplayStore implements AutoCloseable {
                                 + "ON chorus_consumed_tickets(retain_until_ms)");
                 try (var insert =
                         connection.prepareStatement(
-                                "INSERT INTO chorus_replay_meta VALUES (1, ?, ?)")) {
+                                "INSERT INTO chorus_replay_meta VALUES (1, ?)")) {
                     insert.setString(1, targetNodeId);
-                    insert.setLong(2, skewMillis);
                     insert.executeUpdate();
                 }
                 statement.execute("PRAGMA user_version=1");
@@ -123,13 +111,9 @@ final class SqliteReplayStore implements AutoCloseable {
                 result.getMetaData();
             }
             try (var result =
-                    statement.executeQuery(
-                            "SELECT node_id, skew_ms FROM chorus_replay_meta WHERE id=1")) {
-                if (!result.next()
-                        || !targetNodeId.equals(result.getString(1))
-                        || result.getLong(2) != skewMillis) {
-                    throw new SQLException(
-                            "Replay state belongs to a different node or clock tolerance");
+                    statement.executeQuery("SELECT node_id FROM chorus_replay_meta WHERE id=1")) {
+                if (!result.next() || !targetNodeId.equals(result.getString(1))) {
+                    throw new SQLException("Replay state belongs to a different node");
                 }
             }
             statement.execute("COMMIT");
@@ -164,13 +148,6 @@ final class SqliteReplayStore implements AutoCloseable {
                         transaction.execute("COMMIT");
                         return ReplayDecision.REPLAYED;
                     }
-                }
-            }
-            try (var count =
-                    transaction.executeQuery("SELECT COUNT(*) FROM chorus_consumed_tickets")) {
-                if (count.next() && count.getLong(1) >= capacity) {
-                    transaction.execute("ROLLBACK");
-                    return ReplayDecision.CAPACITY_EXCEEDED;
                 }
             }
             try (var insert =
