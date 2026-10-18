@@ -63,7 +63,7 @@ class LocalReplayGuardTest {
     @EnumSource(ReplayDecision.class)
     void storageOutcomesPassThroughTheGuard(ReplayDecision decision) throws Exception {
         store.decision = decision;
-        try (var guard = new LocalReplayGuard(store, "backend", clock, 4)) {
+        try (var guard = new LocalReplayGuard(store, "backend", clock, 1)) {
             assertThat(
                             guard.consume("gateway", "ticket", "backend", NOW.plusSeconds(15))
                                     .toCompletableFuture()
