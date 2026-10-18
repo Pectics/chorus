@@ -33,6 +33,7 @@ import me.pectics.chorus.core.registry.sql.SqlServerNodeRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("resource")
 class BootstrapManagedChorusCoreEngineTest {
     private RecordingEngine delegate;
     private RecordingStore store;

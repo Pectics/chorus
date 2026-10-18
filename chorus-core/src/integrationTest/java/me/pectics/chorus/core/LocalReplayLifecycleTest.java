@@ -107,6 +107,34 @@ class LocalReplayLifecycleTest {
     }
 
     @Test
+    void externalCloseWaitsAcrossTerminationPeriodsUntilConsumptionFinishes() throws Exception {
+        var clock = new PausingClock();
+        var guard = open(directory.resolve("replay.db"), 3, clock);
+        try {
+            var running = consume(guard, "slow-close");
+            await(clock.entered);
+            var closingStarted = new CountDownLatch(1);
+            var closing =
+                    CompletableFuture.runAsync(
+                            () -> {
+                                closingStarted.countDown();
+                                guard.close();
+                            });
+            await(closingStarted);
+            assertThatThrownBy(() -> closing.get(1_300, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(TimeoutException.class);
+            assertThat(running).isNotDone();
+
+            clock.resume();
+            closing.get(5, TimeUnit.SECONDS);
+            assertThat(running.get(5, TimeUnit.SECONDS)).isEqualTo(ReplayDecision.ACCEPTED);
+        } finally {
+            clock.resume();
+            guard.close();
+        }
+    }
+
+    @Test
     void interruptedExternalCloseRestoresTheFlagAndStillDrainsAcceptedWork() throws Exception {
         var clock = new PausingClock();
         var guard = open(directory.resolve("replay.db"), 3, clock);

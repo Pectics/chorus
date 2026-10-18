@@ -59,6 +59,17 @@ class TicketCryptoTest {
     }
 
     @Test
+    void rejectsDeterministicallyInvalidEd25519SignaturesFromTheJcaExceptionPath() {
+        var pair = TestSupport.keyPair();
+        var verifier = new Ed25519.Verifier(pair.getPublic());
+        byte[] message = "ticket payload".getBytes(StandardCharsets.US_ASCII);
+        byte[] invalid = new byte[64];
+        Arrays.fill(invalid, (byte) 0xff);
+        assertThat(verifier.verify(message, invalid)).isFalse();
+        assertThat(verifier.verify(message, invalid)).isFalse();
+    }
+
+    @Test
     void ed25519ExposesAPublicVerifierAndRejectsMismatchedPairs() {
         var pair = TestSupport.keyPair();
         var signer = new Ed25519.Signer(pair.getPrivate(), pair.getPublic());

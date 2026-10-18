@@ -109,6 +109,45 @@ class TicketCodecTest {
     }
 
     @Test
+    void rejectsTicketsWhoseEd25519SignatureThrowsDuringVerification() {
+        String compact =
+                new String(codec.encode(TestSupport.claims(), key), StandardCharsets.US_ASCII);
+        String[] parts = compact.split("\\.");
+        byte[] invalidSignature = new byte[64];
+        java.util.Arrays.fill(invalidSignature, (byte) 0xff);
+        String invalid =
+                parts[0]
+                        + "."
+                        + parts[1]
+                        + "."
+                        + Base64.getUrlEncoder().withoutPadding().encodeToString(invalidSignature);
+        rejects(invalid.getBytes(StandardCharsets.US_ASCII), TicketError.INVALID_SIGNATURE);
+    }
+
+    @Test
+    void rejectsNonCanonicalBase64UrlEncodingsThatDecodeToTheSameSignature() {
+        String compact =
+                new String(codec.encode(TestSupport.claims(), key), StandardCharsets.US_ASCII);
+        String signature = compact.substring(compact.lastIndexOf('.') + 1);
+        String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        int finalIndex = alphabet.indexOf(signature.charAt(signature.length() - 1));
+        String nonCanonical =
+                compact.substring(0, compact.length() - 1) + alphabet.charAt(finalIndex ^ 1);
+        assertThat(
+                        Base64.getUrlDecoder()
+                                .decode(nonCanonical.substring(nonCanonical.lastIndexOf('.') + 1)))
+                .isEqualTo(Base64.getUrlDecoder().decode(signature));
+        assertThat(
+                        Base64.getUrlEncoder()
+                                .withoutPadding()
+                                .encodeToString(Base64.getUrlDecoder().decode(signature)))
+                .isEqualTo(signature);
+        assertThat(codec.decode(compact.getBytes(StandardCharsets.US_ASCII), issuers).claims())
+                .isEqualTo(TestSupport.claims());
+        rejects(nonCanonical.getBytes(StandardCharsets.US_ASCII), TicketError.MALFORMED_TICKET);
+    }
+
+    @Test
     void detectsTamperingAndDoesNotTrustAReplacementKey() {
         var attacker = TestSupport.keyPair();
         rejects(TestSupport.signRaw(part(0), part(1), attacker), TicketError.INVALID_SIGNATURE);

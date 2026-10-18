@@ -147,6 +147,39 @@ class SqlServerNodeRegistryTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(15)
+    void externalCloseWaitsAcrossTerminationPeriodsUntilRefreshFinishes() throws Exception {
+        var store = new FakeServerNodeStore();
+        var registry = registry(store);
+        try {
+            store.entered = new CountDownLatch(1);
+            store.release = new CountDownLatch(1);
+            var refreshing = registry.refresh();
+            assertThat(store.entered.await(2, TimeUnit.SECONDS)).isTrue();
+
+            var closingStarted = new CountDownLatch(1);
+            var closing =
+                    CompletableFuture.runAsync(
+                            () -> {
+                                closingStarted.countDown();
+                                registry.close();
+                            });
+            assertThat(closingStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> closing.get(1_300, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            assertThat(store.closed.get()).isZero();
+
+            store.release.countDown();
+            closing.get(5, TimeUnit.SECONDS);
+            refreshing.toCompletableFuture().get(5, TimeUnit.SECONDS);
+            assertThat(store.closed.get()).isEqualTo(1);
+        } finally {
+            store.release.countDown();
+            registry.close();
+        }
+    }
+
+    @Test
     void closeReportsStoreFailuresAfterDrainingAcceptedWork() throws Exception {
         var store = new FakeServerNodeStore();
         store.closeFailure = new IllegalStateException("store close failed");
