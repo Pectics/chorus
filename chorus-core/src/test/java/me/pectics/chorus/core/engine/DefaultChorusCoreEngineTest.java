@@ -9,6 +9,7 @@
 package me.pectics.chorus.core.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
@@ -43,7 +44,9 @@ import me.pectics.chorus.core.ticket.TicketClaims;
 import me.pectics.chorus.core.ticket.TicketCodec;
 import me.pectics.chorus.core.ticket.TicketConfiguration;
 import me.pectics.chorus.core.ticket.TicketIssuanceConfiguration;
+import me.pectics.chorus.core.ticket.TicketIssuancePolicy;
 import me.pectics.chorus.core.ticket.TicketVerificationConfiguration;
+import me.pectics.chorus.core.trust.IssuerTrustPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -55,7 +58,19 @@ class DefaultChorusCoreEngineTest {
 
     private DefaultChorusCoreEngine engine(
             String id, ServerNodeRole role, BuiltinIdentityResolutionPolicy policy) {
-        return engine(id, role, policy, TestSupport.serverNodeRegistry());
+        return engine(
+                id,
+                role,
+                policy,
+                TestSupport.serverNodeRegistry(),
+                TestSupport.issuers(pair),
+                role.sender()
+                        ? new TicketIssuanceConfiguration(
+                                Duration.ofSeconds(15), TestSupport.issuancePolicy())
+                        : null,
+                new TicketVerificationConfiguration(
+                        Duration.ofSeconds(15), Duration.ofSeconds(2), true, policy),
+                Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
     }
 
     private DefaultChorusCoreEngine engine(
@@ -63,21 +78,40 @@ class DefaultChorusCoreEngineTest {
             ServerNodeRole role,
             BuiltinIdentityResolutionPolicy policy,
             ServerNodeRegistry serverNodeRegistry) {
-        var issuers = TestSupport.issuers(pair);
-        return new DefaultChorusCoreEngine(
-                new ServerNodeConfiguration(id, role),
-                new TicketConfiguration("chorus:ticket", 4096, 2048),
+        return engine(
+                id,
+                role,
+                policy,
+                serverNodeRegistry,
+                TestSupport.issuers(pair),
                 role.sender()
                         ? new TicketIssuanceConfiguration(
                                 Duration.ofSeconds(15), TestSupport.issuancePolicy())
                         : null,
                 new TicketVerificationConfiguration(
                         Duration.ofSeconds(15), Duration.ofSeconds(2), true, policy),
+                Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
+    }
+
+    private DefaultChorusCoreEngine engine(
+            String id,
+            ServerNodeRole role,
+            BuiltinIdentityResolutionPolicy policy,
+            ServerNodeRegistry serverNodeRegistry,
+            me.pectics.chorus.core.trust.TrustedIssuerStore issuers,
+            TicketIssuanceConfiguration issuance,
+            TicketVerificationConfiguration verification,
+            Clock clock) {
+        return new DefaultChorusCoreEngine(
+                new ServerNodeConfiguration(id, role),
+                new TicketConfiguration("chorus:ticket", 4096, 2048),
+                issuance,
+                verification,
                 serverNodeRegistry,
                 issuers,
                 role.sender() ? TestSupport.signer(pair) : null,
                 role.receiver() ? replay : null,
-                Clock.fixed(TestSupport.NOW, ZoneOffset.UTC));
+                clock);
     }
 
     @Test
@@ -523,6 +557,189 @@ class DefaultChorusCoreEngineTest {
         }
     }
 
+    @Test
+    void reportsTheLocalValidationNodeAndConsumesTheExactTicketIdentity() {
+        try (var receiver =
+                engine(
+                        "backend",
+                        ServerNodeRole.BACKEND,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM)) {
+            var accepted =
+                    receiver.verifyAndResolve(request(TestSupport.claims(), login))
+                            .toCompletableFuture()
+                            .join();
+            assertThat(accepted.retainedIdentity())
+                    .isEqualTo(new AuthenticatedIdentity(TestSupport.identity(), "backend"));
+            assertThat(accepted.jti()).isEqualTo("ticket-1");
+            assertThat(replay.issuer).isEqualTo("gateway");
+            assertThat(replay.jti).isEqualTo("ticket-1");
+            assertThat(replay.target).isEqualTo("backend");
+            assertThat(replay.expiry).isEqualTo(TestSupport.NOW.plusSeconds(15));
+        }
+    }
+
+    @Test
+    void issuanceTruncatesToWholeSecondsAndProducesUniqueIdentifiers() {
+        var clock = Clock.fixed(TestSupport.NOW.plusNanos(999_999_999), ZoneOffset.UTC);
+        var verification =
+                new TicketVerificationConfiguration(
+                        Duration.ofSeconds(15),
+                        Duration.ofSeconds(2),
+                        true,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
+        try (var sender =
+                engine(
+                        "gateway",
+                        ServerNodeRole.GATEWAY,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM,
+                        TestSupport.serverNodeRegistry(),
+                        TestSupport.issuers(pair),
+                        new TicketIssuanceConfiguration(
+                                Duration.ofSeconds(15), TestSupport.issuancePolicy()),
+                        verification,
+                        clock)) {
+            var first =
+                    sender.issueTicket(
+                                    new IssueTicketRequest(
+                                            "backend",
+                                            new AuthenticatedIdentity(
+                                                    TestSupport.identity(), "gateway"),
+                                            Map.of()))
+                            .toCompletableFuture()
+                            .join();
+            var second =
+                    sender.issueTicket(
+                                    new IssueTicketRequest(
+                                            "backend",
+                                            new AuthenticatedIdentity(
+                                                    TestSupport.identity(), "gateway"),
+                                            Map.of()))
+                            .toCompletableFuture()
+                            .join();
+            var issued =
+                    new TicketCodec(4096, 2048)
+                            .decode(first.cookiePayload(), TestSupport.issuers(pair))
+                            .claims();
+            assertThat(issued.issuedAt()).isEqualTo(TestSupport.NOW);
+            assertThat(issued.notBefore()).isEqualTo(TestSupport.NOW);
+            assertThat(issued.expiresAt()).isEqualTo(TestSupport.NOW.plusSeconds(15));
+            assertThat(first.expiresAt()).isEqualTo(TestSupport.NOW.plusSeconds(15));
+            assertThat(first.jti()).isNotEqualTo(second.jti());
+            assertThat(UUID.fromString(first.jti()).toString()).isEqualTo(first.jti());
+            assertThat(first.targetServer()).isEqualTo(TestSupport.node("backend"));
+            assertThat(first.cookieNamespacedKey()).isEqualTo("chorus:ticket");
+        }
+    }
+
+    @Test
+    void transferIntentEnforcementCanBeDisabledByConfiguration() {
+        var verification =
+                new TicketVerificationConfiguration(
+                        Duration.ofSeconds(15),
+                        Duration.ofSeconds(2),
+                        false,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM);
+        try (var receiver =
+                engine(
+                        "backend",
+                        ServerNodeRole.BACKEND,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM,
+                        TestSupport.serverNodeRegistry(),
+                        TestSupport.issuers(pair),
+                        null,
+                        verification,
+                        Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
+            var accepted =
+                    receiver.verifyAndResolve(
+                                    request(
+                                            TestSupport.claims(),
+                                            new ReceiverLoginContext("Notch", false, null)))
+                            .toCompletableFuture()
+                            .join();
+            assertThat(accepted.resolvedProfile().finalUuid()).isEqualTo(TestSupport.UUID_MOJANG);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = AuthenticationSourceType.class,
+            names = {"YGGDRASIL", "FLOODGATE"})
+    void reservedIdentitySchemesAreRejectedEvenWhenPoliciesPermitThem(
+            AuthenticationSourceType type) {
+        var identity =
+                new IdentityClaim(
+                        "Notch", type, "mojang", "account", TestSupport.UUID_MOJANG, List.of());
+        var permitted = new IssuerTrustPolicy(Set.of(type), Set.of("mojang"));
+        var issuers =
+                new me.pectics.chorus.core.trust.file.FileTrustedIssuerStore(
+                        List.of(
+                                new me.pectics.chorus.core.trust.TrustedIssuer(
+                                        "gateway",
+                                        List.of(
+                                                new me.pectics.chorus.core.crypto.Ed25519.Verifier(
+                                                        pair.getPublic())),
+                                        true,
+                                        permitted)));
+        try (var sender =
+                engine(
+                        "gateway",
+                        ServerNodeRole.GATEWAY,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM,
+                        TestSupport.serverNodeRegistry(),
+                        issuers,
+                        new TicketIssuanceConfiguration(
+                                Duration.ofSeconds(15),
+                                new TicketIssuancePolicy(permitted, Set.of("backend"))),
+                        new TicketVerificationConfiguration(
+                                Duration.ofSeconds(15),
+                                Duration.ofSeconds(2),
+                                true,
+                                BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
+                        Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
+            rejects(
+                    sender.issueTicket(
+                            new IssueTicketRequest(
+                                    "backend",
+                                    new AuthenticatedIdentity(identity, "gateway"),
+                                    Map.of())),
+                    TicketError.ISSUER_POLICY_DENIED);
+        }
+        var claims =
+                claims(
+                        TestSupport.NOW,
+                        TestSupport.NOW,
+                        TestSupport.NOW.plusSeconds(15),
+                        identity,
+                        "backend");
+        try (var receiver =
+                engine(
+                        "backend",
+                        ServerNodeRole.BACKEND,
+                        BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM,
+                        TestSupport.serverNodeRegistry(),
+                        issuers,
+                        null,
+                        new TicketVerificationConfiguration(
+                                Duration.ofSeconds(15),
+                                Duration.ofSeconds(2),
+                                true,
+                                BuiltinIdentityResolutionPolicy.ADOPT_UPSTREAM),
+                        Clock.fixed(TestSupport.NOW, ZoneOffset.UTC))) {
+            rejects(
+                    receiver.verifyAndResolve(request(claims, login)),
+                    TicketError.ISSUER_POLICY_DENIED);
+            assertThat(replay.calls).isZero();
+        }
+    }
+
+    @Test
+    void verificationRequestRequiresALoginContextBeforeTheEngineIsInvoked() {
+        var encoded =
+                new TicketCodec(4096, 2048).encode(TestSupport.claims(), TestSupport.signer(pair));
+        assertThatNullPointerException().isThrownBy(() -> new VerifyTicketRequest(encoded, null));
+        assertThat(replay.calls).isZero();
+    }
+
     private TicketClaims claims(
             Instant issued, Instant nbf, Instant exp, IdentityClaim identity, String target) {
         return new TicketClaims(
@@ -534,11 +751,19 @@ class DefaultChorusCoreEngineTest {
         private int closes;
         private CompletableFuture<ReplayDecision> pending;
         private final Set<String> consumed = new HashSet<>();
+        private String issuer;
+        private String jti;
+        private String target;
+        private Instant expiry;
 
         @Override
         public CompletionStage<ReplayDecision> consume(
                 String issuer, String jti, String target, Instant expiry) {
             calls++;
+            this.issuer = issuer;
+            this.jti = jti;
+            this.target = target;
+            this.expiry = expiry;
             return pending != null
                     ? pending
                     : CompletableFuture.completedFuture(

@@ -7,11 +7,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import me.pectics.chorus.core.api.TicketError;
 import me.pectics.chorus.core.api.TicketRejectedException;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.TicketSigner;
+import me.pectics.chorus.core.ticket.TicketClaims;
 import me.pectics.chorus.core.ticket.TicketCodec;
 import me.pectics.chorus.core.ticket.TicketCompression;
 import me.pectics.chorus.core.trust.TrustedIssuer;
@@ -255,5 +257,98 @@ class TicketCodecTest {
     @ValueSource(strings = {"a.b", "a.b.c.d", ".b.c", "a=.b.c", "a.b.!!", "é.b.c"})
     void rejectsInvalidCompactEncoding(String compact) {
         rejects(compact.getBytes(StandardCharsets.UTF_8), TicketError.MALFORMED_TICKET);
+    }
+
+    @Test
+    void encodingRejectsUnsupportedVersionsAndSubSecondTimestamps() {
+        assertThatThrownBy(
+                        () ->
+                                codec.encode(
+                                        new TicketClaims(
+                                                2,
+                                                "jti",
+                                                "gateway",
+                                                "backend",
+                                                TestSupport.NOW,
+                                                TestSupport.NOW,
+                                                TestSupport.NOW.plusSeconds(15),
+                                                TestSupport.identity(),
+                                                Map.of()),
+                                        key))
+                .isInstanceOfSatisfying(
+                        TicketRejectedException.class,
+                        rejection ->
+                                assertThat(rejection.code())
+                                        .isEqualTo(TicketError.UNSUPPORTED_VERSION));
+        assertThatThrownBy(
+                        () ->
+                                codec.encode(
+                                        new TicketClaims(
+                                                1,
+                                                "jti",
+                                                "gateway",
+                                                "backend",
+                                                TestSupport.NOW.plusNanos(1),
+                                                TestSupport.NOW,
+                                                TestSupport.NOW.plusSeconds(15),
+                                                TestSupport.identity(),
+                                                Map.of()),
+                                        key))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("whole seconds");
+    }
+
+    @Test
+    void rejectsHeaderShapeBeyondTheFixedAlgorithmAndType() {
+        String body = part(1);
+        for (String header :
+                List.of(
+                        "{\"alg\":\"Ed25519\"}",
+                        "{\"alg\":\"Ed25519\",\"typ\":\"JWT\"}",
+                        "{\"alg\":\"Ed25519\",\"typ\":\"chorus-ticket+jwt\",\"kid\":\"x\"}",
+                        "{\"alg\":\"Ed25519\",\"typ\":\"chorus-ticket+jwt\",\"crit\":[]}",
+                        "{\"alg\":\"Ed25519\",\"alg\":\"Ed25519\",\"typ\":\"chorus-ticket+jwt\"}")) {
+            rejects(TestSupport.signRaw(header, body, pair), TicketError.MALFORMED_TICKET);
+        }
+    }
+
+    @Test
+    void rejectsInvalidIdentityAndClaimWireValuesAfterSignatureVerification() {
+        String header = part(0);
+        String body = part(1);
+        String uuid = TestSupport.UUID_MOJANG.toString();
+        for (String invalid :
+                List.of(
+                        body.replace("\"authType\":\"MOJANG\"", "\"authType\":\"UNKNOWN\""),
+                        body.replace(uuid, uuid.toUpperCase(Locale.ROOT)),
+                        body.replace(uuid, "not-a-uuid"),
+                        body.replace("\"username\":\"Notch\"", "\"username\":\"bad-name\""),
+                        body.replace(
+                                "\"username\":\"Notch\"", "\"username\":\"Notch\",\"extra\":1"),
+                        body.replace("\"extensions\":{}", "\"extensions\":[]"),
+                        body.replace("\"value\":\"skin\"", "\"value\":\"\""),
+                        body.replace("\"jti\":\"ticket-1\"", "\"jti\":\"" + "x".repeat(129) + "\""),
+                        body.replace("\"aud\":\"backend\"", "\"aud\":\"\""),
+                        body.replace("\"iss\":\"gateway\"", "\"iss\":\"\""))) {
+            rejects(TestSupport.signRaw(header, invalid, pair), TicketError.MALFORMED_TICKET);
+        }
+    }
+
+    @Test
+    void constructorsRejectInvalidPayloadAndPropertyBudgets() {
+        for (int[] limits :
+                new int[][] {
+                    {0, 0},
+                    {-1, 1},
+                    {5121, 1},
+                    {4096, 0},
+                    {4096, -1},
+                    {4096, 4097}
+                }) {
+            assertThatThrownBy(() -> new TicketCodec(limits[0], limits[1], TicketCompression.NONE))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> new TicketCodec(4096, 2048, null))
+                .isInstanceOf(NullPointerException.class);
     }
 }
