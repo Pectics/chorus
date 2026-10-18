@@ -12,7 +12,8 @@ import java.util.Objects;
 
 /**
  * Registry source settings. Paths are relative to the main configuration; construction performs no
- * I/O. SQL currently synchronizes server node records, never issuer approvals or keys.
+ * I/O. SQL synchronizes server node records and the shared replay ledger; issuer approvals and keys
+ * remain local.
  */
 public record RegistryConfiguration(Provider provider, Config config, Sql sql, Cache cache) {
     public enum Provider {
@@ -54,8 +55,9 @@ public record RegistryConfiguration(Provider provider, Config config, Sql sql, C
     }
 
     /**
-     * One JDBC endpoint. Credentials are loaded only during resource assembly. TODO: Define account
-     * separation when management or replay writes are added (ARCHITECTURE.md section 7.2).
+     * One JDBC endpoint. Credentials are loaded only during resource assembly. The account must be
+     * able to initialize the schema and write replay registrations; the registry read pool remains
+     * read-only.
      */
     public record Sql(
             Engine engine,

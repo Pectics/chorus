@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.1, 3.3, 3.9, and 6
- * related: chorus-core/src/main/resources/me/pectics/chorus/core/registry/sql/v1/;
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/registry/sql/JdbcSchemaInitializer.java;
  *          chorus-core/build.gradle.kts
  * sync: Exercise each native driver, schema, and TLS mode against real opt-in database services.
  * @endcontext
@@ -12,7 +12,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -20,10 +19,15 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import me.pectics.chorus.core.TestSupport;
@@ -33,6 +37,8 @@ import me.pectics.chorus.core.bootstrap.ChorusCoreBootstrap;
 import me.pectics.chorus.core.identity.AuthenticatedIdentity;
 import me.pectics.chorus.core.identity.ReceiverLoginContext;
 import me.pectics.chorus.core.registry.RegistryConfiguration.*;
+import me.pectics.chorus.core.replay.ReplayDecision;
+import me.pectics.chorus.core.replay.registry.RegistryReplayGuard;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -65,13 +71,14 @@ class SqlServerNodeRegistryIntegrationTest {
             int port = server.getMappedPort(engine == Engine.POSTGRESQL ? 5432 : 3306);
             try (var admin = awaitAdmin(engine, port)) {
                 createUser(admin, engine);
+                grantAll(admin, engine);
                 try (var missing =
                         JdbcServerNodeStore.open(
                                 settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"))) {
                     assertThatThrownBy(missing::load).isInstanceOf(SQLException.class);
                 }
-                initialize(admin, engine);
-                grantRead(admin, engine);
+                JdbcSchemaInitializer.initialize(
+                        settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"));
                 execute(
                         admin,
                         "INSERT INTO chorus_servers (node_id, display_name, host, port) VALUES "
@@ -80,6 +87,7 @@ class SqlServerNodeRegistryIntegrationTest {
                                 + "('Backend', 'Case-sensitive ID', 'other.example.net', 25566)");
 
                 verifyTls(engine, port, ca);
+                verifyRegistryReplay(engine, port, ca);
                 verifyRefreshAndFailures(admin, engine, port, ca);
                 verifyLocalTrustAndConfiguredEngines(admin, engine, port, ca);
             }
@@ -147,16 +155,16 @@ class SqlServerNodeRegistryIntegrationTest {
                     admin,
                     "UPDATE chorus_servers SET host='updated.example.net' WHERE node_id='backend'");
 
-            execute(admin, "DROP TABLE chorus_registry_schema");
+            execute(admin, "DROP TABLE chorus_schema");
             execute(
                     admin,
-                    "CREATE TABLE chorus_registry_schema (singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL)");
-            execute(admin, "INSERT INTO chorus_registry_schema VALUES (1, 2)");
-            grantRead(admin, engine);
+                    "CREATE TABLE chorus_schema (singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL)");
+            execute(admin, "INSERT INTO chorus_schema VALUES (1, 2)");
+            grantAll(admin, engine);
             assertRefreshFailure(registry);
             ticker.set(Duration.ofSeconds(210).toNanos());
             assertThatThrownBy(registry::snapshot).isInstanceOf(IllegalStateException.class);
-            execute(admin, "UPDATE chorus_registry_schema SET version=1");
+            execute(admin, "UPDATE chorus_schema SET version=1");
             refresh(registry);
             assertThat(registry.snapshot().stale()).isFalse();
 
@@ -173,6 +181,116 @@ class SqlServerNodeRegistryIntegrationTest {
                 } else execute(admin, "UNLOCK TABLES");
             }
             refresh(registry);
+        }
+    }
+
+    private void verifyRegistryReplay(Engine engine, int port, Path ca) throws Exception {
+        var clock = new MutableClock(Instant.parse("2026-10-16T00:00:00Z"));
+        var settings = settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost");
+        try (var first = new RegistryReplayGuard(settings, "backend", clock);
+                var second = new RegistryReplayGuard(settings, "backend", clock)) {
+            Instant expiresAt = clock.instant().plusSeconds(15);
+            first.register("gateway", "replay-once", "backend", expiresAt)
+                    .toCompletableFuture()
+                    .get(10, TimeUnit.SECONDS);
+            var attempts =
+                    List.of(
+                            first.consume("gateway", "replay-once", "backend", expiresAt)
+                                    .toCompletableFuture(),
+                            second.consume("gateway", "replay-once", "backend", expiresAt)
+                                    .toCompletableFuture());
+            CompletableFuture.allOf(attempts.toArray(CompletableFuture[]::new))
+                    .get(10, TimeUnit.SECONDS);
+            assertThat(attempts.stream().map(CompletableFuture::join).toList())
+                    .containsExactlyInAnyOrder(ReplayDecision.ACCEPTED, ReplayDecision.REPLAYED);
+            assertThat(
+                            first.consume("gateway", "missing", "backend", expiresAt)
+                                    .toCompletableFuture()
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.REPLAYED);
+            first.register("gateway", "duplicate", "backend", expiresAt)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            assertThatThrownBy(
+                            () ->
+                                    first.register("gateway", "duplicate", "backend", expiresAt)
+                                            .toCompletableFuture()
+                                            .get(5, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(SQLException.class);
+            first.register("gateway", "expired", "backend", clock.instant().plusSeconds(15))
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            clock.now = clock.instant().plusSeconds(46);
+            assertThat(
+                            first.consume(
+                                            "gateway",
+                                            "expired",
+                                            "backend",
+                                            clock.instant().plusSeconds(15))
+                                    .toCompletableFuture()
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.REPLAYED);
+            first.register("gateway", "expired", "backend", clock.instant().plusSeconds(15))
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            assertThat(
+                            first.consume(
+                                            "gateway",
+                                            "expired",
+                                            "backend",
+                                            clock.instant().plusSeconds(15))
+                                    .toCompletableFuture()
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+        }
+
+        var pair = TestSupport.keyPair();
+        Files.write(directory.resolve("private.der"), pair.getPrivate().getEncoded());
+        Files.write(directory.resolve("public.der"), pair.getPublic().getEncoded());
+        Files.writeString(
+                directory.resolve("trusted-issuers.yml"),
+                """
+                gateway:
+                  algorithm: ED25519
+                  key: public.der
+                  allowed-auth-schemes: [MOJANG]
+                  allowed-providers: [mojang]
+                """);
+        Path senderFile =
+                write(
+                        "registry-gateway.yml",
+                        configuration(engine, port, "ED25519", true, "REGISTRY"));
+        Path receiverFile =
+                write(
+                        "registry-backend.yml",
+                        configuration(engine, port, "ED25519", false, "REGISTRY"));
+        try (var sender = ChorusCoreBootstrap.open(senderFile, clock);
+                var receiver = ChorusCoreBootstrap.open(receiverFile, clock)) {
+            var ticket =
+                    sender.issueTicket(
+                                    new IssueTicketRequest(
+                                            "backend",
+                                            new AuthenticatedIdentity(
+                                                    TestSupport.identity(), "gateway"),
+                                            Map.of()))
+                            .toCompletableFuture()
+                            .get(10, TimeUnit.SECONDS);
+            var request =
+                    new VerifyTicketRequest(
+                            ticket.cookiePayload(), new ReceiverLoginContext("Notch", true, null));
+            assertThat(
+                            receiver.verifyAndResolve(request)
+                                    .toCompletableFuture()
+                                    .get(10, TimeUnit.SECONDS)
+                                    .resolvedProfile()
+                                    .finalUuid())
+                    .isEqualTo(TestSupport.UUID_MOJANG);
+            assertThatThrownBy(
+                            () ->
+                                    receiver.verifyAndResolve(request)
+                                            .toCompletableFuture()
+                                            .get(5, TimeUnit.SECONDS))
+                    .hasRootCauseMessage("REPLAYED");
         }
     }
 
@@ -267,13 +385,19 @@ class SqlServerNodeRegistryIntegrationTest {
     }
 
     private String configuration(Engine engine, int port, String algorithm, boolean sender) {
+        return configuration(engine, port, algorithm, sender, "LOCAL");
+    }
+
+    private String configuration(
+            Engine engine, int port, String algorithm, boolean sender, String replayBackend) {
         String crypto =
                 algorithm.equals("ED25519")
                         ? "algorithm: ED25519\n  private-key: private.der\n  public-key: public.der"
                         : "algorithm: HMAC_SHA256\n  key: shared.key";
-        return """
+        String base =
+                """
                 node: {id: %s, role: %s}
-                ticket: {cookie-key: 'chorus:ticket', max-payload-bytes: 4096, max-property-bytes: 2048, compression: NONE}
+                ticket: {cookie-key: 'chorus:ticket', max-payload-bytes: 4096, max-property-bytes: 2048, max-lifetime: 15s, compression: NONE}
                 crypto:
                   %s
                 registry:
@@ -294,19 +418,24 @@ class SqlServerNodeRegistryIntegrationTest {
                   allowed-auth-schemes: [MOJANG]
                   allowed-providers: [mojang]
                   allowed-targets: [backend]
-                verification: {trusted-issuers-path: trusted-issuers.yml, max-lifetime: 15s, clock-skew: 0s, enforce-transfer-intent: true, identity-policy: ADOPT_UPSTREAM}
-                replay-guard:
-                  backend: LOCAL
-                  local: {path: state/%s-%s.db, max-entries: 100, busy-timeout: 500ms}
+                verification: {trusted-issuers-path: trusted-issuers.yml, enforce-transfer-intent: true, identity-policy: ADOPT_UPSTREAM}
                 """
-                .formatted(
-                        sender ? "gateway" : "backend",
-                        sender ? "GATEWAY" : "BACKEND",
-                        crypto,
-                        engine,
-                        port,
-                        sender ? "gateway" : "backend",
-                        algorithm);
+                        .formatted(
+                                sender ? "gateway" : "backend",
+                                sender ? "GATEWAY" : "BACKEND",
+                                crypto,
+                                engine,
+                                port);
+        String replay =
+                replayBackend.equals("REGISTRY")
+                        ? "replay-guard: {backend: REGISTRY}\n"
+                        : sender
+                                ? ""
+                                : ("replay-guard:\n"
+                                                + "  backend: LOCAL\n"
+                                                + "  local: {path: state/backend-%s.db, busy-timeout: 500ms}\n")
+                                        .formatted(algorithm);
+        return base + replay;
     }
 
     private Sql settings(Engine engine, int port, TlsMode mode, Path ca, String host) {
@@ -399,21 +528,12 @@ class SqlServerNodeRegistryIntegrationTest {
                         : "CREATE USER 'chorus_user'@'%' IDENTIFIED BY '" + PASSWORD + "'");
     }
 
-    private void grantRead(Connection admin, Engine engine) throws SQLException {
-        execute(
-                admin,
-                engine == Engine.POSTGRESQL
-                        ? "GRANT SELECT ON ALL TABLES IN SCHEMA public TO chorus_user"
-                        : "GRANT SELECT ON chorus.* TO 'chorus_user'@'%'");
-    }
-
-    private void initialize(Connection admin, Engine engine) throws Exception {
-        String script =
-                new String(
-                        resource("v1/" + engine.name().toLowerCase(Locale.ROOT) + ".sql"),
-                        StandardCharsets.UTF_8);
-        for (String statement : script.split(";")) {
-            if (!statement.isBlank()) execute(admin, statement);
+    private void grantAll(Connection admin, Engine engine) throws SQLException {
+        if (engine == Engine.POSTGRESQL) {
+            execute(admin, "GRANT ALL PRIVILEGES ON SCHEMA public TO chorus_user");
+            execute(admin, "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO chorus_user");
+        } else {
+            execute(admin, "GRANT ALL PRIVILEGES ON chorus.* TO 'chorus_user'@'%'");
         }
     }
 
@@ -441,5 +561,28 @@ class SqlServerNodeRegistryIntegrationTest {
 
     private Path write(String file, String value) throws IOException {
         return Files.writeString(directory.resolve(file), value);
+    }
+
+    private static final class MutableClock extends Clock {
+        private volatile Instant now;
+
+        private MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
     }
 }

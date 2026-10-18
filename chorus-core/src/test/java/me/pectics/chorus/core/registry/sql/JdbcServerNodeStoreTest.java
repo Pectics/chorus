@@ -21,10 +21,10 @@ class JdbcServerNodeStoreTest {
     @EnumSource(Engine.class)
     void normalizesTlsAndTimeoutUnitsWithoutPuttingCredentialsInUrls(Engine engine) {
         var settings = settings(engine, "2001:db8::1", "chorus?user=other&password=hidden");
-        var url = JdbcServerNodeStore.jdbcUrl(settings);
+        var url = JdbcPool.jdbcUrl(settings);
         assertThat(url).contains("[2001:db8::1]:5432/chorus%3Fuser%3Dother%26password%3Dhidden");
         assertThat(url).doesNotContain("secret-user");
-        var properties = JdbcServerNodeStore.driverProperties(settings);
+        var properties = JdbcPool.driverProperties(settings);
         if (engine == Engine.POSTGRESQL) {
             assertThat(properties.getProperty("connectTimeout")).isEqualTo("2");
             assertThat(properties.getProperty("socketTimeout")).isEqualTo("3");
@@ -51,7 +51,7 @@ class JdbcServerNodeStoreTest {
     @EnumSource(Engine.class)
     void disabledTlsNeverRetainsVerificationOptions(Engine engine) {
         var properties =
-                JdbcServerNodeStore.driverProperties(
+                JdbcPool.driverProperties(
                         settings(engine, "localhost", "chorus", TlsMode.DISABLED, null));
         switch (engine) {
             case POSTGRESQL -> {
@@ -68,17 +68,17 @@ class JdbcServerNodeStoreTest {
     void verifyFullRetainsTheConfiguredCaForEveryEngine() {
         Path ca = directory.resolve("ca.pem");
         var postgresql =
-                JdbcServerNodeStore.driverProperties(
+                JdbcPool.driverProperties(
                         settings(
                                 Engine.POSTGRESQL, "localhost", "chorus", TlsMode.VERIFY_FULL, ca));
         assertThat(postgresql.getProperty("sslrootcert")).isEqualTo(ca.toString());
         assertThat(postgresql).doesNotContainKey("sslfactory");
         var mysql =
-                JdbcServerNodeStore.driverProperties(
+                JdbcPool.driverProperties(
                         settings(Engine.MYSQL, "localhost", "chorus", TlsMode.VERIFY_FULL, ca));
         assertThat(mysql.getProperty("sslMode")).isEqualTo("VERIFY_IDENTITY");
         var mariadb =
-                JdbcServerNodeStore.driverProperties(
+                JdbcPool.driverProperties(
                         settings(Engine.MARIADB, "localhost", "chorus", TlsMode.VERIFY_FULL, ca));
         assertThat(mariadb.getProperty("serverSslCert")).isEqualTo(ca.toString());
         assertThat(mariadb.getProperty("fallbackToSystemTrustStore")).isEqualTo("false");
@@ -87,8 +87,7 @@ class JdbcServerNodeStoreTest {
     @ParameterizedTest
     @ValueSource(strings = {"host?sslMode=DISABLED", "user@host", "host/path", "host#fragment"})
     void rejectsHostnamesContainingConnectionParameters(String host) {
-        assertThatThrownBy(
-                        () -> JdbcServerNodeStore.jdbcUrl(settings(Engine.MYSQL, host, "chorus")))
+        assertThatThrownBy(() -> JdbcPool.jdbcUrl(settings(Engine.MYSQL, host, "chorus")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid SQL hostname");
     }
