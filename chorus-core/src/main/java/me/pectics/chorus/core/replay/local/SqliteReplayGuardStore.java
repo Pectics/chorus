@@ -13,7 +13,6 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.time.Clock;
 import java.util.Objects;
 import me.pectics.chorus.core.replay.ReplayDecision;
 
@@ -21,14 +20,12 @@ import me.pectics.chorus.core.replay.ReplayDecision;
  * Synchronous storage owned by one guard. Startup and termination may use the caller's thread; the
  * guard serializes consumption and closes only after all accepted work ends.
  */
-final class SqliteReplayStore implements AutoCloseable {
+final class SqliteReplayGuardStore implements LocalReplayGuardStore {
     private final Connection connection;
-    private final Clock clock;
     private volatile boolean broken;
 
-    SqliteReplayStore(Path file, String targetNodeId, int busyMillis, Clock clock)
+    SqliteReplayGuardStore(Path file, String targetNodeId, int busyMillis)
             throws SQLException, IOException {
-        this.clock = clock;
         Path absolute = file.toAbsolutePath().normalize();
         Files.createDirectories(
                 Objects.requireNonNull(
@@ -121,12 +118,9 @@ final class SqliteReplayStore implements AutoCloseable {
         }
     }
 
-    boolean isBroken() {
-        return broken;
-    }
-
-    ReplayDecision consume(String issuer, String jti, long retainUntil) {
-        if (broken || retainUntil <= clock.millis()) {
+    @Override
+    public ReplayDecision consume(String issuer, String jti, long retainUntil, long nowMillis) {
+        if (broken || retainUntil <= nowMillis) {
             return ReplayDecision.UNAVAILABLE;
         }
         boolean begun = false;
@@ -136,7 +130,7 @@ final class SqliteReplayStore implements AutoCloseable {
             try (var cleanup =
                     connection.prepareStatement(
                             "DELETE FROM chorus_consumed_tickets WHERE retain_until_ms <= ?")) {
-                cleanup.setLong(1, clock.millis());
+                cleanup.setLong(1, nowMillis);
                 cleanup.executeUpdate();
             }
             try (var find =
@@ -160,9 +154,7 @@ final class SqliteReplayStore implements AutoCloseable {
                 insert.executeUpdate();
             }
             transaction.execute("COMMIT");
-            return retainUntil > clock.millis()
-                    ? ReplayDecision.ACCEPTED
-                    : ReplayDecision.UNAVAILABLE;
+            return ReplayDecision.ACCEPTED;
         } catch (SQLException e) {
             if (begun) {
                 try (var rollback = connection.createStatement()) {

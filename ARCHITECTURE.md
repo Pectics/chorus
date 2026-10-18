@@ -97,7 +97,7 @@ chorus/
 │       ├── trust/                      # 本地信任契约、批准配置与信任策略
 │       │   ├── config/                 # 本地批准文件与信任策略的加载实现
 │       │   └── file/                   # 配置文件来源的可信签发者存储
-│       └── replay/                     # ReplayGuard 与防重放配置
+│       └── replay/                     # 异步 ReplayGuard、同步 ReplayGuardStore 与防重放配置
 │           ├── config/                 # 防重放配置加载
 │           ├── local/                  # 本地 SQLite 消费记录
 │           ├── registry/               # 复用 Registry 数据库的共享核销后端
@@ -125,6 +125,9 @@ chorus/
 
 `replay` 子包按核销后端职责命名，与配置枚举 `LOCAL / REGISTRY / REDIS` 对齐。
 本地实现入口为 `replay.local.LocalReplayGuard`，公开命名不绑定底层存储技术；当前 SQLite 的持久化与故障语义见 §3.6。
+统一的同步存储契约 `replay.ReplayGuardStore` 仅定义 `consume`；各后端的 `LocalReplayGuardStore`、
+`RegistryReplayGuardStore`、`RedisReplayGuardStore` 扩展该契约并声明资源关闭，共享后端另提供预登记。
+具体实现分别为 `SqliteReplayGuardStore`、`JdbcReplayGuardStore`、`JedisReplayGuardStore`，不在 Guard 内嵌套 Store 接口。
 
 `chorus-core` 可以使用通用 Java 库、数据库驱动和密码学库，但不能持有 `Player`、`GameProfile` 或 Netty `Channel` 等平台对象。数据库 I/O 与定时调度通过接口封装。
 
@@ -497,11 +500,21 @@ public interface ReplayGuard {
 
 **本地后端 `LOCAL`（SQLite）**：`aud` 指向一个接收节点及其持久数据库。Receiver 完成其他校验后，以唯一约束原子插入已消费记录；Sender 不预登记。采用 WAL 与 `synchronous=FULL`，确认事务持久化提交后才成功完成 `CompletionStage`，无需逐票等待 checkpoint。记录至少保留到 `exp + 30 秒`，不设容量上限。数据库 I/O 在专用执行器上执行。本地状态绑定节点 ID，发现不匹配则拒绝启用。正常进程重启复用原数据库，不需要启动隔离窗口；数据库及 WAL 必须保存在持久本地存储，删除、回滚旧备份或换空路径不属于普通重启保证。已有数据库损坏、提交失败或结果未知时拒绝，不自动重建或降级内存。
 
-`LocalReplayGuard` 负责公开输入校验、有界串行调度与关闭协调，包内 `SqliteReplayStore` 负责连接、初始化、完整核销事务及数据库故障状态。
+`ReplayGuardStore.consume(issuerNodeId, jti, retainUntilMillis, nowMillis)` 是所有后端共同的同步存储边界，
+不返回 Future 或 `CompletionStage`。`retainUntilMillis` 是已经包含时钟容差的排他保留期限，
+`nowMillis` 是 Guard 在 worker 上采样的执行时间；Store 不计算时钟容差或调度任务。
+本地 Store 记录消费，共享 Store 消费已预登记记录；提交或命令确认完成后才返回结果，未知结果拒绝。
+仅 `RegistryReplayGuardStore` 与 `RedisReplayGuardStore` 声明后端所需的同步 `register`，本地 Store 不提供空操作登记。
+异步 `ReplayGuard.register` 保留 LOCAL 的即时完成语义，供 Engine 统一签发流程使用。
+
+`LocalReplayGuard` 依赖 `LocalReplayGuardStore`，负责公开输入校验、有界串行调度、I/O 前后期限检查与关闭协调；
+包内 `SqliteReplayGuardStore` 负责连接、初始化、完整核销事务及数据库故障状态。
 启动、消费和关闭保证不并发访问同一连接；连接在已接收任务全部结束后关闭。消费完成回调可能在工作线程执行，回调内关闭只发起停止并返回，避免等待自身；从外部调用 Guard 的关闭方法可等待实际终止并获取关闭错误。
 
 **共享后端 `REGISTRY` / `REDIS`（已实现）**：Sender 在签发前登记 `(issuer, jti, target, exp + 30s)`；Receiver 在验签、目标、时间与策略检查后原子消费。`REGISTRY` 复用 `registry` 数据库，不能用于 `CONFIG` 来源；`REDIS` 使用 `replay-guard.redis` 的单节点连接。SQL 以 `DELETE ... WHERE issuer = ? AND jti = ? AND retain_until_ms > now` 的影响行数判定；Redis 以 `SET NX PX` 登记、`DEL` 消费。数据库或 Redis 不可用、超时或提交结果未知时拒绝，**不得自动退回其他核销后端**，也不重试。
-`RegistryReplayGuard` / `RedisReplayGuard` 负责输入校验、有界调度与关闭协调，包内 JDBC / Jedis 存储负责连接与原子操作。预登记失败使签发失败，不返回未登记票据。
+`RegistryReplayGuard` / `RedisReplayGuard` 分别依赖 `RegistryReplayGuardStore` / `RedisReplayGuardStore`，
+负责输入校验、有界调度与关闭协调；包内 `JdbcReplayGuardStore` / `JedisReplayGuardStore` 负责连接与原子操作。
+Redis key 编码由 `RedisReplayKey` 表达。预登记失败使签发失败，不返回未登记票据。
 
 防重放工作进入 worker 后须重新检查 `exp + 30s`，SQL 清理与条件消费使用执行时的当前时间，Redis 的剩余 TTL 从执行时重新计算。
 存储操作返回后再次检查该期限；排队、锁等待或提交确认跨过期限时拒绝成功返回，已经提交的消费仍不恢复。

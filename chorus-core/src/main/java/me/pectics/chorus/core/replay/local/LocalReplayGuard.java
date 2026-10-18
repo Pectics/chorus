@@ -2,7 +2,7 @@
  * @context
  * refs: ARCHITECTURE.md, sections 3.6, 3.8, and 5.2
  * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/ReplayGuard.java;
- *          chorus-core/src/main/java/me/pectics/chorus/core/replay/local/SqliteReplayStore.java
+ *          chorus-core/src/main/java/me/pectics/chorus/core/replay/local/LocalReplayGuardStore.java
  * sync: Complete results after storage returns; drain accepted work before closing the store.
  * @endcontext
  */
@@ -29,32 +29,38 @@ import me.pectics.chorus.core.ticket.TicketTiming;
  * One persistent receiver database, one bounded serial I/O worker. Opening and closing may block;
  * consume never performs I/O on the caller. LOCAL does not pre-register tickets. Completion
  * callbacks may run on the I/O worker and must not block it. Preserve the database and its WAL
- * across restarts; a new empty path is new state.
+ * across restarts; a new empty path is new state. Deadlines are checked before and after storage
+ * I/O; a committed consumption is never restored when it finishes after its deadline.
  */
 public final class LocalReplayGuard implements ReplayGuard {
     private static final int QUEUE_CAPACITY = 1024;
 
     private final Object lifecycle = new Object();
-    private final SqliteReplayStore store;
+    private final LocalReplayGuardStore store;
     private final ThreadPoolExecutor executor;
     private final String targetNodeId;
+    private final Clock clock;
     private volatile boolean closed;
     private volatile Thread worker;
     private volatile SQLException closeFailure;
 
     public LocalReplayGuard(Path file, String targetNodeId, Duration busyTimeout, Clock clock)
             throws SQLException, IOException {
-        Objects.requireNonNull(file, "file");
-        Objects.requireNonNull(clock, "clock");
-        if (targetNodeId == null
-                || !targetNodeId.matches("[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
-                || busyTimeout.isNegative()
-                || busyTimeout.toMillis() < 1
-                || busyTimeout.toMillis() > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("Invalid local replay configuration");
+        this(
+                openStore(file, targetNodeId, busyTimeout, clock),
+                targetNodeId,
+                clock,
+                QUEUE_CAPACITY);
+    }
+
+    LocalReplayGuard(
+            LocalReplayGuardStore store, String targetNodeId, Clock clock, int queueCapacity) {
+        this.store = Objects.requireNonNull(store, "store");
+        this.targetNodeId = requireTarget(targetNodeId);
+        this.clock = Objects.requireNonNull(clock, "clock");
+        if (queueCapacity < 1) {
+            throw new IllegalArgumentException("Invalid local replay queue capacity");
         }
-        this.targetNodeId = targetNodeId;
-        this.store = new SqliteReplayStore(file, targetNodeId, (int) busyTimeout.toMillis(), clock);
         try {
             this.executor =
                     new ThreadPoolExecutor(
@@ -62,7 +68,7 @@ public final class LocalReplayGuard implements ReplayGuard {
                             1,
                             0,
                             TimeUnit.MILLISECONDS,
-                            new ArrayBlockingQueue<>(QUEUE_CAPACITY),
+                            new ArrayBlockingQueue<>(queueCapacity),
                             task -> {
                                 var thread = new Thread(task, "chorus-local-replay");
                                 thread.setDaemon(true);
@@ -98,14 +104,25 @@ public final class LocalReplayGuard implements ReplayGuard {
                 Math.addExact(expiresAt.toEpochMilli(), TicketTiming.CLOCK_SKEW.toMillis());
         var result = new CompletableFuture<ReplayDecision>();
         synchronized (lifecycle) {
-            if (closed || store.isBroken() || !this.targetNodeId.equals(targetNodeId)) {
+            if (closed || !this.targetNodeId.equals(targetNodeId)) {
                 return CompletableFuture.completedFuture(ReplayDecision.UNAVAILABLE);
             }
             try {
                 executor.execute(
                         () -> {
                             try {
-                                result.complete(store.consume(issuerNodeId, jti, retainUntil));
+                                long executionTime = clock.millis();
+                                if (retainUntil <= executionTime) {
+                                    result.complete(ReplayDecision.UNAVAILABLE);
+                                    return;
+                                }
+                                var decision =
+                                        store.consume(
+                                                issuerNodeId, jti, retainUntil, executionTime);
+                                result.complete(
+                                        retainUntil <= clock.millis()
+                                                ? ReplayDecision.UNAVAILABLE
+                                                : decision);
                             } catch (RuntimeException e) {
                                 result.completeExceptionally(e);
                             }
@@ -115,6 +132,27 @@ public final class LocalReplayGuard implements ReplayGuard {
             }
         }
         return result;
+    }
+
+    private static LocalReplayGuardStore openStore(
+            Path file, String targetNodeId, Duration busyTimeout, Clock clock)
+            throws SQLException, IOException {
+        Objects.requireNonNull(file, "file");
+        Objects.requireNonNull(clock, "clock");
+        requireTarget(targetNodeId);
+        if (busyTimeout.isNegative()
+                || busyTimeout.toMillis() < 1
+                || busyTimeout.toMillis() > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Invalid local replay configuration");
+        }
+        return new SqliteReplayGuardStore(file, targetNodeId, (int) busyTimeout.toMillis());
+    }
+
+    private static String requireTarget(String targetNodeId) {
+        if (targetNodeId == null || !targetNodeId.matches("[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")) {
+            throw new IllegalArgumentException("Invalid replay target node ID");
+        }
+        return targetNodeId;
     }
 
     /**

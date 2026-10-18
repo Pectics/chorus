@@ -515,7 +515,7 @@ class RegistryReplayGuardTest {
                 .isInstanceOf(IOException.class);
     }
 
-    private static final class FakeStore implements RegistryReplayGuard.Store {
+    private static final class FakeStore implements RegistryReplayGuardStore {
         private final Set<String> registered = new HashSet<>();
         private final CountDownLatch entered = new CountDownLatch(1);
         private final CountDownLatch release = new CountDownLatch(1);

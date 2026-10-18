@@ -165,8 +165,8 @@ pitest {
             "me.pectics.chorus.core.registry.sql.JdbcPool",
             "me.pectics.chorus.core.registry.sql.JdbcSchemaInitializer",
             "me.pectics.chorus.core.registry.sql.JdbcServerNodeStore",
-            "me.pectics.chorus.core.replay.registry.JdbcReplayStore",
-            "me.pectics.chorus.core.replay.redis.JedisReplayStore",
+            "me.pectics.chorus.core.replay.registry.JdbcReplayGuardStore",
+            "me.pectics.chorus.core.replay.redis.JedisReplayGuardStore",
         ),
     )
     testSourceSets.set(setOf(sourceSets.test.get(), sourceSets.getByName("integrationTest")))

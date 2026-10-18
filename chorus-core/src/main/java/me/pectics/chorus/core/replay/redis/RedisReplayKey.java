@@ -7,8 +7,8 @@
 package me.pectics.chorus.core.replay.redis;
 
 /** Length-prefixed key encoding; the key is compared, never parsed. */
-final class ReplayKey {
-    private ReplayKey() {}
+final class RedisReplayKey {
+    private RedisReplayKey() {}
 
     static String encode(String issuerNodeId, String jti) {
         return "chorus:replay:" + issuerNodeId.length() + ":" + issuerNodeId + ":" + jti;

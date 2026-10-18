@@ -142,7 +142,7 @@ class RedisReplayGuardIntegrationTest {
                                         .toCompletableFuture()
                                         .get(5, TimeUnit.SECONDS))
                         .isEqualTo(ReplayDecision.UNAVAILABLE);
-                assertThat(command(redis, "EXISTS", ReplayKey.encode("gateway", "acl")))
+                assertThat(command(redis, "EXISTS", RedisReplayKey.encode("gateway", "acl")))
                         .isEqualTo("1");
                 assertThat(command(redis, "ACL", "SETUSER", "chorus", "+del")).isEqualTo("OK");
                 assertThat(
@@ -174,7 +174,11 @@ class RedisReplayGuardIntegrationTest {
                                                 .toCompletableFuture()
                                                 .get(5, TimeUnit.SECONDS))
                         .hasCauseInstanceOf(RuntimeException.class);
-                assertThat(command(redis, "EXISTS", ReplayKey.encode("gateway", "wrong-prefix")))
+                assertThat(
+                                command(
+                                        redis,
+                                        "EXISTS",
+                                        RedisReplayKey.encode("gateway", "wrong-prefix")))
                         .isEqualTo("0");
             }
         }
@@ -270,7 +274,7 @@ class RedisReplayGuardIntegrationTest {
                                         .get(5, TimeUnit.SECONDS))
                         .isEqualTo(ReplayDecision.UNAVAILABLE);
                 assertThat(proxy.deleteCalls()).isEqualTo(1);
-                assertThat(command(redis, "EXISTS", ReplayKey.encode("gateway", "lost-reply")))
+                assertThat(command(redis, "EXISTS", RedisReplayKey.encode("gateway", "lost-reply")))
                         .isEqualTo("0");
                 assertThat(
                                 guard.consume("gateway", "lost-reply", "backend", expiry)

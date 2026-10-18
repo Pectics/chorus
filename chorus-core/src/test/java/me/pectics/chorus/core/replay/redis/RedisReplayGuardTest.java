@@ -504,7 +504,7 @@ class RedisReplayGuardTest {
                 .isInstanceOf(IOException.class);
     }
 
-    private static final class FakeStore implements RedisReplayGuard.Store {
+    private static final class FakeStore implements RedisReplayGuardStore {
         private final CountDownLatch entered = new CountDownLatch(1);
         private final CountDownLatch release = new CountDownLatch(1);
         private final CountDownLatch closed = new CountDownLatch(1);
@@ -534,7 +534,8 @@ class RedisReplayGuardTest {
         }
 
         @Override
-        public ReplayDecision consume(String issuerNodeId, String jti) {
+        public ReplayDecision consume(
+                String issuerNodeId, String jti, long retainUntilMillis, long nowMillis) {
             consumeCalls.incrementAndGet();
             entered.countDown();
             await();

@@ -21,12 +21,12 @@ import me.pectics.chorus.core.replay.ReplayDecision;
  * Blocking registry-database storage owned by one guard. The schema is created by the SQL
  * initializer before this store opens. Driver failures are never propagated with their diagnostics.
  */
-final class JdbcReplayStore implements RegistryReplayGuard.Store {
+final class JdbcReplayGuardStore implements RegistryReplayGuardStore {
     private final JdbcPool pool;
     private final String prefix;
     private final int querySeconds;
 
-    JdbcReplayStore(Sql settings) throws IOException, SQLException {
+    JdbcReplayGuardStore(Sql settings) throws IOException, SQLException {
         this.pool = JdbcPool.open(settings, false);
         this.prefix = settings.engine() == Engine.POSTGRESQL ? "public." : "";
         this.querySeconds = seconds(settings.timeouts().query());
@@ -102,6 +102,9 @@ final class JdbcReplayStore implements RegistryReplayGuard.Store {
     @Override
     public ReplayDecision consume(
             String issuerNodeId, String jti, long retainUntilMillis, long nowMillis) {
+        if (retainUntilMillis <= nowMillis) {
+            return ReplayDecision.UNAVAILABLE;
+        }
         try (var connection = pool.getConnection()) {
             connection.setAutoCommit(false);
             try {

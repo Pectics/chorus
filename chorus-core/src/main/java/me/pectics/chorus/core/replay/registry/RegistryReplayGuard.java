@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.6, 3.9, and 7.2
- * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/registry/JdbcReplayStore.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/registry/RegistryReplayGuardStore.java
  * sync: Register before issuance and consume atomically; reject unknown outcomes without fallback.
  * @endcontext
  */
@@ -32,25 +32,8 @@ import me.pectics.chorus.core.ticket.TicketTiming;
 public final class RegistryReplayGuard implements ReplayGuard {
     private static final int QUEUE_CAPACITY = 1024;
 
-    /** Blocking database boundary used by the guard and unit tests. */
-    interface Store extends AutoCloseable {
-        void register(
-                String issuerNodeId,
-                String jti,
-                String targetNodeId,
-                long retainUntilMillis,
-                long nowMillis)
-                throws SQLException;
-
-        ReplayDecision consume(
-                String issuerNodeId, String jti, long retainUntilMillis, long nowMillis);
-
-        @Override
-        void close() throws SQLException;
-    }
-
     private final Object lifecycle = new Object();
-    private final Store store;
+    private final RegistryReplayGuardStore store;
     private final ThreadPoolExecutor executor;
     private final String targetNodeId;
     private final Clock clock;
@@ -63,7 +46,8 @@ public final class RegistryReplayGuard implements ReplayGuard {
         this(openStore(settings, targetNodeId, clock), targetNodeId, clock, QUEUE_CAPACITY);
     }
 
-    RegistryReplayGuard(Store store, String targetNodeId, Clock clock, int queueCapacity) {
+    RegistryReplayGuard(
+            RegistryReplayGuardStore store, String targetNodeId, Clock clock, int queueCapacity) {
         this.store = Objects.requireNonNull(store, "store");
         this.targetNodeId = requireTarget(targetNodeId);
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -224,11 +208,11 @@ public final class RegistryReplayGuard implements ReplayGuard {
         }
     }
 
-    private static Store openStore(Sql settings, String targetNodeId, Clock clock)
-            throws IOException, SQLException {
+    private static RegistryReplayGuardStore openStore(
+            Sql settings, String targetNodeId, Clock clock) throws IOException, SQLException {
         requireTarget(targetNodeId);
         Objects.requireNonNull(clock, "clock");
-        return new JdbcReplayStore(settings);
+        return new JdbcReplayGuardStore(settings);
     }
 
     private static String requireTarget(String targetNodeId) {

@@ -32,10 +32,10 @@ import redis.clients.jedis.params.SetParams;
  * Blocking standalone-Redis storage owned by one guard. Opening validates connectivity, TLS, and
  * ACL; every command timeout or connection loss is an unknown outcome and is never retried.
  */
-final class JedisReplayStore implements RedisReplayGuard.Store {
+final class JedisReplayGuardStore implements RedisReplayGuardStore {
     private final RedisClient client;
 
-    JedisReplayStore(ReplayGuardConfiguration.Redis settings) throws IOException {
+    JedisReplayGuardStore(ReplayGuardConfiguration.Redis settings) throws IOException {
         RedisClient created = null;
         try {
             var config =
@@ -83,7 +83,7 @@ final class JedisReplayStore implements RedisReplayGuard.Store {
     public void register(String issuerNodeId, String jti, long ttlMillis) {
         String reply =
                 client.set(
-                        ReplayKey.encode(issuerNodeId, jti),
+                        RedisReplayKey.encode(issuerNodeId, jti),
                         "1",
                         SetParams.setParams().nx().px(ttlMillis));
         if (!"OK".equals(reply)) {
@@ -92,9 +92,13 @@ final class JedisReplayStore implements RedisReplayGuard.Store {
     }
 
     @Override
-    public ReplayDecision consume(String issuerNodeId, String jti) {
+    public ReplayDecision consume(
+            String issuerNodeId, String jti, long retainUntilMillis, long nowMillis) {
+        if (retainUntilMillis <= nowMillis) {
+            return ReplayDecision.UNAVAILABLE;
+        }
         try {
-            return client.del(ReplayKey.encode(issuerNodeId, jti)) == 1
+            return client.del(RedisReplayKey.encode(issuerNodeId, jti)) == 1
                     ? ReplayDecision.ACCEPTED
                     : ReplayDecision.REPLAYED;
         } catch (RuntimeException failure) {

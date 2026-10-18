@@ -1,7 +1,7 @@
 /*
  * @context
  * refs: ARCHITECTURE.md, sections 3.6 and 3.9
- * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/redis/JedisReplayStore.java
+ * related: chorus-core/src/main/java/me/pectics/chorus/core/replay/redis/RedisReplayGuardStore.java
  * sync: Register before issuance and consume atomically; unknown outcomes never retry or fall back.
  * @endcontext
  */
@@ -31,18 +31,8 @@ import me.pectics.chorus.core.ticket.TicketTiming;
 public final class RedisReplayGuard implements ReplayGuard {
     private static final int QUEUE_CAPACITY = 1024;
 
-    /** Blocking Redis boundary used by the guard and unit tests. */
-    interface Store extends AutoCloseable {
-        void register(String issuerNodeId, String jti, long ttlMillis);
-
-        ReplayDecision consume(String issuerNodeId, String jti);
-
-        @Override
-        void close();
-    }
-
     private final Object lifecycle = new Object();
-    private final Store store;
+    private final RedisReplayGuardStore store;
     private final ThreadPoolExecutor executor;
     private final String targetNodeId;
     private final Clock clock;
@@ -62,7 +52,11 @@ public final class RedisReplayGuard implements ReplayGuard {
     }
 
     RedisReplayGuard(
-            Store store, String targetNodeId, Clock clock, int threads, int queueCapacity) {
+            RedisReplayGuardStore store,
+            String targetNodeId,
+            Clock clock,
+            int threads,
+            int queueCapacity) {
         this.store = Objects.requireNonNull(store, "store");
         this.targetNodeId = requireTarget(targetNodeId);
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -180,11 +174,14 @@ public final class RedisReplayGuard implements ReplayGuard {
                         () -> {
                             worker.set(true);
                             try {
-                                if (retainUntil <= clock.millis()) {
+                                long executionTime = clock.millis();
+                                if (retainUntil <= executionTime) {
                                     result.complete(ReplayDecision.UNAVAILABLE);
                                     return;
                                 }
-                                var decision = store.consume(issuerNodeId, jti);
+                                var decision =
+                                        store.consume(
+                                                issuerNodeId, jti, retainUntil, executionTime);
                                 result.complete(
                                         retainUntil <= clock.millis()
                                                 ? ReplayDecision.UNAVAILABLE
@@ -224,12 +221,12 @@ public final class RedisReplayGuard implements ReplayGuard {
         }
     }
 
-    private static Store openStore(
+    private static RedisReplayGuardStore openStore(
             ReplayGuardConfiguration.Redis settings, String targetNodeId, Clock clock)
             throws IOException {
         requireTarget(targetNodeId);
         Objects.requireNonNull(clock, "clock");
-        return new JedisReplayStore(settings);
+        return new JedisReplayGuardStore(settings);
     }
 
     private static String requireTarget(String targetNodeId) {

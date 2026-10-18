@@ -265,7 +265,7 @@ class LocalReplayLifecycleTest {
     }
 
     /**
-     * Pauses the first storage clock read to keep consumption in flight during lifecycle changes.
+     * Pauses the first worker clock read to keep consumption in flight during lifecycle changes.
      */
     private static final class PausingClock extends Clock {
         private final AtomicBoolean pause = new AtomicBoolean(true);
