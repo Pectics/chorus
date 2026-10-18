@@ -17,10 +17,11 @@ import me.pectics.chorus.core.replay.ReplayDecision;
 import me.pectics.chorus.core.replay.local.LocalReplayGuard;
 
 /** Child process intentionally exits without resource cleanup to exercise WAL recovery. */
-@SuppressWarnings("resource")
 public final class LocalReplayCrashProbe {
     private LocalReplayCrashProbe() {}
 
+    // Keep the guard and JDBC transaction open until halt to simulate abrupt process loss.
+    @SuppressWarnings("resource")
     public static void main(String[] arguments) throws Exception {
         Path file = Path.of(arguments[0]);
         var guard =

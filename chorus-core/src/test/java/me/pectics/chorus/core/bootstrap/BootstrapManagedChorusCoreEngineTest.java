@@ -2,7 +2,7 @@
  * @context
  * refs: ARCHITECTURE.md, sections 3.3 and 3.8
  * related: chorus-core/src/main/java/me/pectics/chorus/core/bootstrap/BootstrapManagedChorusCoreEngine.java
- * sync: Verify delegation and the joint lifecycle of the Engine and bootstrap-created SQL registry.
+ * sync: Verify the joint Engine/registry lifecycle and release fixtures when assertions fail.
  * @endcontext
  */
 package me.pectics.chorus.core.bootstrap;
@@ -33,7 +33,6 @@ import me.pectics.chorus.core.registry.sql.SqlServerNodeRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-@SuppressWarnings("resource")
 class BootstrapManagedChorusCoreEngineTest {
     private RecordingEngine delegate;
     private RecordingStore store;
@@ -53,63 +52,70 @@ class BootstrapManagedChorusCoreEngineTest {
 
     @Test
     void delegatesEveryEngineOperationAndRegistryView() {
-        var managed = new BootstrapManagedChorusCoreEngine(delegate, registry);
-        assertThat(managed.getServerNodeRegistry().snapshot().serverNodes()).containsKey("backend");
-        assertThat(managed.getCookieKey()).isEqualTo("chorus:ticket");
-        var issue = issueRequest();
-        assertThat(managed.issueTicket(issue)).isCompleted();
-        var verify = new VerifyTicketRequest(null, new ReceiverLoginContext("Notch", true, null));
-        assertThat(managed.verifyAndResolve(verify)).isCompleted();
-        assertThat(delegate.issued).isSameAs(issue);
-        assertThat(delegate.verified).isSameAs(verify);
+        try (var managed = new BootstrapManagedChorusCoreEngine(delegate, registry)) {
+            assertThat(managed.getServerNodeRegistry().snapshot().serverNodes())
+                    .containsKey("backend");
+            assertThat(managed.getCookieKey()).isEqualTo("chorus:ticket");
+            var issue = issueRequest();
+            assertThat(managed.issueTicket(issue)).isCompleted();
+            var verify =
+                    new VerifyTicketRequest(null, new ReceiverLoginContext("Notch", true, null));
+            assertThat(managed.verifyAndResolve(verify)).isCompleted();
+            assertThat(delegate.issued).isSameAs(issue);
+            assertThat(delegate.verified).isSameAs(verify);
+        }
     }
 
     @Test
     void closeReleasesTheEngineAndRegistryExactlyOnce() {
-        var managed = new BootstrapManagedChorusCoreEngine(delegate, registry);
-        managed.close();
-        managed.close();
-        assertThat(delegate.closes.get()).isEqualTo(1);
-        assertThat(store.closes.get()).isEqualTo(1);
+        try (var managed = new BootstrapManagedChorusCoreEngine(delegate, registry)) {
+            managed.close();
+            managed.close();
+            assertThat(delegate.closes.get()).isEqualTo(1);
+            assertThat(store.closes.get()).isEqualTo(1);
+        }
     }
 
     @Test
     void closeStillReleasesTheRegistryWhenTheEngineFails() {
         delegate.closeFailure = new IllegalStateException("engine close failed");
-        var managed = new BootstrapManagedChorusCoreEngine(delegate, registry);
-        assertThatThrownBy(managed::close)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("engine close failed");
-        assertThat(delegate.closes.get()).isEqualTo(1);
-        assertThat(store.closes.get()).isEqualTo(1);
+        try (var managed = new BootstrapManagedChorusCoreEngine(delegate, registry)) {
+            assertThatThrownBy(managed::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("engine close failed");
+            assertThat(delegate.closes.get()).isEqualTo(1);
+            assertThat(store.closes.get()).isEqualTo(1);
+        }
     }
 
     @Test
     void closeReportsARegistryFailureWhenTheEngineClosedCleanly() {
         store.closeFailure = new IllegalStateException("registry close failed");
-        var managed = new BootstrapManagedChorusCoreEngine(delegate, registry);
-        assertThatThrownBy(managed::close)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("registry close failed");
-        assertThat(delegate.closes.get()).isEqualTo(1);
-        assertThat(store.closes.get()).isEqualTo(1);
+        try (var managed = new BootstrapManagedChorusCoreEngine(delegate, registry)) {
+            assertThatThrownBy(managed::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("registry close failed");
+            assertThat(delegate.closes.get()).isEqualTo(1);
+            assertThat(store.closes.get()).isEqualTo(1);
+        }
     }
 
     @Test
     void closeKeepsBothFailuresWithTheEngineFailurePrimary() {
         delegate.closeFailure = new IllegalStateException("engine close failed");
         store.closeFailure = new IllegalStateException("registry close failed");
-        var managed = new BootstrapManagedChorusCoreEngine(delegate, registry);
-        assertThatThrownBy(managed::close)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("engine close failed")
-                .satisfies(
-                        failure -> {
-                            assertThat(failure.getSuppressed()).hasSize(1);
-                            assertThat(failure.getSuppressed()[0])
-                                    .hasMessage("registry close failed");
-                        });
-        assertThat(store.closes.get()).isEqualTo(1);
+        try (var managed = new BootstrapManagedChorusCoreEngine(delegate, registry)) {
+            assertThatThrownBy(managed::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("engine close failed")
+                    .satisfies(
+                            failure -> {
+                                assertThat(failure.getSuppressed()).hasSize(1);
+                                assertThat(failure.getSuppressed()[0])
+                                        .hasMessage("registry close failed");
+                            });
+            assertThat(store.closes.get()).isEqualTo(1);
+        }
     }
 
     private static IssueTicketRequest issueRequest() {

@@ -362,6 +362,7 @@ public final class TicketCodec {
         }
     }
 
+    // Every key is checked before narrowing the erased JSON map type.
     @SuppressWarnings("unchecked")
     private static Map<String, Object> object(Object value) {
         if (!(value instanceof Map<?, ?> map)

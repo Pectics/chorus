@@ -40,7 +40,6 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.utility.DockerImageName;
 
-@SuppressWarnings("resource")
 class SqlServerNodeRegistryIntegrationTest {
     private static final String RESOURCE = "/me/pectics/chorus/core/registry/sql/";
     private static final String ADMIN_PASSWORD = "sql-integration-admin";
@@ -117,10 +116,14 @@ class SqlServerNodeRegistryIntegrationTest {
             throws Exception {
         var ticker = new AtomicLong();
         var cache = new Cache(Duration.ofMinutes(1), Duration.ofMinutes(2));
+        // The registry takes ownership and closes the store, including failed initialization.
+        @SuppressWarnings("resource")
+        var store =
+                JdbcServerNodeStore.open(
+                        settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost"));
         try (var registry =
                 new SqlServerNodeRegistry(
-                        JdbcServerNodeStore.open(
-                                settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost")),
+                        store,
                         cache,
                         Set.of("gateway", "backend"),
                         Clock.systemUTC(),
@@ -321,6 +324,8 @@ class SqlServerNodeRegistryIntegrationTest {
 
     private GenericContainer<?> container(Engine engine) throws IOException {
         String name = engine.name().toLowerCase(Locale.ROOT);
+        // Fluent setup preserves this container; the calling test owns and closes the result.
+        @SuppressWarnings("resource")
         var container =
                 new GenericContainer<>(
                                 DockerImageName.parse(

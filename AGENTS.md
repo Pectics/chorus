@@ -56,6 +56,8 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - SpotBugs 分析当前启用模块的生产代码与测试代码，使用最大分析深度和中/高置信度告警；发现告警时使 `check` / `build` 失败。
   `spotbugs` 仅编译并分析各 source set，包含 SQL 集成测试源码但不启动数据库或执行测试；HTML / XML 报告位于各模块 `build/reports/spotbugs/`。
   先修复实际问题；确认为误报或有意契约时，在 `gradle/spotbugs-exclude.xml` 中仅对具体告警和成员排除并写明理由，不用全量 baseline 或忽略失败绕过检查。
+- 编译器 / IDE 告警（含 `@SuppressWarnings`）也须先排查真实问题；仅对确认的误报或有意契约作最小范围抑制，并在附近用英语说明理由。
+  测试资源须在断言失败时仍能释放，优先使用 `try-with-resources` / `finally`；所有权转移和崩溃探针等故意不关闭的场景须明确记录，不能用整类抑制掩盖泄漏。
 - `:chorus-core:pitest` 运行 PIT 变异测试，覆盖单元与本地集成测试，输出 `build/reports/pitest/` 并按 90% 变异/行覆盖率阈值失败。
   该任务按需执行，不纳入 `check` / `build`；`JdbcServerNodeStore` 因每个变异体都需真实数据库而排除，其行为由 `sqlIntegrationTest` 验证。
   新增或修改测试后应复核存活变异体；无覆盖、等价或仅能由外部服务验证的变异体须在结论中说明，不能通过放宽阈值掩盖。
