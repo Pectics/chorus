@@ -22,36 +22,37 @@ public final class ReplayGuardConfigurationLoader
     @Override
     public ReplayGuardConfiguration load(JsonNode value, Path base) {
         var backend = ReplayGuardConfiguration.Backend.valueOf(value.get("backend").asString());
-        requireImplementedBackend(backend);
-        var local = value.get("local");
-        return new ReplayGuardConfiguration(
-                backend,
-                new ReplayGuardConfiguration.Local(
-                        base.resolve(local.get("path").asString()),
-                        local.get("max-entries").asInt(),
-                        ConfigurationValueParser.duration(local.get("busy-timeout"))));
+        return switch (backend) {
+            case LOCAL ->
+                    new ReplayGuardConfiguration(backend, local(value.get("local"), base), null);
+            case REGISTRY -> new ReplayGuardConfiguration(backend, null, null);
+            case REDIS ->
+                    new ReplayGuardConfiguration(backend, null, redis(value.get("redis"), base));
+        };
     }
 
-    /** Rejects reserved backend options before resource assembly; null means no replay section. */
-    public static void requireImplementedOptions(JsonNode value) {
-        if (value != null) {
-            requireImplementedBackend(
-                    ReplayGuardConfiguration.Backend.valueOf(value.get("backend").asString()));
-        }
+    private static ReplayGuardConfiguration.Local local(JsonNode value, Path base) {
+        return new ReplayGuardConfiguration.Local(
+                base.resolve(value.get("path").asString()),
+                ConfigurationValueParser.duration(value.get("busy-timeout")));
     }
 
-    private static void requireImplementedBackend(ReplayGuardConfiguration.Backend backend) {
-        switch (backend) {
-            case LOCAL -> {}
-            case REGISTRY -> {
-                // TODO: Reuse the configured registry database for durable ticket consumption.
-                throw new IllegalArgumentException(
-                        "replay-guard.backend REGISTRY is not implemented");
-            }
-            case REDIS -> {
-                // TODO: Define Redis settings and implement a durable Redis ReplayGuard.
-                throw new IllegalArgumentException("replay-guard.backend REDIS is not implemented");
-            }
-        }
+    private static ReplayGuardConfiguration.Redis redis(JsonNode value, Path base) {
+        var tls = value.get("tls");
+        var timeouts = value.get("timeouts");
+        return new ReplayGuardConfiguration.Redis(
+                value.get("host").asString(),
+                value.get("port").asInt(),
+                value.get("database").asInt(),
+                value.get("username").asString(),
+                base.resolve(value.get("password-path").asString()),
+                new ReplayGuardConfiguration.Tls(
+                        ReplayGuardConfiguration.TlsMode.valueOf(tls.get("mode").asString()),
+                        tls.has("ca-cert") ? base.resolve(tls.get("ca-cert").asString()) : null),
+                new ReplayGuardConfiguration.Timeouts(
+                        ConfigurationValueParser.duration(timeouts.get("connect")),
+                        ConfigurationValueParser.duration(timeouts.get("command")),
+                        ConfigurationValueParser.duration(timeouts.get("acquire"))),
+                new ReplayGuardConfiguration.Pool(value.get("pool").get("size").asInt()));
     }
 }

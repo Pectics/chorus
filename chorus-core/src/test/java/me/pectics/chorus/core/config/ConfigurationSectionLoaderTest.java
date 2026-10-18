@@ -70,7 +70,8 @@ class ConfigurationSectionLoaderTest {
         var loader = new TicketConfigurationLoader();
         String document =
                 "{\"cookie-key\":\"chorus:ticket\",\"max-payload-bytes\":4096,"
-                        + "\"max-property-bytes\":2048,\"compression\":\""
+                        + "\"max-property-bytes\":2048,\"max-lifetime\":\"15s\","
+                        + "\"compression\":\""
                         + compression
                         + "\"}";
         assertThat(loader.load(json(document), directory).compression()).isEqualTo(compression);
@@ -79,7 +80,7 @@ class ConfigurationSectionLoaderTest {
                                         json(
                                                 """
                                                 {"cookie-key":"chorus:ticket","max-payload-bytes":4096,
-                                                 "max-property-bytes":2048}
+                                                 "max-property-bytes":2048,"max-lifetime":"15s"}
                                                 """),
                                         directory)
                                 .compression())
@@ -91,7 +92,7 @@ class ConfigurationSectionLoaderTest {
                                         json(
                                                 """
                                                 {"cookie-key":"chorus:ticket","max-payload-bytes":4096,
-                                                 "max-property-bytes":4097}
+                                                 "max-property-bytes":4097,"max-lifetime":"15s"}
                                                 """),
                                         directory));
     }
@@ -140,14 +141,11 @@ class ConfigurationSectionLoaderTest {
                                 json(
                                         """
                                         {"trusted-issuers-path":"trust/issuers.yml",
-                                         "max-lifetime":"20s","clock-skew":"0s",
                                          "enforce-transfer-intent":false,
                                          "identity-policy":"STRICT_ONLINE_MATCH",
                                          "ip-binding":"DISABLED"}
                                         """),
                                 directory);
-        assertThat(strict.maxLifetime()).isEqualTo(Duration.ofSeconds(20));
-        assertThat(strict.clockSkew()).isZero();
         assertThat(strict.enforceTransferIntent()).isFalse();
         assertThat(strict.identityResolutionPolicy())
                 .isEqualTo(BuiltinIdentityResolutionPolicy.STRICT_ONLINE_MATCH);
@@ -158,7 +156,6 @@ class ConfigurationSectionLoaderTest {
                                 json(
                                         """
                                         {"trusted-issuers-path":"issuers.yml",
-                                         "max-lifetime":"PT15S","clock-skew":"2s",
                                          "enforce-transfer-intent":true,
                                          "identity-policy":"FORCE_OFFLINE_UUID"}
                                         """),
@@ -173,9 +170,8 @@ class ConfigurationSectionLoaderTest {
                                                 json(
                                                         """
                                                         {"trusted-issuers-path":"issuers.yml",
-                                                         "max-lifetime":"15s","clock-skew":"-1s",
                                                          "enforce-transfer-intent":true,
-                                                         "identity-policy":"ADOPT_UPSTREAM"}
+                                                         "identity-policy":"UNKNOWN"}
                                                         """),
                                                 directory));
     }
@@ -241,35 +237,67 @@ class ConfigurationSectionLoaderTest {
     }
 
     @Test
-    void replaySectionLoadsLocalSettingsAndRejectsReservedBackends() throws Exception {
+    void replaySectionLoadsLocalAndSharedBackends() {
+        var loader = new ReplayGuardConfigurationLoader();
         var local =
-                new ReplayGuardConfigurationLoader()
-                        .load(
-                                json(
-                                        """
-                                        {"backend":"LOCAL",
-                                         "local":{"path":"state/replay.db","max-entries":100,
-                                                  "busy-timeout":"750ms"}}
-                                        """),
-                                directory);
+                loader.load(
+                        json(
+                                """
+                                {"backend":"LOCAL",
+                                 "local":{"path":"state/replay.db",
+                                          "busy-timeout":"750ms"}}
+                                """),
+                        directory);
         assertThat(local.backend()).isEqualTo(ReplayGuardConfiguration.Backend.LOCAL);
         assertThat(local.local().path()).isEqualTo(directory.resolve("state/replay.db"));
-        assertThat(local.local().maxEntries()).isEqualTo(100);
         assertThat(local.local().busyTimeout()).isEqualTo(Duration.ofMillis(750));
         assertThat(local.local().path()).doesNotExist();
 
-        ReplayGuardConfigurationLoader.requireImplementedOptions(null);
-        ReplayGuardConfigurationLoader.requireImplementedOptions(json("{\"backend\":\"LOCAL\"}"));
-        for (String backend : List.of("REGISTRY", "REDIS")) {
-            var section = json("{\"backend\":\"" + backend + "\"}");
-            assertThatThrownBy(
-                            () -> ReplayGuardConfigurationLoader.requireImplementedOptions(section))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not implemented");
-            assertThatThrownBy(() -> new ReplayGuardConfigurationLoader().load(section, directory))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not implemented");
-        }
+        var registry = loader.load(json("{\"backend\":\"REGISTRY\"}"), directory);
+        assertThat(registry.backend()).isEqualTo(ReplayGuardConfiguration.Backend.REGISTRY);
+        assertThat(registry.local()).isNull();
+        assertThat(registry.redis()).isNull();
+
+        var redis =
+                loader.load(
+                        json(
+                                """
+                                {"backend":"REDIS",
+                                 "redis":{"host":"localhost","port":6379,"database":2,
+                                          "username":"chorus",
+                                          "password-path":"secrets/redis.txt",
+                                          "tls":{"mode":"DISABLED"},
+                                          "timeouts":{"connect":"2s","command":"3s",
+                                                      "acquire":"500ms"},
+                                          "pool":{"size":4}}}
+                                """),
+                        directory);
+        assertThat(redis.backend()).isEqualTo(ReplayGuardConfiguration.Backend.REDIS);
+        assertThat(redis.redis().passwordPath()).isEqualTo(directory.resolve("secrets/redis.txt"));
+        assertThat(redis.redis().timeouts().acquire()).isEqualTo(Duration.ofMillis(500));
+        assertThat(redis.redis().pool().size()).isEqualTo(4);
+        assertThat(redis.redis().tls().mode()).isEqualTo(ReplayGuardConfiguration.TlsMode.DISABLED);
+    }
+
+    @Test
+    void redisTlsSectionResolvesAnOptionalCaCertificate() {
+        var loader = new ReplayGuardConfigurationLoader();
+        var base =
+                """
+                {"backend":"REDIS","redis":{"host":"localhost","port":6379,"database":0,
+                 "username":"chorus","password-path":"redis-password.txt",
+                 "tls":{"mode":"VERIFY_FULL"%s},
+                 "timeouts":{"connect":"2s","command":"2s","acquire":"500ms"},
+                 "pool":{"size":2}}}
+                """;
+        assertThat(loader.load(json(base.formatted("")), directory).redis().tls().caCert())
+                .isNull();
+        assertThat(
+                        loader.load(json(base.formatted(",\"ca-cert\":\"ca.pem\"")), directory)
+                                .redis()
+                                .tls()
+                                .caCert())
+                .isEqualTo(directory.resolve("ca.pem"));
     }
 
     @Test

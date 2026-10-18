@@ -59,11 +59,25 @@ val sqlIntegrationTest =
         runtimeClasspath += output + compileClasspath
     }
 
+val redisIntegrationTest =
+    sourceSets.create("redisIntegrationTest") {
+        compileClasspath += sourceSets.main.get().output + sourceSets.test.get().output
+        runtimeClasspath += output + compileClasspath
+    }
+
 configurations[sqlIntegrationTest.implementationConfigurationName].extendsFrom(
     configurations.testImplementation.get(),
 )
 
 configurations[sqlIntegrationTest.runtimeOnlyConfigurationName].extendsFrom(
+    configurations.testRuntimeOnly.get(),
+)
+
+configurations[redisIntegrationTest.implementationConfigurationName].extendsFrom(
+    configurations.testImplementation.get(),
+)
+
+configurations[redisIntegrationTest.runtimeOnlyConfigurationName].extendsFrom(
     configurations.testRuntimeOnly.get(),
 )
 
@@ -86,11 +100,13 @@ dependencies {
     implementation(libs.zstd.jni)
     runtimeOnly(libs.sqlite.jdbc)
     implementation(libs.hikari)
+    implementation(libs.jedis)
     runtimeOnly(libs.postgresql)
     runtimeOnly(libs.mysql.connector)
     runtimeOnly(libs.mariadb.connector)
 
     add(sqlIntegrationTest.implementationConfigurationName, libs.testcontainers)
+    add(redisIntegrationTest.implementationConfigurationName, libs.testcontainers)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
@@ -125,6 +141,16 @@ tasks.register<Test>("sqlIntegrationTest") {
     shouldRunAfter(integrationTestTask)
 }
 
+// Redis service tests are opt-in; check/build remain independent of Docker and external services.
+tasks.register<Test>("redisIntegrationTest") {
+    description = "Runs real Redis replay, ACL, and TLS integration tests."
+    group = "verification"
+    testClassesDirs = redisIntegrationTest.output.classesDirs
+    classpath = redisIntegrationTest.runtimeClasspath
+    systemProperty("chorus.redis.image", "redis:" + libs.versions.redis.test.image.get())
+    shouldRunAfter(integrationTestTask)
+}
+
 val pitestEngineVersion = libs.versions.pitest.engine.get()
 val pitestJunit5PluginVersion = libs.versions.pitest.junit5.plugin.get()
 
@@ -132,9 +158,17 @@ pitest {
     pitestVersion.set(pitestEngineVersion)
     junit5PluginVersion.set(pitestJunit5PluginVersion)
     targetClasses.set(setOf("me.pectics.chorus.core.*"))
-    // The JDBC adapter's observable contract needs live PostgreSQL/MySQL/MariaDB services and is
-    // verified by sqlIntegrationTest; PIT cannot start a database per mutant.
-    excludedClasses.set(setOf("me.pectics.chorus.core.registry.sql.JdbcServerNodeStore"))
+    // Live-service adapters need real PostgreSQL/MySQL/MariaDB/Redis services; PIT cannot start a
+    // database per mutant, so their behavior is verified by the opt-in integration suites.
+    excludedClasses.set(
+        setOf(
+            "me.pectics.chorus.core.registry.sql.JdbcPool",
+            "me.pectics.chorus.core.registry.sql.JdbcSchemaInitializer",
+            "me.pectics.chorus.core.registry.sql.JdbcServerNodeStore",
+            "me.pectics.chorus.core.replay.registry.JdbcReplayStore",
+            "me.pectics.chorus.core.replay.redis.JedisReplayStore",
+        ),
+    )
     testSourceSets.set(setOf(sourceSets.test.get(), sourceSets.getByName("integrationTest")))
     mutators.set(setOf("STRONGER"))
     outputFormats.set(setOf("HTML", "XML"))

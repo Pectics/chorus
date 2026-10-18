@@ -32,17 +32,22 @@ import me.pectics.chorus.core.registry.ServerNodeRegistrySnapshot;
 import me.pectics.chorus.core.registry.config.ConfigServerNodeRegistryLoader;
 import me.pectics.chorus.core.registry.config.RegistryConfigurationLoader;
 import me.pectics.chorus.core.registry.file.FileServerNodeRegistry;
+import me.pectics.chorus.core.registry.sql.JdbcSchemaInitializer;
 import me.pectics.chorus.core.registry.sql.JdbcServerNodeStore;
 import me.pectics.chorus.core.registry.sql.SqlServerNodeRegistry;
+import me.pectics.chorus.core.replay.ReplayGuard;
 import me.pectics.chorus.core.replay.ReplayGuardConfiguration;
 import me.pectics.chorus.core.replay.config.ReplayGuardConfigurationLoader;
 import me.pectics.chorus.core.replay.local.LocalReplayGuard;
+import me.pectics.chorus.core.replay.redis.RedisReplayGuard;
+import me.pectics.chorus.core.replay.registry.RegistryReplayGuard;
 import me.pectics.chorus.core.ticket.TicketConfiguration;
 import me.pectics.chorus.core.ticket.TicketIssuanceConfiguration;
 import me.pectics.chorus.core.ticket.TicketVerificationConfiguration;
 import me.pectics.chorus.core.ticket.config.TicketConfigurationLoader;
 import me.pectics.chorus.core.ticket.config.TicketIssuanceConfigurationLoader;
 import me.pectics.chorus.core.ticket.config.TicketVerificationConfigurationLoader;
+import me.pectics.chorus.core.trust.TrustedIssuerStore;
 import me.pectics.chorus.core.trust.config.ConfigTrustedIssuerLoader;
 import me.pectics.chorus.core.trust.file.FileTrustedIssuerStore;
 
@@ -66,7 +71,6 @@ public final class ChorusCoreBootstrap {
         Objects.requireNonNull(clock, "clock");
         var root =
                 new YamlConfigurationLoader(ConfigurationDocumentType.CORE).load(configurationFile);
-        ReplayGuardConfigurationLoader.requireImplementedOptions(root.get("replay-guard"));
         Path base =
                 Objects.requireNonNull(
                         configurationFile.toAbsolutePath().normalize().getParent(),
@@ -78,13 +82,16 @@ public final class ChorusCoreBootstrap {
                         ? new TicketIssuanceConfigurationLoader().load(root.get("issuance"), base)
                         : null;
         var verification =
-                new TicketVerificationConfigurationLoader().load(root.get("verification"), base);
+                node.role().receiver()
+                        ? new TicketVerificationConfigurationLoader()
+                                .load(root.get("verification"), base)
+                        : null;
         var crypto = new TicketCryptoConfigurationLoader().load(root.get("crypto"), base);
         var registry = new RegistryConfigurationLoader().load(root.get("registry"), base);
         var replay =
-                node.role().receiver()
-                        ? new ReplayGuardConfigurationLoader().load(root.get("replay-guard"), base)
-                        : null;
+                root.get("replay-guard") == null
+                        ? null
+                        : new ReplayGuardConfigurationLoader().load(root.get("replay-guard"), base);
         return assemble(node, ticket, issuance, verification, crypto, registry, replay, clock);
     }
 
@@ -98,13 +105,12 @@ public final class ChorusCoreBootstrap {
             ReplayGuardConfiguration replay,
             Clock clock)
             throws IOException, GeneralSecurityException, SQLException {
-        if (node.role().sender() && issuance.ttl().compareTo(verification.maxLifetime()) > 0) {
+        if (node.role().sender() && issuance.ttl().compareTo(ticket.maxLifetime()) > 0) {
             throw new IllegalArgumentException("Issuance TTL exceeds maximum ticket lifetime");
         }
         SqlServerNodeRegistry sql = null;
-        LocalReplayGuard guard = null;
+        ReplayGuard guard = null;
         try {
-            var trust = new ConfigTrustedIssuerLoader().load(verification.trustedIssuersPath());
             ServerNodeRegistrySnapshot snapshot;
             var requiredNodes = new HashSet<String>();
             requiredNodes.add(node.id());
@@ -114,6 +120,7 @@ public final class ChorusCoreBootstrap {
                         new ConfigServerNodeRegistryLoader(clock)
                                 .load(registry.config().serversPath());
             } else {
+                JdbcSchemaInitializer.initialize(registry.sql());
                 sql =
                         new SqlServerNodeRegistry(
                                 JdbcServerNodeStore.open(registry.sql()),
@@ -126,18 +133,37 @@ public final class ChorusCoreBootstrap {
                 throw new IllegalArgumentException(
                         "Node and issuance targets must exist in the server node registry");
             }
+            var trust =
+                    node.role().receiver()
+                            ? new ConfigTrustedIssuerLoader()
+                                    .load(verification.trustedIssuersPath())
+                            : null;
             TicketSigner signer = node.role().sender() ? loadSigner(crypto) : null;
-            var issuers = new FileTrustedIssuerStore(ConfigTrustedIssuerLoader.loadIssuers(trust));
+            TrustedIssuerStore issuers = null;
             if (node.role().receiver()) {
-                var local = replay.local();
+                issuers = new FileTrustedIssuerStore(ConfigTrustedIssuerLoader.loadIssuers(trust));
+            }
+            if (replay != null) {
                 guard =
-                        new LocalReplayGuard(
-                                local.path(),
-                                node.id(),
-                                verification.clockSkew(),
-                                local.maxEntries(),
-                                local.busyTimeout(),
-                                clock);
+                        switch (replay.backend()) {
+                            case LOCAL -> {
+                                if (!node.role().receiver()) {
+                                    throw new IllegalArgumentException(
+                                            "LOCAL replay is receiver-only");
+                                }
+                                var local = replay.local();
+                                yield new LocalReplayGuard(
+                                        local.path(), node.id(), local.busyTimeout(), clock);
+                            }
+                            case REGISTRY -> {
+                                if (registry.provider() != RegistryConfiguration.Provider.SQL) {
+                                    throw new IllegalArgumentException(
+                                            "REGISTRY replay requires registry.provider SQL");
+                                }
+                                yield new RegistryReplayGuard(registry.sql(), node.id(), clock);
+                            }
+                            case REDIS -> new RedisReplayGuard(replay.redis(), node.id(), clock);
+                        };
             }
             var engine =
                     new DefaultChorusCoreEngine(

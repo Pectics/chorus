@@ -77,7 +77,8 @@ class ChorusCoreBootstrapTest {
                   allowed-targets: [backend]
                 """
                         : "";
-        return """
+        String config =
+                """
                 node:
                   id: %s
                   role: %s
@@ -85,6 +86,7 @@ class ChorusCoreBootstrapTest {
                   cookie-key: chorus:ticket
                   max-payload-bytes: 4096
                   max-property-bytes: 2048
+                  max-lifetime: 15s
                   compression: NONE
                 crypto:
                   algorithm: ED25519
@@ -97,8 +99,6 @@ class ChorusCoreBootstrapTest {
                 %s
                 verification:
                   trusted-issuers-path: trusted-issuers.yml
-                  max-lifetime: 15s
-                  clock-skew: 2s
                   enforce-transfer-intent: true
                   identity-policy: ADOPT_UPSTREAM
                   ip-binding: DISABLED
@@ -106,10 +106,12 @@ class ChorusCoreBootstrapTest {
                   backend: LOCAL
                   local:
                     path: state/%s.db
-                    max-entries: 100
                     busy-timeout: 500ms
                 """
-                .formatted(node, role, issuance, node);
+                        .formatted(node, role, issuance, node);
+        return role == ServerNodeRole.GATEWAY
+                ? config.substring(0, config.indexOf("replay-guard:"))
+                : config;
     }
 
     private Path write(String name, String config) throws Exception {
@@ -243,8 +245,7 @@ class ChorusCoreBootstrapTest {
     @Test
     void senderDoesNotOpenReplayStateWhenNoReplaySectionIsConfigured() throws Exception {
         String sender = configuration("gateway", ServerNodeRole.GATEWAY);
-        Path senderFile =
-                write("gateway.yml", sender.substring(0, sender.indexOf("replay-guard:")));
+        Path senderFile = write("gateway.yml", sender);
         try (var core = ChorusCoreBootstrap.open(senderFile, clock)) {
             assertThat(core.getCookieKey()).isEqualTo("chorus:ticket");
             assertThat(core.getServerNodeRegistry().find("backend")).isPresent();
@@ -423,7 +424,6 @@ class ChorusCoreBootstrapTest {
                         base.replace("max-lifetime: 15s", "max-lifetime: 14s"),
                         base.replace("max-payload-bytes: 4096", "max-payload-bytes: 5121"),
                         base.replace("max-property-bytes: 2048", "max-property-bytes: 4097"),
-                        base.replace("clock-skew: 2s", "clock-skew: -PT1S"),
                         base.replace("ttl: 15s", "ttl: 999999999999999999999h"),
                         base.replace("busy-timeout: 500ms", "busy-timeout: 0ms"),
                         base.replace("busy-timeout: 500ms", "busy-timeout: 2147483648ms"),
@@ -474,17 +474,17 @@ class ChorusCoreBootstrapTest {
     }
 
     @Test
-    void rejectsTodoOptionsBeforeReadingReferencedFilesOrOpeningState() throws Exception {
+    void rejectsIncompleteSharedBackendOptionsBeforeReadingReferencedFilesOrOpeningState()
+            throws Exception {
         Files.delete(directory.resolve("servers.yml"));
         Files.delete(directory.resolve("trusted-issuers.yml"));
         String base = configuration("backend", ServerNodeRole.BACKEND);
-        Path file = write("unsupported.yml", base.replace("backend: LOCAL", "backend: REDIS"));
-        assertThatThrownBy(() -> ChorusCoreBootstrap.open(file, clock))
+        Path redis = write("redis.yml", base.replace("backend: LOCAL", "backend: REDIS"));
+        assertThatThrownBy(() -> ChorusCoreBootstrap.open(redis, clock))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not implemented");
-        Path registryReplay =
-                write("registry-replay.yml", base.replace("backend: LOCAL", "backend: REGISTRY"));
-        assertThatThrownBy(() -> ChorusCoreBootstrap.open(registryReplay, clock))
+                .hasMessageContaining("Schema validation failed");
+        Path registry = write("registry.yml", base.replace("backend: LOCAL", "backend: REGISTRY"));
+        assertThatThrownBy(() -> ChorusCoreBootstrap.open(registry, clock))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Schema validation failed");
         assertThat(directory.resolve("state")).doesNotExist();

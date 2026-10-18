@@ -36,12 +36,11 @@ class ConfigurationSchemaTest {
             {
               "node": {"id": "backend", "role": "BACKEND"},
               "ticket": {"cookie-key": "chorus:ticket", "max-payload-bytes": 4096,
-                "max-property-bytes": 2048, "compression": "NONE"},
+                "max-property-bytes": 2048, "max-lifetime": "15s", "compression": "NONE"},
               "crypto": {"algorithm": "ED25519"},
               "registry": {"provider": "CONFIG", "config": {"servers-path": "servers.yml"}},
-              "verification": {"max-lifetime": "15s", "clock-skew": "2s",
-                "enforce-transfer-intent": true, "identity-policy": "ADOPT_UPSTREAM", "trusted-issuers-path": "trusted-issuers.yml"},
-              "replay-guard": {"backend": "LOCAL", "local": {"path": "state/replay.db", "max-entries": 100, "busy-timeout": "500ms"}}
+              "verification": {"enforce-transfer-intent": true, "identity-policy": "ADOPT_UPSTREAM", "trusted-issuers-path": "trusted-issuers.yml"},
+              "replay-guard": {"backend": "LOCAL", "local": {"path": "state/replay.db", "busy-timeout": "500ms"}}
             }
             """;
     static final String SERVERS =
@@ -93,6 +92,9 @@ class ConfigurationSchemaTest {
     void rolesControlRequiredSectionsWithinTheMainSchema(ServerNodeRole role) {
         var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("node")).put("role", role.name());
+        if (role == ServerNodeRole.GATEWAY) {
+            core.remove("replay-guard");
+        }
         assertThat(contract(ConfigurationDocumentType.CORE).validate(core).isEmpty())
                 .isEqualTo(role == ServerNodeRole.BACKEND);
         ((ObjectNode) core.get("crypto"))
@@ -126,6 +128,9 @@ class ConfigurationSchemaTest {
     void hmacSendersRequireOneSharedKeyWithoutPublicOrPrivateKeyFields(ServerNodeRole role) {
         var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         ((ObjectNode) core.get("node")).put("role", role.name());
+        if (role == ServerNodeRole.GATEWAY) {
+            core.remove("replay-guard");
+        }
         var crypto = (ObjectNode) core.get("crypto");
         crypto.put("algorithm", "HMAC_SHA256").put("key", "keys/shared.key");
         var issuance =
@@ -225,7 +230,7 @@ class ConfigurationSchemaTest {
                                 "\"algorithm\": \"ED25519\", \"compress-payload\": true"),
                         CORE.replace("4096", "5121"),
                         CORE.replace("2048", "0"),
-                        CORE.replace("\"max-entries\": 100", "\"max-entries\": 2147483648"),
+                        CORE.replace("\"busy-timeout\": \"500ms\"", "\"busy-timeout\": false"),
                         CORE.replace("CONFIG", "SHARED_SQL"),
                         CORE.replace("CONFIG", "STATIC"),
                         CORE.replace("\"config\":", "\"static\":"),
@@ -264,7 +269,7 @@ class ConfigurationSchemaTest {
             })
     void mainSchemaAcceptsSupportedWholeSecondDurationSpellings(String duration) {
         var core = fixture(ConfigurationDocumentType.CORE);
-        ((ObjectNode) core.get("verification")).put("max-lifetime", duration);
+        ((ObjectNode) core.get("ticket")).put("max-lifetime", duration);
         assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
     }
 
@@ -286,7 +291,7 @@ class ConfigurationSchemaTest {
     void mainSchemaRejectsInvalidDurationSyntaxAndPrecisionWithoutJavaConfigurationChecks(
             String duration) {
         var core = fixture(ConfigurationDocumentType.CORE);
-        ((ObjectNode) core.get("verification")).put("max-lifetime", duration);
+        ((ObjectNode) core.get("ticket")).put("max-lifetime", duration);
         assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
     }
 
@@ -451,17 +456,28 @@ class ConfigurationSchemaTest {
     }
 
     @Test
-    void schemaRecordsReservedReplayBackendsAndRejectsRegistryReplayWithConfigFiles() {
-        var core = fixture(ConfigurationDocumentType.CORE);
+    void schemaRequiresMatchingReplaySettingsAndRejectsRegistryReplayWithConfigFiles() {
+        var core = (ObjectNode) fixture(ConfigurationDocumentType.CORE);
         var replay = (ObjectNode) core.get("replay-guard");
-        replay.put("backend", "REDIS");
-        replay.putObject("redis");
-        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
-        replay.put("backend", "REGISTRY");
-        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
-        replay.put("backend", "LOCAL");
         replay.remove("local");
         assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
+        replay.put("backend", "REDIS");
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
+        replay.set(
+                "redis",
+                JSON.readTree(
+                        """
+                        {"host":"localhost","port":6379,"database":0,"username":"chorus",
+                         "password-path":"redis-password.txt","tls":{"mode":"DISABLED"},
+                         "timeouts":{"connect":"2s","command":"2s","acquire":"500ms"},
+                         "pool":{"size":2}}
+                        """));
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
+        replay.put("backend", "REGISTRY");
+        replay.remove("redis");
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isNotEmpty();
+        core.set("registry", JSON.readTree(SqlConfigurationTest.REGISTRY));
+        assertThat(contract(ConfigurationDocumentType.CORE).validate(core)).isEmpty();
     }
 
     @Test

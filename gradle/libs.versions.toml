@@ -19,10 +19,12 @@ hikari = "7.1.0"
 postgresql = "42.7.14"
 mysql-connector = "26.7.0"
 mariadb-connector = "3.5.10"
+jedis = "8.0.2"
 testcontainers = "2.0.5"
 postgresql-test-image = "17.11-alpine"
 mysql-test-image = "8.4.10"
 mariadb-test-image = "11.4.13"
+redis-test-image = "7.4-alpine"
 spotless = "8.10.4"
 spotbugs-plugin = "6.5.13"
 spotbugs-engine = "4.10.5"
@@ -49,6 +51,7 @@ hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 mysql-connector = { module = "com.mysql:mysql-connector-j", version.ref = "mysql-connector" }
 mariadb-connector = { module = "org.mariadb.jdbc:mariadb-java-client", version.ref = "mariadb-connector" }
+jedis = { module = "redis.clients:jedis", version.ref = "jedis" }
 testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }

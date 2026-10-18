@@ -47,8 +47,7 @@ class HmacChorusCoreBootstrapTest {
                 """);
         Files.createDirectories(base.resolve("trust"));
         Files.writeString(base.resolve("trust/issuers.yml"), "{}\n");
-        return Files.writeString(
-                base.resolve("chorus.yml"),
+        String config =
                 """
                 node:
                   id: %s
@@ -57,6 +56,7 @@ class HmacChorusCoreBootstrapTest {
                   cookie-key: chorus:ticket
                   max-payload-bytes: 4096
                   max-property-bytes: 2048
+                  max-lifetime: 15s
                 crypto:
                   algorithm: HMAC_SHA256
                   key: keys/shared.key
@@ -71,18 +71,19 @@ class HmacChorusCoreBootstrapTest {
                   allowed-targets: [backend]
                 verification:
                   trusted-issuers-path: trust/issuers.yml
-                  max-lifetime: 15s
-                  clock-skew: 2s
                   enforce-transfer-intent: true
                   identity-policy: ADOPT_UPSTREAM
                 replay-guard:
                   backend: LOCAL
                   local:
                     path: state/replay.db
-                    max-entries: 100
                     busy-timeout: 500ms
                 """
-                        .formatted(name, role));
+                        .formatted(name, role);
+        if (role.equals("GATEWAY")) {
+            config = config.substring(0, config.indexOf("replay-guard:"));
+        }
+        return Files.writeString(base.resolve("chorus.yml"), config);
     }
 
     private void trust(Path config, String keyPath) throws Exception {
@@ -194,7 +195,7 @@ class HmacChorusCoreBootstrapTest {
 
     @Test
     void validatesAllSchemasBeforeGeneratingALocalSigningSecret() throws Exception {
-        Path file = deployment("gateway", "GATEWAY");
+        Path file = deployment("gateway", "PEER");
         Files.writeString(file.resolveSibling("trust/issuers.yml"), "gateway: {algorithm: HMAC}\n");
         assertThatThrownBy(() -> ChorusCoreBootstrap.open(file, clock))
                 .isInstanceOf(IllegalArgumentException.class)
