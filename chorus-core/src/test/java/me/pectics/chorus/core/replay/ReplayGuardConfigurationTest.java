@@ -213,6 +213,7 @@ class ReplayGuardConfigurationTest {
                 java.util.List.of(
                         Duration.ZERO,
                         Duration.ofNanos(1),
+                        Duration.ofMillis(500).plusNanos(1),
                         Duration.ofMillis(-1),
                         Duration.ofMillis((long) Integer.MAX_VALUE + 1),
                         Duration.ofMillis(Long.MAX_VALUE))) {

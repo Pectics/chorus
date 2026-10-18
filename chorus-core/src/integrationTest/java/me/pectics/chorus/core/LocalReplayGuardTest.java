@@ -154,6 +154,19 @@ class LocalReplayGuardTest {
     }
 
     @Test
+    void maximumBusyTimeoutAllowsUncontendedConsumption() throws Exception {
+        try (var guard =
+                new LocalReplayGuard(
+                        directory.resolve("maximum-timeout.db"),
+                        "backend",
+                        Duration.ofMillis(Integer.MAX_VALUE),
+                        clock)) {
+            assertThat(consume(guard, "maximum-timeout").get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
+        }
+    }
+
+    @Test
     void consumptionThatExpiresWhileWaitingForTheDatabaseCannotReturnSuccess() throws Exception {
         Path file = directory.resolve("late-commit.db");
         try (var guard = new LocalReplayGuard(file, "backend", Duration.ofSeconds(2), clock);

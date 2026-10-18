@@ -398,7 +398,7 @@ class RegistryReplayGuardTest {
     }
 
     @Test
-    void nullInputsAreRejectedBeforeEnqueueing() {
+    void invalidInputsAreRejectedBeforeEnqueueing() {
         try (var guard = new RegistryReplayGuard(store, "backend", clock, 1)) {
             assertThatIllegalArgumentException()
                     .isThrownBy(
@@ -419,6 +419,28 @@ class RegistryReplayGuardTest {
                     .isThrownBy(() -> guard.register("gateway", "ticket", "backend", null));
             assertThatNullPointerException()
                     .isThrownBy(() -> guard.consume("gateway", "ticket", "backend", null));
+            for (String blank : new String[] {"", " \t"}) {
+                assertThatIllegalArgumentException()
+                        .isThrownBy(
+                                () ->
+                                        guard.register(
+                                                blank, "ticket", "backend", NOW.plusSeconds(15)));
+                assertThatIllegalArgumentException()
+                        .isThrownBy(
+                                () ->
+                                        guard.register(
+                                                "gateway", blank, "backend", NOW.plusSeconds(15)));
+                assertThatIllegalArgumentException()
+                        .isThrownBy(
+                                () ->
+                                        guard.consume(
+                                                blank, "ticket", "backend", NOW.plusSeconds(15)));
+                assertThatIllegalArgumentException()
+                        .isThrownBy(
+                                () ->
+                                        guard.consume(
+                                                "gateway", blank, "backend", NOW.plusSeconds(15)));
+            }
         }
         assertThat(store.registerCalls.get()).isZero();
         assertThat(store.consumeCalls.get()).isZero();
@@ -454,18 +476,20 @@ class RegistryReplayGuardTest {
     void workerThreadIsDaemon() throws Exception {
         store.block = true;
         try (var guard = new RegistryReplayGuard(store, "backend", clock, 1)) {
-            var pending =
-                    guard.register("gateway", "ticket", "backend", NOW.plusSeconds(15))
-                            .toCompletableFuture();
-            assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
-            var worker =
-                    Thread.getAllStackTraces().keySet().stream()
-                            .filter(thread -> thread.getName().equals("chorus-registry-replay"))
-                            .findFirst()
-                            .orElseThrow();
-            assertThat(worker.isDaemon()).isTrue();
-            store.release.countDown();
-            pending.get(5, TimeUnit.SECONDS);
+            try {
+                var pending =
+                        guard.register("gateway", "ticket", "backend", NOW.plusSeconds(15))
+                                .toCompletableFuture();
+                assertThat(store.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var worker = store.worker;
+                assertThat(worker).isNotEqualTo(Thread.currentThread());
+                assertThat(worker.getName()).startsWith("chorus-registry-replay");
+                assertThat(worker.isDaemon()).isTrue();
+                store.release.countDown();
+                pending.get(5, TimeUnit.SECONDS);
+            } finally {
+                store.release.countDown();
+            }
         }
     }
 
@@ -497,6 +521,7 @@ class RegistryReplayGuardTest {
         private final CountDownLatch release = new CountDownLatch(1);
         private final CountDownLatch closed = new CountDownLatch(1);
         private volatile boolean block;
+        private volatile Thread worker;
         private volatile boolean failRegister;
         private volatile SQLException closeFailure;
         private volatile RuntimeException consumeFailure;
@@ -516,6 +541,7 @@ class RegistryReplayGuardTest {
                 long nowMillis)
                 throws SQLException {
             registerCalls.incrementAndGet();
+            worker = Thread.currentThread();
             registrationTime = nowMillis;
             entered.countDown();
             await(release);
