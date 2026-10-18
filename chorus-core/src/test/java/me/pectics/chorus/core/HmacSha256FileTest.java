@@ -42,12 +42,8 @@ class HmacSha256FileTest {
         }
         assertThatThrownBy(() -> HmacSha256.loadOrCreate(directory))
                 .isInstanceOf(IOException.class);
-    }
-
-    @Test
-    void loadingAMissingTrustSecretNeverCreatesItOrItsParentDirectory() {
-        Path file = directory.resolve("unsynchronized/shared.key");
-        assertThatThrownBy(() -> HmacSha256.load(file)).isInstanceOf(IOException.class);
-        assertThat(file.getParent()).doesNotExist();
+        Path missing = directory.resolve("unsynchronized/shared.key");
+        assertThatThrownBy(() -> HmacSha256.load(missing)).isInstanceOf(IOException.class);
+        assertThat(missing.getParent()).doesNotExist();
     }
 }

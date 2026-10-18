@@ -56,8 +56,12 @@ class Ed25519Test {
 
     @Test
     void rejectsEd448AndInvalidKeyFiles() throws Exception {
+        assertThatThrownBy(() -> new Ed25519.Verifier(null))
+                .isInstanceOf(IllegalArgumentException.class);
         var ed448 = KeyPairGenerator.getInstance("Ed448").generateKeyPair();
         assertThatThrownBy(() -> new Ed25519.Verifier(ed448.getPublic()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Ed25519.Signer(ed448.getPrivate(), ed448.getPublic()))
                 .isInstanceOf(IllegalArgumentException.class);
         Path file = directory.resolve("broken.key");
         Files.writeString(file, "not a key");
@@ -65,5 +69,31 @@ class Ed25519Test {
         var pair = TestSupport.keyPair();
         assertThat(new Ed25519.Signer(pair.getPrivate(), pair.getPublic()).toString())
                 .isEqualTo("Ed25519.Signer[redacted]");
+    }
+
+    @Test
+    void enforcesKeyFileSizeAndPemLabelBoundaries() throws Exception {
+        Path binary = directory.resolve("binary.bin");
+        Files.write(binary, new byte[16_384]);
+        assertThatThrownBy(() -> Ed25519.loadVerifier(binary))
+                .isInstanceOf(java.security.GeneralSecurityException.class);
+        Files.write(binary, new byte[16_385]);
+        assertThatThrownBy(() -> Ed25519.loadVerifier(binary))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("size limit");
+
+        Path pem = directory.resolve("wrong-label.pem");
+        Files.writeString(pem, "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PUBLIC KEY-----\n");
+        assertThatThrownBy(() -> Ed25519.loadVerifier(pem))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Unsupported key file format");
+        Files.writeString(pem, "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PRIVATE KEY-----\n");
+        assertThatThrownBy(() -> Ed25519.loadVerifier(pem))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Unsupported key file format");
+        Files.writeString(pem, "-----BEGIN PUBLIC KEY-----\n!!!!\n-----END PUBLIC KEY-----\n");
+        assertThatThrownBy(() -> Ed25519.loadVerifier(pem))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Invalid key encoding");
     }
 }

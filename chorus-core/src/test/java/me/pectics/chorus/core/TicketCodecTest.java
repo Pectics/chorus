@@ -335,7 +335,156 @@ class TicketCodecTest {
     }
 
     @Test
+    void rejectsMalformedJsonContainersAndUnbalancedScopes() {
+        String header = part(0);
+        String body = part(1);
+        for (String invalid :
+                List.of(
+                        "not-json",
+                        body.substring(0, body.length() - 1),
+                        body + "]",
+                        body.replace("\"Notch\"", "\"Notch"),
+                        body.replace("\"extensions\":{}", "\"extensions\":{},"),
+                        body.replace("\"signature\":\"signature\"", "\"signature\":null"),
+                        body.replace("{\"name\":", "[{\"name\":"))) {
+            rejects(TestSupport.signRaw(header, invalid, pair), TicketError.MALFORMED_TICKET);
+        }
+    }
+
+    @Test
+    void rejectsMissingExtraAndMalformedIdentityClaims() {
+        String header = part(0);
+        String body = part(1);
+        for (String invalid :
+                List.of(
+                        body.substring(0, body.length() - 1) + ",\"unknown\":1}",
+                        body.replace(
+                                "\"authProvider\":\"mojang\"",
+                                "\"authProvider\":\"mojang\",\"unknown\":1"),
+                        body.replace("\"authProvider\":\"mojang\"", "\"authProvider\":\"\""),
+                        body.replace(
+                                "\"providerSubject\":\"" + TestSupport.UUID_MOJANG + "\"",
+                                "\"providerSubject\":\"\""),
+                        body.replace(
+                                "\"sourceUuid\":\"" + TestSupport.UUID_MOJANG + "\"",
+                                "\"sourceUuid\":\"\""),
+                        body.replace(",\"value\":\"skin\"", ""),
+                        body.replace("\"value\":\"skin\"", "\"value\":\"skin\",\"extra\":\"x\""),
+                        body.replace(
+                                "\"properties\":[{",
+                                "\"properties\":[{\"name\":\"textures\",\"value\":\"a\"},{"),
+                        body.replace(
+                                "\"signature\":\"signature\"",
+                                "\"signature\":\"signature\",\"name\":\"textures\""))) {
+            rejects(TestSupport.signRaw(header, invalid, pair), TicketError.MALFORMED_TICKET);
+        }
+    }
+
+    @Test
+    void enforcesTheExactPayloadBoundaryForDecoding() {
+        var exact = codec.encode(TestSupport.claims(), key);
+        assertThat(
+                        new TicketCodec(
+                                        exact.length,
+                                        Math.min(2048, exact.length),
+                                        TicketCompression.NONE)
+                                .decode(exact, issuers)
+                                .claims())
+                .isEqualTo(TestSupport.claims());
+        rejects(new byte[exact.length - 1], TicketError.MALFORMED_TICKET);
+        byte[] maximum = new byte[5120];
+        java.util.Arrays.fill(maximum, (byte) 'a');
+        rejects(maximum, TicketError.MALFORMED_TICKET);
+        byte[] oversized = new byte[5121];
+        java.util.Arrays.fill(oversized, (byte) 'a');
+        rejects(oversized, TicketError.TICKET_TOO_LARGE);
+    }
+
+    @Test
+    void propertyBudgetCountsNameValueAndSignatureTogether() {
+        var claims = TestSupport.claims();
+        var exact = new TicketCodec(5120, 8 + 4 + 9);
+        assertThat(exact.decode(exact.encode(claims, key), issuers).claims()).isEqualTo(claims);
+        assertThatThrownBy(() -> new TicketCodec(5120, 8 + 4 + 9 - 1).encode(claims, key))
+                .isInstanceOf(TicketRejectedException.class);
+    }
+
+    @Test
+    void acceptsEmptyPropertyListsAndEscapedProviderSubjects() {
+        var emptyProperties =
+                new me.pectics.chorus.core.identity.IdentityClaim(
+                        "Notch",
+                        me.pectics.chorus.core.identity.AuthenticationSourceType.MOJANG,
+                        "mojang",
+                        "subject",
+                        TestSupport.UUID_MOJANG,
+                        List.of());
+        var escapedSubject =
+                new me.pectics.chorus.core.identity.IdentityClaim(
+                        "Notch",
+                        me.pectics.chorus.core.identity.AuthenticationSourceType.MOJANG,
+                        "mojang",
+                        "subject\"with\\escapes",
+                        TestSupport.UUID_MOJANG,
+                        List.of());
+        for (var identity : List.of(emptyProperties, escapedSubject)) {
+            var claims =
+                    new TicketClaims(
+                            1,
+                            "escaped",
+                            "gateway",
+                            "backend",
+                            TestSupport.NOW,
+                            TestSupport.NOW,
+                            TestSupport.NOW.plusSeconds(15),
+                            identity,
+                            Map.of());
+            assertThat(codec.decode(codec.encode(claims, key), issuers).claims()).isEqualTo(claims);
+        }
+    }
+
+    @Test
+    void rejectsNonStringFieldsAndDuplicateNestedKeys() {
+        String header = part(0);
+        String body = part(1);
+        for (String invalid :
+                List.of(
+                        body.replace("\"jti\":\"ticket-1\"", "\"jti\":1"),
+                        body.replace("\"iss\":\"gateway\"", "\"iss\":false"),
+                        body.replace("\"aud\":\"backend\"", "\"aud\":[]"),
+                        body.replace("\"username\":\"Notch\"", "\"username\":1"),
+                        body.replace("\"iat\":" + TestSupport.NOW.getEpochSecond(), "\"iat\":true"),
+                        body.replace(
+                                "\"username\":\"Notch\"",
+                                "\"username\":\"Notch\",\"username\":\"Other\""),
+                        body.replace(
+                                "\"value\":\"skin\"", "\"value\":\"skin\",\"value\":\"other\""),
+                        body.replace("\"properties\":[", "\"properties\":[\"texture\","))) {
+            rejects(TestSupport.signRaw(header, invalid, pair), TicketError.MALFORMED_TICKET);
+        }
+    }
+
+    @Test
+    void detectsDuplicateKeysThatOnlyCollideAfterUnescaping() {
+        String header = part(0);
+        String body = part(1);
+        for (String invalid :
+                List.of(
+                        body.replace("\"version\":1", "\"version\":1,\"versio\\u006e\":1"),
+                        body.replace(
+                                "\"username\":\"Notch\"",
+                                "\"username\":\"Notch\",\"user\\u006eame\":\"Other\""),
+                        body.replace(
+                                "\"value\":\"skin\"",
+                                "\"value\":\"skin\",\"valu\\u0065\":\"other\""))) {
+            rejects(TestSupport.signRaw(header, invalid, pair), TicketError.MALFORMED_TICKET);
+        }
+    }
+
+    @Test
     void constructorsRejectInvalidPayloadAndPropertyBudgets() {
+        assertThat(new TicketCodec(5120, 5120, TicketCompression.NONE)).isNotNull();
+        assertThat(new TicketCodec(1, 1, TicketCompression.NONE)).isNotNull();
         for (int[] limits :
                 new int[][] {
                     {0, 0},
@@ -343,7 +492,8 @@ class TicketCodecTest {
                     {5121, 1},
                     {4096, 0},
                     {4096, -1},
-                    {4096, 4097}
+                    {4096, 4097},
+                    {1, 2}
                 }) {
             assertThatThrownBy(() -> new TicketCodec(limits[0], limits[1], TicketCompression.NONE))
                     .isInstanceOf(IllegalArgumentException.class);

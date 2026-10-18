@@ -77,6 +77,25 @@ class YamlConfigurationLoaderTest {
     }
 
     @Test
+    void acceptsExactlyOneMebibyteAndRejectsOneByteMore() throws Exception {
+        Path file = directory.resolve("chorus.yml");
+        Files.writeString(file, "#" + "x".repeat(1_048_575));
+        assertThatThrownBy(
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                        .load(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Schema validation failed");
+        Files.writeString(file, "#" + "x".repeat(1_048_576));
+        assertThatThrownBy(
+                        () ->
+                                new YamlConfigurationLoader(ConfigurationDocumentType.CORE)
+                                        .load(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("size limit");
+    }
+
+    @Test
     void preservesByteDepthAndUtf8Limits() throws Exception {
         Path file = directory.resolve("chorus.yml");
         Files.writeString(file, "#" + "x".repeat(1_048_576));

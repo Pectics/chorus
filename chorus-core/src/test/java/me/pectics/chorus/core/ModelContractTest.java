@@ -157,6 +157,11 @@ class ModelContractTest {
 
         assertThat(new ServerNodeConfiguration(maximumId, ServerNodeRole.PEER).role())
                 .isEqualTo(ServerNodeRole.PEER);
+        assertThat(new ServerNodeConfiguration("backend", null, ServerNodeRole.BACKEND).role())
+                .isEqualTo(ServerNodeRole.BACKEND);
+        assertThatIllegalArgumentException()
+                .isThrownBy(
+                        () -> new ServerNodeConfiguration(null, "Backend", ServerNodeRole.BACKEND));
         assertThat(new ServerNodeConfiguration("backend", "Backend", ServerNodeRole.BACKEND))
                 .isEqualTo(
                         new ServerNodeConfiguration("backend", "Backend", ServerNodeRole.BACKEND));
@@ -234,6 +239,7 @@ class ModelContractTest {
                 .isEqualTo(TicketCompression.ZSTD);
         assertThat(new TicketConfiguration("a:b/c.d_e-f", 5120, 5120).maxPayloadBytes())
                 .isEqualTo(5120);
+        assertThat(new TicketConfiguration("chorus:ticket", 1, 1).maxPropertyBytes()).isEqualTo(1);
         for (String cookie :
                 List.of("", "chorus", "Chorus:ticket", "chorus:", "chorus:Ticket", " ")) {
             assertThatIllegalArgumentException()
@@ -310,9 +316,18 @@ class ModelContractTest {
                                         Duration.ofMillis(Integer.MAX_VALUE))
                                 .busyTimeout())
                 .isEqualTo(Duration.ofMillis(Integer.MAX_VALUE));
-        assertThatIllegalArgumentException()
-                .isThrownBy(
-                        () -> new ReplayGuardConfiguration.Local(path, 0, Duration.ofMillis(1)));
+        assertThat(
+                        new ReplayGuardConfiguration(
+                                        ReplayGuardConfiguration.Backend.REGISTRY, null)
+                                .backend())
+                .isEqualTo(ReplayGuardConfiguration.Backend.REGISTRY);
+        for (int capacity : new int[] {0, -1}) {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(
+                            () ->
+                                    new ReplayGuardConfiguration.Local(
+                                            path, capacity, Duration.ofMillis(1)));
+        }
         for (Duration timeout :
                 List.of(Duration.ZERO, Duration.ofNanos(1), Duration.ofMillis(-1))) {
             assertThatIllegalArgumentException()
@@ -387,6 +402,108 @@ class ModelContractTest {
         assertThat(ServerNodeRole.BACKEND.receiver()).isTrue();
         assertThat(ServerNodeRole.PEER.sender()).isTrue();
         assertThat(ServerNodeRole.PEER.receiver()).isTrue();
+    }
+
+    @Test
+    void nullIdentifiersAreRejectedWhereBlankOnesAre() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new ServerNode(null, "display", "localhost", 25565));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new ServerNode("backend", null, "localhost", 25565));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new ServerNode("backend", "display", null, 25565));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new ServerNodeConfiguration(null, ServerNodeRole.BACKEND));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new AuthenticatedIdentity(TestSupport.identity(), null));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new TicketConfiguration(null, 4096, 2048));
+        assertThatIllegalArgumentException()
+                .isThrownBy(
+                        () ->
+                                new me.pectics.chorus.core.trust.TrustedIssuer(
+                                        "",
+                                        List.of(
+                                                new me.pectics.chorus.core.crypto.Ed25519.Verifier(
+                                                        TestSupport.keyPair().getPublic())),
+                                        true,
+                                        TestSupport.policy()));
+        for (String invalid : List.of(" ", "ünicode", ".gateway")) {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(
+                            () ->
+                                    new me.pectics.chorus.core.trust.TrustedIssuer(
+                                            invalid,
+                                            List.of(
+                                                    new me.pectics.chorus.core.crypto.Ed25519
+                                                            .Verifier(
+                                                            TestSupport.keyPair().getPublic())),
+                                            true,
+                                            TestSupport.policy()));
+        }
+        assertThatIllegalArgumentException()
+                .isThrownBy(
+                        () ->
+                                new me.pectics.chorus.core.trust.TrustedIssuer(
+                                        "gateway", List.of(), true, TestSupport.policy()));
+    }
+
+    @Test
+    void issuanceAndTrustPoliciesRequireBothPermissions() {
+        var policy = TestSupport.issuancePolicy();
+        assertThat(
+                        policy.permits(
+                                identity(
+                                        "Notch",
+                                        "other",
+                                        "subject",
+                                        List.of(),
+                                        AuthenticationSourceType.MOJANG),
+                                "backend"))
+                .isFalse();
+        assertThat(
+                        TestSupport.policy()
+                                .permits(
+                                        identity(
+                                                "Notch",
+                                                "mojang",
+                                                "subject",
+                                                List.of(),
+                                                AuthenticationSourceType.YGGDRASIL)))
+                .isFalse();
+        assertThat(
+                        policy.permits(
+                                identity(
+                                        "Notch",
+                                        "mojang",
+                                        "subject",
+                                        List.of(),
+                                        AuthenticationSourceType.MOJANG),
+                                "gateway"))
+                .isFalse();
+    }
+
+    @Test
+    void apiResultsCopyAndRedactCookieMaterial() {
+        byte[] payload = {1, 2};
+        var issued =
+                new me.pectics.chorus.core.api.IssueTicketResult(
+                        TestSupport.node("backend"),
+                        "chorus:ticket",
+                        payload,
+                        "ticket-1",
+                        TestSupport.NOW.plusSeconds(15));
+        payload[0] = 9;
+        issued.cookiePayload()[1] = 9;
+        assertThat(issued.cookiePayload()).containsExactly(1, 2);
+        assertThat(issued.toString())
+                .contains("jti=ticket-1", "expiresAt=")
+                .doesNotContain("chorus:ticket");
+        var context = new ReceiverLoginContext("Notch", true, null);
+        assertThat(new VerifyTicketRequest(null, context).toString())
+                .isEqualTo("VerifyTicketRequest[payloadPresent=false]");
+        assertThat(new VerifyTicketRequest(new byte[] {1}, context).toString())
+                .isEqualTo("VerifyTicketRequest[payloadPresent=true]");
     }
 
     @Test

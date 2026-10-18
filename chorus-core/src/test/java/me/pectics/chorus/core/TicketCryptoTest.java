@@ -19,6 +19,7 @@ import java.util.stream.Stream;
 import me.pectics.chorus.core.crypto.Ed25519;
 import me.pectics.chorus.core.crypto.HmacSha256;
 import me.pectics.chorus.core.crypto.SignatureAlgorithm;
+import me.pectics.chorus.core.crypto.TicketCryptoConfiguration;
 import me.pectics.chorus.core.crypto.TicketSigner;
 import me.pectics.chorus.core.crypto.TicketVerifier;
 import me.pectics.chorus.core.trust.TrustedIssuer;
@@ -80,13 +81,17 @@ class TicketCryptoTest {
         secret[0] = 1;
         var different = new HmacSha256(secret);
         assertThat(first).isEqualTo(same).hasSameHashCodeAs(same).isNotEqualTo(different);
+        assertThat(first).isNotEqualTo(null).isNotEqualTo("HmacSha256");
+        assertThat(first.hashCode()).isNotZero();
         byte[] message = new byte[] {1};
         assertThat(same.verify(message, first.sign(message))).isTrue();
         assertThat(different.verify(message, first.sign(message))).isFalse();
+        assertThat(first.verify(message, new byte[0])).isFalse();
         assertThat(first.toString()).isEqualTo("HmacSha256[redacted]");
         assertThat(first.verifier()).isSameAs(first);
         assertThatThrownBy(() -> new HmacSha256(new byte[31]))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new HmacSha256(null)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -100,6 +105,14 @@ class TicketCryptoTest {
             assertThatThrownBy(() -> SignatureAlgorithm.fromJwsName(unsupported))
                     .isInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Test
+    void cryptoConfigurationReportsItsSelectedAlgorithm() {
+        assertThat(new TicketCryptoConfiguration.Ed25519(null, null).algorithm())
+                .isEqualTo(SignatureAlgorithm.ED25519);
+        assertThat(new TicketCryptoConfiguration.HmacSha256(null).algorithm())
+                .isEqualTo(SignatureAlgorithm.HMAC_SHA256);
     }
 
     @Test

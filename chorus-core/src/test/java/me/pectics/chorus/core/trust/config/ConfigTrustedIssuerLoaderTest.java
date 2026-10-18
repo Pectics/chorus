@@ -27,6 +27,41 @@ class ConfigTrustedIssuerLoaderTest {
     @TempDir Path directory;
 
     @Test
+    void enabledDefaultsToTrueAndExplicitValuesArePreserved() throws Exception {
+        Path file =
+                Files.writeString(
+                        directory.resolve("issuers.yml"),
+                        """
+                        implicit:
+                          algorithm: HMAC_SHA256
+                          key: implicit.key
+                          allowed-auth-schemes: [MOJANG]
+                          allowed-providers: [mojang]
+                        explicit:
+                          algorithm: HMAC_SHA256
+                          key: explicit.key
+                          enabled: true
+                          allowed-auth-schemes: [MOJANG]
+                          allowed-providers: [mojang]
+                        disabled:
+                          algorithm: HMAC_SHA256
+                          key: disabled.key
+                          enabled: false
+                          allowed-auth-schemes: [MOJANG]
+                          allowed-providers: [mojang]
+                        """);
+        var approvals = new ConfigTrustedIssuerLoader().load(file);
+        assertThat(approvals)
+                .extracting(
+                        TrustedIssuerConfiguration::issuerNodeId,
+                        TrustedIssuerConfiguration::enabled)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("implicit", true),
+                        org.assertj.core.groups.Tuple.tuple("explicit", true),
+                        org.assertj.core.groups.Tuple.tuple("disabled", false));
+    }
+
+    @Test
     void approvalParsingDefersKeyReadsWithoutCreatingMissingSecrets() throws Exception {
         Path trustDirectory = Files.createDirectory(directory.resolve("trust"));
         Path file =
