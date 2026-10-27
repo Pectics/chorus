@@ -23,10 +23,10 @@ sync: Follow section 6 to keep execution rules current; design belongs in ARCHIT
 - 当前主要开发并纳入 Git 白名单 / Gradle 的模块只有 `chorus-core` 和 `chorus-common`。
 - `chorus-paper`、`chorus-velocity`、`chorus-fabric` 仍是架构规划的一部分；本地可能存在暂存骨架，
   **有意被 Git 忽略且不纳入构建**。不得因为目录存在就自动启用、放行或补全平台实现。
-- Core 已实现 Phase 1：`CONFIG`（YAML 配置文件）服务器节点注册表与信任、Ed25519 / HMAC-SHA256 Ticket、ZSTD（默认）/ GZIP / NONE 编码与有界解压、身份策略、SQLite 持久化防重放与异步 Engine；
+- Phase 1 已完成，涵盖当前全部平台无关 Core 能力：`CONFIG`（YAML 配置文件）服务器节点注册表与信任、Ed25519 / HMAC-SHA256 Ticket、ZSTD（默认）/ GZIP / NONE 编码与有界解压、身份策略、SQLite 持久化防重放与异步 Engine；
   单测与本地集成测试覆盖核心闭环。Registry 当前定义服务器节点注册表 `ServerNodeRegistry` 与共享票据登记契约 `ReplayGuardRegistry`，SQL 已支持 PostgreSQL / MySQL / MariaDB；共享防重放支持 `REGISTRY` 和单节点 `REDIS`，使用签发前预登记与接收端条件消费。本地可信签发者由独立 `trust` 模块管理，路径位于 `verification.trusted-issuers-path`，不自动分发信任或密钥。Common 仍只有包职责说明，平台接入尚未实现。
-- 实施顺序遵循架构 §6：Core 与 SQL 服务器节点注册表完成验证后，只推进一条
-  **正版 Gateway → 离线 Paper Backend** 路线；其他平台与扩展场景按后续阶段推进。
+- 当前进入架构 §6 的 Phase 2：首个平台适配，只推进一条 **正版 Gateway → 离线 Paper Backend** 路线；
+  Common 随实际平台路线实现和收敛，不要求先独立完善整个模块。其他平台与扩展场景按 Phase 3 推进。
 
 ## 3. 构建、验证与 Git
 

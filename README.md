@@ -12,20 +12,22 @@ sync: Keep module status, prerequisites, and commands aligned with enabled modul
 或任意具备 Sender 能力的服务器跳往目标 Receiver 时，游戏流量由客户端直连目标地址，认证结果通过短期
 签名 Ticket 透传，无需常驻游戏流量中转。
 
-> **当前状态：Core Phase 1 与 SQL 服务器节点注册表已实现，Common 仍为骨架。** Core 可独立签发、验证 Ticket 并持久化防重放；尚未接入 Minecraft 平台。
+> **当前状态：Phase 1 已完成，进入 Phase 2 首个平台适配。** 已完成的平台无关 Core 包括 Ticket、CONFIG / SQL 服务器节点注册表及 LOCAL / REGISTRY / REDIS 防重放；Common 仍为骨架，尚未接入 Minecraft 平台。
 > [ARCHITECTURE.md](ARCHITECTURE.md) 是唯一架构定义，协作与维护约定见 [AGENTS.md](AGENTS.md)。
 
 ## 模块
 
 | 模块 | 职责 | 当前范围 |
 |---|---|---|
-| `chorus-core` | 纯 Java：服务器节点注册表快照、受信任签发者、Ticket 签发与验签、身份解析策略、防重放 | Phase 1 与 SQL 服务器节点注册表已实现，信任和密钥仍在本地 |
-| `chorus-common` | 平台无关的 Minecraft 生命周期支撑：Cookie 单飞读取、本节点转移会话、平台 SPI | 已纳入 Git 白名单与构建，仍为骨架 |
-| `chorus-paper` | Paper 适配：事件与 API 对接、命令、Cookie、Transfer、GameProfile 应用 | 后续开发，暂不收录或构建 |
+| `chorus-core` | 纯 Java：服务器节点注册表快照、受信任签发者、Ticket 签发与验签、身份解析策略、防重放 | Phase 1 已完成，含 SQL 注册表与共享防重放；信任和密钥仍在本地 |
+| `chorus-common` | 平台无关的 Minecraft 生命周期支撑：Cookie 单飞读取、本节点转移会话、平台 SPI | 已纳入 Git 白名单与构建，仍为骨架；Phase 2 随首条平台路线实现 |
+| `chorus-paper` | Paper 适配：事件与 API 对接、命令、Cookie、Transfer、GameProfile 应用 | Phase 2 首个平台接入目标，尚未实现，暂不收录或构建 |
 | `chorus-velocity` | Velocity 适配：入口认证卸载与 Sender 能力 | 后续开发，暂不收录或构建 |
 | `chorus-fabric` | Fabric 服务端适配：登录状态机、Cookie、Profile、Transfer | 后续开发，暂不收录或构建 |
 
 依赖方向：平台模块 → `chorus-common` → `chorus-core`；核心不反向依赖任何平台 API。
+
+开发路线见架构 §6：Phase 1 为已完成的平台无关 Core；Phase 2 推进正版 Gateway → 离线 Paper Backend，并在实际对接中完善 Common；Phase 3 再扩展其他场景和平台。
 
 本地即使存在三个平台的暂存目录，也不会被默认构建加载。平台接口、版本与资源处理将在对应阶段逐项验证。
 

@@ -906,44 +906,48 @@ Chorus 基础协议承诺：可信发行方签名无法随意伪造、目标 `au
 
 ## 6. 测试与实施顺序
 
-### Phase 1：纯 Java Core + 单元与本地集成测试（已实现）
+### Phase 1：平台无关 Core、服务器节点注册表与防重放（已完成）
 
-Phase 1 已交付；实际装配格式与运维示例见 README 的 Core 独立使用章节：
+Phase 1 包含当前已完成的全部平台无关 Core 能力，以及单元、本地集成、SQL 和 Redis 独立集成验证；实际装配格式与运维示例见 README 的 Core 独立使用章节。
+
+#### Core 与本地闭环
 
 - 领域模型与配置校验。
 - Ed25519 / HMAC-SHA256 签发与验签对象、JWS 编解码、算法与密钥信任绑定；共享密钥文件缺失生成与手动分发。
 - 静态服务器节点注册表 + 可信签发者策略（不依赖共享数据库服务）。
 - `ADOPT_UPSTREAM`、`FORCE_OFFLINE_UUID`；`STRICT_ONLINE_MATCH` 的核心比较逻辑可用纯对象测试验证。
-- 本地 SQLite ReplayGuard 与可替换 SPI，含真实文件上的持久化、并发与重启验证；共享 SQL 核销不纳入第一阶段。
+- 本地 SQLite ReplayGuard 与可替换 SPI，含真实文件上的持久化、并发与重启验证。
 - `ChorusCoreEngine` 的纯 Java Mock Sender → Receiver 流程。
 
-最低单测范围：
+单元与本地集成测试覆盖：
 
 1. Gateway 正版身份 → 离线 Backend 仍使用 Mojang UUID。
 2. 正版 → 旧离线 UUID 映射；离线 → 离线；双正版独立验证上下文比较。
 3. 外域不可信签发者、错误 provider/target、密钥替换、过期/未来票据拒绝。
 4. 同一 JTI 并发消费只有一次成功，提交完成前不返回成功，重开后继续拒绝重放。
 5. JWT 规格、编码长度、异常字段、未知算法、禁用签发者、已移除和未批准密钥签名、HS256 与 Ed25519 算法混淆拒绝。
-6. 静态服务器节点注册表变更、无外部数据库服务运行；共享服务器节点注册表故障缓存过期验证在 Phase 2 完成。
+6. 静态服务器节点注册表变更、无外部数据库服务运行。
 
-### Phase 2：SQL 服务器节点注册表实现（已实现）
+#### SQL 服务器节点注册表
 
 通过 PostgreSQL、MySQL、MariaDB 实现 `ServerNodeRegistry` 的后台快照同步与故障缓存。
-`trust.TrustedIssuerStore` 与全部密钥保持本地文件加载；本轮不增加信任同步与心跳；共享防重放见 Phase 2.5。
+`trust.TrustedIssuerStore` 与全部密钥保持本地文件加载；不包含信任同步与心跳；共享防重放见下文。
 数据库账号统一为可建表与读写的运行账号；PostgreSQL 自定义 schema 保留 TODO。真实数据库与 TLS 验证使用独立 `sqlIntegrationTest` 任务，不纳入普通 `check/build`。
 已验证 PostgreSQL 17.11、MySQL 8.4.10、MariaDB 11.4.13：三库启动自动建表、完整刷新、无效数据与版本拒绝、锁等待查询超时、缓存过期/恢复、TLS 证书/主机名校验，以及本地 Ed25519/HMAC、SQLite 与 REGISTRY 防重放闭环。此列表是已测矩阵，不据此承诺所有历史版本兼容性。
 
-### Phase 2.5：共享防重放后端（已实现）
+#### 共享防重放后端
 
 在 `REGISTRY` 与 `REDIS` 上实现“签发前登记、接收端原子消费”。`REGISTRY` 复用注册表数据库并在启动时自动建表；
 `REDIS` 支持单节点 ACL 与 TLS，登记使用 `SET NX PX`，消费使用 `DEL`。两者失败时拒绝，不重试、不降级。
 独立验证使用 `sqlIntegrationTest` 与 `redisIntegrationTest`，均不纳入普通 `check/build`；PIT 排除需要真实服务的适配器。
 
-### Phase 3：首个平台适配
+### Phase 2：首个平台适配（当前阶段）
 
-先选一条最能验证核心价值的路线：**正版 Gateway → 离线 Paper Backend 继承上游 GameProfile**。实际 Paper API 和最小兼容版本在该阶段确认。此阶段无需同时开发 Fabric / Velocity 的完整 Receiver。
+以 **正版 Gateway → 离线 Paper Backend 继承上游 GameProfile** 为首条路线。先验证实际 Paper API、登录生命周期和最小兼容版本，再推进端到端转移；Common 的 Cookie、会话与平台 SPI 随这条实际路线实现和收敛，不以预先完善整个 Common 为平台接入的前置条件。此阶段无需同时开发 Fabric / Velocity 的完整 Receiver。
 
-### Phase 4：扩展场景和其他平台
+当前 Common 仍只有包职责说明，平台接入尚未实现；进入本阶段不表示平台能力已交付。
+
+### Phase 3：扩展场景和其他平台
 
 双正版/双离线/历史 UUID 兼容测试，然后按需补 Yggdrasil、Velocity、Fabric；Floodgate 列为后续候选。受控联盟的原始认证凭据链应在其真实需求明确后单独排期。
 
