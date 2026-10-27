@@ -313,19 +313,25 @@ class SqlServerNodeRegistryIntegrationTest {
         try (var first = new RegistryReplayGuard(settings, "backend", clock);
                 var second = new RegistryReplayGuard(settings, "backend", clock)) {
             Instant expiresAt = clock.instant().plusSeconds(15);
-            first.register("gateway", "replay-once", "backend", expiresAt)
-                    .toCompletableFuture()
-                    .get(10, TimeUnit.SECONDS);
-            var attempts =
-                    List.of(
-                            first.consume("gateway", "replay-once", "backend", expiresAt)
-                                    .toCompletableFuture(),
-                            second.consume("gateway", "replay-once", "backend", expiresAt)
-                                    .toCompletableFuture());
-            CompletableFuture.allOf(attempts.toArray(CompletableFuture[]::new))
-                    .get(10, TimeUnit.SECONDS);
-            assertThat(attempts.stream().map(CompletableFuture::join).toList())
-                    .containsExactlyInAnyOrder(ReplayDecision.ACCEPTED, ReplayDecision.REPLAYED);
+            // Repeated races expose InnoDB lock inversion between expiry cleanup and consumption.
+            for (int round = 0; round < 100; round++) {
+                String jti = "replay-once-" + round;
+                first.register("gateway", jti, "backend", expiresAt)
+                        .toCompletableFuture()
+                        .get(10, TimeUnit.SECONDS);
+                var attempts =
+                        List.of(
+                                first.consume("gateway", jti, "backend", expiresAt)
+                                        .toCompletableFuture(),
+                                second.consume("gateway", jti, "backend", expiresAt)
+                                        .toCompletableFuture());
+                CompletableFuture.allOf(attempts.toArray(CompletableFuture[]::new))
+                        .get(10, TimeUnit.SECONDS);
+                assertThat(attempts.stream().map(CompletableFuture::join).toList())
+                        .as("Concurrent consumption round %s on %s", round, engine)
+                        .containsExactlyInAnyOrder(
+                                ReplayDecision.ACCEPTED, ReplayDecision.REPLAYED);
+            }
             assertThat(
                             first.consume("gateway", "missing", "backend", expiresAt)
                                     .toCompletableFuture()
