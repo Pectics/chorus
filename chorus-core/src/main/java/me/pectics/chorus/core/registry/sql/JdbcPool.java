@@ -74,7 +74,8 @@ public final class JdbcPool implements AutoCloseable {
             config.setInitializationFailTimeout(-1);
             config.setReadOnly(readOnly);
             if (!readOnly) {
-                // Range cleanup must not hold InnoDB gap locks across replay inserts.
+                // Replay writes must not retain InnoDB gap locks that block concurrent
+                // registration.
                 config.setTransactionIsolation("TRANSACTION_READ_COMMITTED");
             }
             var properties = driverProperties(settings);

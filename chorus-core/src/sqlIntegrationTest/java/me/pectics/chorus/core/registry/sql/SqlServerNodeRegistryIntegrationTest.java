@@ -96,7 +96,7 @@ class SqlServerNodeRegistryIntegrationTest {
 
                 verifyTls(engine, port, ca);
                 verifyConcurrentReplayRegistrations(settings);
-                verifyRegistryReplay(engine, port, ca);
+                verifyRegistryReplay(admin, engine, port, ca);
                 verifyRefreshAndFailures(admin, engine, port, ca);
                 verifyLocalTrustAndConfiguredEngines(admin, engine, port, ca);
             }
@@ -307,7 +307,8 @@ class SqlServerNodeRegistryIntegrationTest {
         }
     }
 
-    private void verifyRegistryReplay(Engine engine, int port, Path ca) throws Exception {
+    private void verifyRegistryReplay(Connection admin, Engine engine, int port, Path ca)
+            throws Exception {
         var clock = new MutableClock(Instant.parse("2026-10-16T00:00:00Z"));
         var settings = settings(engine, port, TlsMode.VERIFY_FULL, ca, "localhost");
         try (var first = new RegistryReplayGuard(settings, "backend", clock);
@@ -349,6 +350,16 @@ class SqlServerNodeRegistryIntegrationTest {
             first.register("gateway", "expired", "backend", clock.instant().plusSeconds(15))
                     .toCompletableFuture()
                     .get(5, TimeUnit.SECONDS);
+            first.register("gateway", "expired-other", "backend", clock.instant().plusSeconds(15))
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            first.register("other-gateway", "expired", "backend", clock.instant().plusSeconds(15))
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            Instant liveExpiry = clock.instant().plusSeconds(120);
+            first.register("gateway", "still-live", "backend", liveExpiry)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
             clock.now = clock.instant().plusSeconds(46);
             assertThat(
                             first.consume(
@@ -359,6 +370,20 @@ class SqlServerNodeRegistryIntegrationTest {
                                     .toCompletableFuture()
                                     .get(5, TimeUnit.SECONDS))
                     .isEqualTo(ReplayDecision.REPLAYED);
+            try (var statement = admin.createStatement();
+                    var rows =
+                            statement.executeQuery(
+                                    "SELECT issuer_node_id, jti FROM chorus_replay_registrations")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString(1)).isEqualTo("gateway");
+                assertThat(rows.getString(2)).isEqualTo("still-live");
+                assertThat(rows.next()).isFalse();
+            }
+            assertThat(
+                            second.consume("gateway", "still-live", "backend", liveExpiry)
+                                    .toCompletableFuture()
+                                    .get(5, TimeUnit.SECONDS))
+                    .isEqualTo(ReplayDecision.ACCEPTED);
             first.register("gateway", "expired", "backend", clock.instant().plusSeconds(15))
                     .toCompletableFuture()
                     .get(5, TimeUnit.SECONDS);

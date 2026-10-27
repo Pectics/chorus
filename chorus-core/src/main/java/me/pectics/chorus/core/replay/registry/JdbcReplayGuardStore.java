@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
 import me.pectics.chorus.core.registry.RegistryConfiguration.Engine;
 import me.pectics.chorus.core.registry.RegistryConfiguration.Sql;
 import me.pectics.chorus.core.registry.sql.JdbcPool;
@@ -135,17 +136,41 @@ final class JdbcReplayGuardStore implements RegistryReplayGuardStore {
     }
 
     private void cleanup(Connection connection, long nowMillis) throws SQLException {
+        // An InnoDB range DELETE can retain the expiry-index lock of a live boundary row even
+        // at READ COMMITTED, reversing the primary-then-secondary lock order of consumption.
+        var expired = new ArrayList<ExpiredRegistration>();
+        try (var select =
+                connection.prepareStatement(
+                        "SELECT issuer_node_id, jti FROM "
+                                + prefix
+                                + "chorus_replay_registrations WHERE retain_until_ms <= ? "
+                                + "ORDER BY issuer_node_id, jti")) {
+            select.setQueryTimeout(querySeconds);
+            select.setLong(1, nowMillis);
+            try (var rows = select.executeQuery()) {
+                while (rows.next()) {
+                    expired.add(new ExpiredRegistration(rows.getString(1), rows.getString(2)));
+                }
+            }
+        }
         try (var delete =
                 connection.prepareStatement(
                         "DELETE FROM "
                                 + prefix
                                 + "chorus_replay_registrations "
-                                + "WHERE retain_until_ms <= ?")) {
+                                + "WHERE issuer_node_id = ? AND jti = ? AND retain_until_ms <= ?")) {
             delete.setQueryTimeout(querySeconds);
-            delete.setLong(1, nowMillis);
-            delete.executeUpdate();
+            for (var registration : expired) {
+                delete.setString(1, registration.issuerNodeId());
+                delete.setString(2, registration.jti());
+                // Recheck expiry after locking: another transaction may have reused this key.
+                delete.setLong(3, nowMillis);
+                delete.executeUpdate();
+            }
         }
     }
+
+    private record ExpiredRegistration(String issuerNodeId, String jti) {}
 
     private static void rollback(Connection connection, SQLException failure) {
         try {
